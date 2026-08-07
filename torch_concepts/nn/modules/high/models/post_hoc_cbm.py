@@ -25,14 +25,15 @@ from torch.distributions import Bernoulli, OneHotCategorical
 from .....annotations import Annotations
 from .....distributions import Delta
 from .....utils import ensure_list
-from ...low.encoders.cav import CAVEmbeddingToConcept, ConceptActivationVectors
+from ...low.encoders.cav import ConceptActivationVectors, CAVScoreEncoder
 from ...low.predictors.linear import LinearConceptToConcept
 from ...low.predictors.residual import ResidualConceptEmbeddingToConcept
 from ...mid.inference.base import BaseInference
 from ...mid.inference.torch.deterministic import DeterministicInference
-from ...mid.models.bayesian_network import BayesianNetwork
-from ...mid.models.cpd import ParametricCPD
-from ...mid.models.variable import ConceptVariable, _DEFAULT_DIST_KWARGS
+from ...mid.graph.bayesian_network import BayesianNetwork
+from ...mid.factors.cpd import ParametricCPD
+from ...mid.variable import ConceptVariable
+from ...mid.distributions import DEFAULT_DIST_KWARGS
 from .cbm import ConceptBottleneckModel
 
 
@@ -55,11 +56,12 @@ class PostHocCBM(ConceptBottleneckModel):
       whose value is the raw score — never squashed through a sigmoid, exactly
       as in the reference implementation.
     * Pre-fitted CAVs are passed via ``concept_vectors`` /
-      ``concept_intercepts`` and frozen by default. When they are left
-      trainable (``freeze_concept_vectors=False``) and the scores are trained
-      with a BCE-with-logits loss against concept labels, each CAV is exactly
-      a logistic-regression probe, so the concept bank can also be learned
-      in-place.
+      ``concept_intercepts`` and frozen by default (a shared
+      :class:`~torch_concepts.nn.ConceptActivationVectors` bank). When they are
+      left trainable (``freeze_concept_vectors=False``) and the scores are
+      trained with a BCE-with-logits loss against concept labels, each CAV is
+      exactly a logistic-regression probe, so the concept bank can also be
+      learned in-place.
     * Interventions are graph-native: supply concept evidence (e.g. ``+1`` /
       ``-1`` scores, or the score of your choice) and the task head consumes
       the clamped values. Teacher forcing via the engine's ``p_int`` works the
@@ -115,11 +117,9 @@ class PostHocCBM(ConceptBottleneckModel):
     lightning : bool, default False
         If True, adds Lightning training capabilities.
     plate : bool or None, default None
-        Controls which building path is used.  ``None`` (default) auto-detects:
-        uses plates only when **all** graph levels are plate-compatible (see
-        :meth:`~torch_concepts.nn.modules.high.base.graph.DirectedGraphModel.plate_compatible_levels`),
-        otherwise falls back to individual variables.  Pass ``True`` to force
-        plates or ``False`` to force individual variables.
+        Per-level plate preference (forwarded to :class:`BaseModel`). ``None``
+        (default) / ``True`` group the (homogeneous, binary) concept scores into
+        a single plate; ``False`` uses one score variable per concept.
     **kwargs
         Forwarded to :class:`BaseModel` (e.g. ``backbone``, ``latent_size``,
         and the Lightning training arguments).
@@ -139,7 +139,7 @@ class PostHocCBM(ConceptBottleneckModel):
         'binary': Bernoulli,
         'categorical': OneHotCategorical,
     }
-    variable_dist_kwargs = dict(_DEFAULT_DIST_KWARGS)
+    variable_dist_kwargs = dict(DEFAULT_DIST_KWARGS)
 
     def __init__(
         self,
@@ -174,7 +174,7 @@ class PostHocCBM(ConceptBottleneckModel):
                 f"vector. Non-binary concepts found: {non_binary}."
             )
 
-        # Attributes needed by the (overridden) building paths, which run
+        # Attributes needed by the (overridden) ``_build_model``, which runs
         # inside super().__init__ below.
         self.residual = residual
         self.freeze_concept_vectors = freeze_concept_vectors
@@ -205,7 +205,7 @@ class PostHocCBM(ConceptBottleneckModel):
     # Shared helpers
     # ------------------------------------------------------------------
     def _setup_cav_components(self) -> None:
-        """Create the shared CAV table used by every concept-score CPD."""
+        """Create the shared CAV bank used by every concept-score CPD."""
         self.cavs = ConceptActivationVectors(
             n_concepts=len(self.intermediate_concept_names),
             embedding_size=self.latent_size,
@@ -270,120 +270,69 @@ class PostHocCBM(ConceptBottleneckModel):
         The paper fits the hybrid model sequentially: first the interpretable
         head (with the residual disabled), then — with the backbone, the CAVs
         and the interpretable head frozen — the residual. Call this before
-        the residual stage; only the residual heads keep ``requires_grad``.
+        the residual stage; only the residual heads keep ``requires_grad``
+        (freeze everything, then re-enable the residual pathway).
         """
-        for param in self.backbone.parameters():
+        for param in self.parameters():
             param.requires_grad_(False)
-        self.cavs.vectors.requires_grad_(False)
-        self.cavs.intercepts.requires_grad_(False)
-        for head in self._interpretable_heads:
-            head.weight.requires_grad_(False)
-            if head.bias is not None:
-                head.bias.requires_grad_(False)
         for head in self._task_heads:
             if isinstance(head, ResidualConceptEmbeddingToConcept):
                 for param in head.residual.parameters():
                     param.requires_grad_(True)
 
     # ------------------------------------------------------------------
-    # Building paths
+    # Model assembly (written once for both layouts)
     # ------------------------------------------------------------------
-    def _build_plate_model(self) -> BayesianNetwork:
-        """Build using one plate variable per bipartite
-        level (concept scores, tasks).
+    def _build_model(self) -> BayesianNetwork:
+        """Assemble ``input → latent → concept scores → tasks``.
+
+        The (homogeneous, binary) concepts are grouped into the minimum number
+        of plates and modelled as deterministic (``Delta``) real-valued scores —
+        the normalised signed distances of the latent to each CAV (read from the
+        shared :class:`~torch_concepts.nn.ConceptActivationVectors` bank through
+        a :class:`~torch_concepts.nn.CAVScoreEncoder`). Every task consumes all
+        the concept scores through a sparse interpretable head, plus (PCBM-h) a
+        linear residual over the raw latent. Both building layouts produce a list
+        of variables, so the CPD wiring is written once.
         """
-        axis = self.concept_annotations
-
-        input_var, latent_var, input_cpd, latent_cpd = \
-            self._input_latent_block()
+        input_var, latent_var, input_cpd, latent_cpd = self._input_latent_block()
 
         concept_names = self.intermediate_concept_names
         n_concepts = len(concept_names)
-        task0 = axis.concept(self.task_names[0])
+        idx_of = {n: i for i, n in enumerate(concept_names)}
 
         self._setup_cav_components()
         self._interpretable_heads = []
         self._task_heads = []
 
-        # Concept scores are deterministic (Delta) real values: the
-        # normalised signed distances to the concept hyperplanes.
-        concepts = ConceptVariable(
-            names="concepts",
-            members=concept_names,
-            distribution=Delta,
-            size=1,
-        )
-        tasks = ConceptVariable(
-            names="tasks",
-            members=self.task_names,
-            distribution=self.distribution_of(task0.name),
-            dist_kwargs=self.dist_kwargs_of(task0.name),
-            size=task0.cardinality,
-        )
+        # latent → concept scores (Delta): normalised signed distances to the CAVs.
+        concept_vars: List[ConceptVariable] = []
+        encoders = []
+        for kind, cname, members in self._plate_layout(concept_names, "concepts"):
+            group_idx = [idx_of[m] for m in members]
+            if kind == "plate":
+                cvar = ConceptVariable(
+                    names=cname, members=members, distribution=Delta, size=1,
+                )
+            else:
+                cvar = ConceptVariable(names=cname, distribution=Delta, size=1)
+            concept_vars.append(cvar)
+            encoders.append(ParametricCPD(
+                variable=cvar,
+                parents=[latent_var],
+                parametrization={
+                    "value": CAVScoreEncoder(self.cavs, concept_idx=group_idx),
+                },
+            ))
 
-        encoders = ParametricCPD(
-            variable=concepts,
-            parents=[latent_var],
-            parametrization={
-                "value": CAVEmbeddingToConcept(self.cavs),
-            },
-        )
-        task_head = self._make_task_head(n_concepts, tasks.size)
-        self._task_heads.append(task_head)
-        predictors = ParametricCPD(
-            variable=tasks,
-            parents=(
-                [concepts, latent_var] if self.residual else [concepts]
-            ),
-            parametrization={"logits": task_head},
-        )
-
-        return BayesianNetwork(
-            variables=[input_var, latent_var, concepts, tasks],
-            factors=[input_cpd, latent_cpd, encoders, predictors],
-        )
-
-    def _build_individual_model(self) -> BayesianNetwork:
-        """Build with one score variable per concept and one variable per
-        task."""
-        axis = self.concept_annotations
-
-        input_var, latent_var, input_cpd, latent_cpd = \
-            self._input_latent_block()
-
-        concept_names = self.intermediate_concept_names
-        n_concepts = len(concept_names)
-        task_concepts = [axis.concept(name) for name in self.task_names]
-
-        self._setup_cav_components()
-        self._interpretable_heads = []
-        self._task_heads = []
-
-        concepts = ConceptVariable(
-            names=concept_names,
-            distribution=Delta,
-            size=1,
-        )
-        tasks = ConceptVariable(
-            names=self.task_names,
-            distribution=[self.distribution_of(t.name) for t in task_concepts],
-            dist_kwargs=[self.dist_kwargs_of(t.name) for t in task_concepts],
-            size=[t.cardinality for t in task_concepts],
-        )
-
-        encoders = ParametricCPD(
-            variable=concepts,
-            parents=[latent_var],
-            parametrization=[{
-                "value": CAVEmbeddingToConcept(self.cavs, concept_idx=[i]),
-            } for i in range(n_concepts)],
-        )
+        # concept scores (+ raw latent residual) → tasks.
+        tasks = self.build_concept_variables(self.task_names, plate_name="tasks")
         task_parents = (
-            [*concepts, latent_var] if self.residual else [*concepts]
+            [*concept_vars, latent_var] if self.residual else [*concept_vars]
         )
         task_parametrizations = []
-        for t in task_concepts:
-            head = self._make_task_head(n_concepts, t.cardinality)
+        for t in tasks:
+            head = self._make_task_head(n_concepts, t.size)
             self._task_heads.append(head)
             task_parametrizations.append({"logits": head})
         predictors = ParametricCPD(
@@ -393,6 +342,6 @@ class PostHocCBM(ConceptBottleneckModel):
         )
 
         return BayesianNetwork(
-            variables=[input_var, latent_var, *concepts, *tasks],
+            variables=[input_var, latent_var, *concept_vars, *tasks],
             factors=[input_cpd, latent_cpd, *encoders, *predictors],
         )

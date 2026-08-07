@@ -7,7 +7,8 @@ dimensions can be dedicated to concept prediction and others to task prediction.
 
 This architecture is a standard baseline, particularly for evaluating the
 performance of concept bottleneck models when the concept set is incomplete or
-noisy.
+noisy (Mahinpei et al., "Promises and Pitfalls of Black-Box Concept Learning
+Models", 2021; the ``hybrid``/``joint`` bottleneck of Koh et al., ICML 2020).
 """
 from typing import Dict, List, Optional, Union
 
@@ -16,16 +17,16 @@ import torch
 from torch.distributions import Bernoulli, OneHotCategorical, Normal
 
 from .....annotations import Annotations
-from .....concept_graph import ConceptGraph
 from .....distributions import Delta
+from ...low.lazy import LazyConstructor
 from ...low.encoders.linear import LinearEmbeddingToConcept
 from ...low.predictors.linear import LinearConceptToConcept
 from ...mid.inference.base import BaseInference
 from ...mid.inference.torch.deterministic import DeterministicInference
-from ...mid.models.bayesian_network import BayesianNetwork
-from ...mid.models.cpd import ParametricCPD
-from ...mid.models.variable import ConceptVariable, EmbeddingVariable, \
-    _DEFAULT_DIST_KWARGS
+from ...mid.graph.bayesian_network import BayesianNetwork
+from ...mid.factors.cpd import ParametricCPD
+from ...mid.variable import EmbeddingVariable
+from ...mid.distributions import DEFAULT_DIST_KWARGS
 from .cbm import ConceptBottleneckModel
 
 
@@ -38,8 +39,8 @@ def _merge_bottleneck_parents(
     The task predictors take both the supervised concepts (``ConceptVariable``
     parents) and the unsupervised dimensions (``EmbeddingVariable`` parents);
     this concatenates them (concepts first, then unsupervised dimensions,
-    each group in parent order) into the single ``concepts`` input of
-    type `LinearConceptToConcept`.
+    each group in parent order) into the single ``concepts`` input of a
+    :class:`~torch_concepts.nn.LinearConceptToConcept`.
     """
     values = [
         v.float() if not v.is_floating_point() else v
@@ -56,10 +57,11 @@ class HybridConceptBottleneckModel(ConceptBottleneckModel):
     of as a form of a shared embedding across concepts).
 
     The unsupervised dimensions enter the probabilistic model as
-    *non-interpretable* `EmbeddingVariable` nodes (of dimension 1), so they are
-    never supervised or included in concept losses/metrics. Continuous
-    dimensions are modelled as deterministic (``Delta``) neurons; binary
-    dimensions as ``Bernoulli`` logits (see `unsupervised_distributions`).
+    *non-interpretable* :class:`~torch_concepts.nn.EmbeddingVariable` nodes (of
+    dimension 1), so they are never supervised or included in concept
+    losses/metrics. Continuous dimensions are modelled as deterministic
+    (``Delta``) neurons; binary dimensions as ``Bernoulli`` logits (see
+    :attr:`unsupervised_distributions`).
 
     Works as a pure PyTorch module by default, or as a Lightning module when
     ``lightning=True``.
@@ -72,7 +74,7 @@ class HybridConceptBottleneckModel(ConceptBottleneckModel):
         Concept annotations (labels, cardinalities, types).
     additional_dims : int
         Dimensionality of additional latent dimensions in the bottleneck. If this
-            is set to 0, the model reduces to a standard ConceptBottleneckModel.
+        is set to 0, the model reduces to a standard ``ConceptBottleneckModel``.
     task_names : Union[List[str], str]
         Names of the task variables (a subset of the annotation labels).
     additional_dim_types: Union[List[str], str], optional
@@ -94,13 +96,10 @@ class HybridConceptBottleneckModel(ConceptBottleneckModel):
     lightning : bool, default False
         If True, adds Lightning training capabilities.
     plate : bool or None, default None
-        Controls which building path is used.  ``None`` (default) auto-detects:
-        uses plates only when **all** graph levels are plate-compatible (see
-        :meth:`plate_compatible_levels` — for this model the supervised
-        concepts and the unsupervised dimensions are checked as separate
-        groups, since each is built as its own plate), otherwise falls back to
-        individual variables.  Pass ``True`` to force plates or ``False`` to
-        force individual variables.
+        Per-level plate preference (forwarded to :class:`BaseModel`). ``None``
+        (default) / ``True`` group homogeneous concepts (and, separately, the
+        homogeneous unsupervised dimensions) into the minimum number of plates;
+        ``False`` uses one individual variable per concept / dimension.
     **kwargs
         Forwarded to :class:`BaseModel` (e.g. ``backbone``, ``latent_size``, and
         the Lightning training arguments).
@@ -115,7 +114,7 @@ class HybridConceptBottleneckModel(ConceptBottleneckModel):
         'categorical': OneHotCategorical,
         'continuous': Normal,
     }
-    variable_dist_kwargs = dict(_DEFAULT_DIST_KWARGS)
+    variable_dist_kwargs = dict(DEFAULT_DIST_KWARGS)
 
     # Per-type distribution policy for the *unsupervised* bottleneck dimensions.
     # Continuous dimensions are deterministic (``Delta``) neurons while binary
@@ -173,45 +172,34 @@ class HybridConceptBottleneckModel(ConceptBottleneckModel):
 
         # Extend the annotations with a set of dummy concepts for the additional
         # latent dimensions. These will be treated as unsupervised latent
-        # variables in the bottleneck.
-        # However, to avoid potential name conflicts, we will first figure out
-        # how many underscores we will prepend "unsup_" with, to avoid conflicts
-        # with existing concept names.
+        # variables in the bottleneck. To avoid name conflicts, we first figure
+        # out how many underscores to prepend to "unsup_".
         self.additional_dims = additional_dims
         self.unsup_names = []
         self.unsup_plate_name = None
         if additional_dims > 0:
-            # Find the number of underscores to prepend to "unsup_" to avoid
-            # conflicts with existing concept names.
             used_names = set(annotations.labels)
             prefix = "__unsup_"
             while any(name.startswith(prefix) for name in used_names):
                 prefix = "_" + prefix
             self.unsup_names = [f"{prefix}{i}" for i in range(additional_dims)]
-            # Name used for the unsupervised plate variable in the plate
-            # building path (collision-free by construction of ``prefix``).
+            # Name used for the (single) unsupervised plate variable (collision-free
+            # by construction of ``prefix``).
             self.unsup_plate_name = f"{prefix}plate"
-            metadata = None
-            if annotations.metadata:
-                metadata = {
-                    **annotations.metadata,
-                    **{name: {} for name in self.unsup_names},
-                }
             used_annotations = Annotations(
-                labels=(annotations.labels + self.unsup_names),
-                states=(annotations.states + [['0']] * additional_dims),
+                labels=(list(annotations.labels) + self.unsup_names),
+                states=(list(annotations.states) + [['0']] * additional_dims),
                 cardinalities=(
-                    annotations.cardinalities + [1] * additional_dims
+                    list(annotations.cardinalities) + [1] * additional_dims
                 ),
-                types=(annotations.types + additional_dim_types),
-                metadata=metadata,
+                types=(list(annotations.types) + additional_dim_types),
                 concept_space=annotations.concept_space,
             )
         else:
-            # Otherwise, this will be the same as a standard CBM
+            # Otherwise, this is just a standard CBM.
             used_annotations = annotations
 
-        # The parent constructor dispatches to the (overridden) building paths
+        # The parent constructor dispatches to the (overridden) ``_build_model``
         # below and wires the inference engines around the resulting PGM.
         super().__init__(
             input_size=input_size,
@@ -235,262 +223,129 @@ class HybridConceptBottleneckModel(ConceptBottleneckModel):
         return [n for n in self.intermediate_concept_names if n not in unsup]
 
     def _unsup_distribution_of(self, name: str) -> type:
-        """Distribution class used for unsupervised dimension ``name``
-        (by type).
-        """
+        """Distribution class used for unsupervised dimension ``name`` (by type)."""
         return self.unsupervised_distributions[
             self.concept_annotations.concept(name).type
         ]
 
     def _unsup_dist_kwargs_of(self, name: str) -> dict:
-        """Distribution keyword arguments for unsupervised dimension
-        ``name``.
-        """
+        """Distribution keyword arguments for unsupervised dimension ``name``."""
         return dict(
             self.variable_dist_kwargs.get(self._unsup_distribution_of(name), {})
         )
 
-    def plate_compatible_levels(
-        self,
-        axis_annotation: Annotations,
-        graph: ConceptGraph,
-    ) -> List[bool]:
-        """Flag, per graph level, whether its concepts can share plates.
+    def _build_unsupervised_variables(self) -> List[EmbeddingVariable]:
+        """Build the unsupervised bottleneck dimensions as embedding variable(s).
 
-        Overrides the base check: the supervised concepts and the unsupervised
-        dimensions are built as *separate* plate variables, so a level is
-        plate-compatible when each of the two groups is internally homogeneous
-        (same type and cardinality) (however notice that the level as a whole
-        may mix, e.g., binary concepts with continuous unsupervised dimensions).
+        Reuses the shared plate layout (:meth:`_plate_layout`) — so the ``plate``
+        preference is honoured exactly as for the supervised concepts — but emits
+        non-interpretable :class:`EmbeddingVariable` nodes whose distribution comes
+        from :attr:`unsupervised_distributions` (continuous → ``Delta``, binary →
+        ``Bernoulli``). Homogeneous dimensions collapse to a single plate; mixing
+        types (or ``plate=False``) splits them into one variable per group /
+        dimension.
         """
-        unsup = set(self.unsup_names)
-
-        def type_and_size(name: str):
-            idx = axis_annotation.get_index(name)
-            return (
-                axis_annotation.types[idx],
-                int(axis_annotation.cardinalities[idx]),
-            )
-
-        def homogeneous(names: List[str]) -> bool:
-            return len({type_and_size(name) for name in names}) <= 1
-
-        return [
-            homogeneous([n for n in level if n not in unsup])
-            and homogeneous([n for n in level if n in unsup])
-            for level in graph.get_levels()
-        ]
+        out: List[EmbeddingVariable] = []
+        for kind, name, members in self._plate_layout(
+            self.unsup_names, self.unsup_plate_name
+        ):
+            u0 = self.concept_annotations.concept(members[0])
+            dist = self._unsup_distribution_of(u0.name)
+            dkw = self._unsup_dist_kwargs_of(u0.name)
+            if kind == "plate":
+                out.append(EmbeddingVariable(
+                    names=name, members=members,
+                    distribution=dist, dist_kwargs=dkw, size=u0.cardinality,
+                ))
+            else:
+                out.append(EmbeddingVariable(
+                    names=name,
+                    distribution=dist, dist_kwargs=dkw, size=u0.cardinality,
+                ))
+        return out
 
     # ------------------------------------------------------------------
-    # Building paths
+    # Model assembly (written once for both layouts)
     # ------------------------------------------------------------------
-    def _build_plate_model(self) -> BayesianNetwork:
-        """Build using one plate variable per bipartite
-        level (concepts, tasks), plus one plate for the unsupervised dimensions.
+    def _build_model(self) -> BayesianNetwork:
+        """Assemble ``input → latent → {concepts, unsupervised dims} → tasks``.
+
+        The supervised concepts and the tasks are grouped into the minimum
+        number of plates by :meth:`build_concept_variables`; the unsupervised
+        dimensions are grouped the same way but as embedding variables (see
+        :meth:`_build_unsupervised_variables`). Each concept/dimension is
+        encoded from the latent with a linear layer; every task consumes the
+        *whole* bottleneck (supervised concepts + unsupervised dimensions) via a
+        single linear head sized over the concatenation.
         """
+        # With no additional dimensions the model is a plain CBM.
         if not self.additional_dims:
-            # Then this is simply the standard CBM!
-            return super()._build_plate_model()
+            return super()._build_model()
 
-        # Otherwise we are in Hybrid CBM territory
-        axis = self.concept_annotations
+        input_var, latent_var, input_cpd, latent_cpd = self._input_latent_block()
 
-        input_var, latent_var, input_cpd, latent_cpd = \
-            self._input_latent_block()
-
-        variables = [input_var, latent_var]
-        factors = [input_cpd, latent_cpd]
-        task_parents = []
-
-        supervised = self.supervised_concept_names
-        if supervised:
-            concept0 = axis.concept(supervised[0])
-            concepts = ConceptVariable(
-                names="concepts",
-                members=supervised,
-                distribution=self.distribution_of(concept0.name),
-                dist_kwargs=self.dist_kwargs_of(concept0.name),
-                size=concept0.cardinality,
-            )
-            encoders = ParametricCPD(
-                variable=concepts,
-                parents=[latent_var],
-                parametrization=self._flexible_parametrization(
-                    variable=concepts,
-                    first=LinearEmbeddingToConcept(
-                        in_embeddings=self.latent_size,
-                        out_concepts=concepts.size,
-                    ),
-                    second=None,
-                )
-            )
-            variables.append(concepts)
-            factors.append(encoders)
-            task_parents.append(concepts)
-
-        # The unsupervised dimensions form their own (non-interpretable) plate:
-        # they receive no supervision, so they must not be concept variables.
-        unsup0 = axis.concept(self.unsup_names[0])
-        unsup = EmbeddingVariable(
-            names=self.unsup_plate_name,
-            members=self.unsup_names,
-            distribution=self._unsup_distribution_of(unsup0.name),
-            dist_kwargs=self._unsup_dist_kwargs_of(unsup0.name),
-            size=unsup0.cardinality, # Notice that this will be 1 for all
-                                     # unsupervised dimensions, as they are
-                                     # single neurons
+        concepts = self.build_concept_variables(
+            self.supervised_concept_names, plate_name="concepts"
         )
-        unsup_encoders = ParametricCPD(
-            variable=unsup,
-            parents=[latent_var],
-            parametrization=self._flexible_parametrization(
-                variable=unsup,
-                first=LinearEmbeddingToConcept(
-                    in_embeddings=self.latent_size,
-                    out_concepts=unsup.size,
-                ),
-                second=None,
-            )
-        )
-        variables.append(unsup)
-        factors.append(unsup_encoders)
-        task_parents.append(unsup)
-
-        task0 = axis.concept(self.task_names[0])
-        tasks = ConceptVariable(
-            names="tasks",
-            members=self.task_names,
-            distribution=self.distribution_of(task0.name),
-            dist_kwargs=self.dist_kwargs_of(task0.name),
-            size=task0.cardinality,
-        )
-        predictors = ParametricCPD(
-            variable=tasks,
-            parents=task_parents,
-            parametrization=self._flexible_parametrization(
-                variable=tasks,
-                first=LinearConceptToConcept(
-                    in_concepts=sum(p.size for p in task_parents),
-                    out_concepts=tasks.size,
-                ),
-                second=None,
-            ),
-            aggregate=_merge_bottleneck_parents,
-        )
-        variables.append(tasks)
-        factors.append(predictors)
-
-        return BayesianNetwork(variables=variables, factors=factors)
-
-    def _build_individual_model(self) -> BayesianNetwork:
-        """Build with one variable per concept, one per unsupervised dimension,
-        and one per task."""
-        if not self.additional_dims:
-            # Then this is simply the standard CBM!
-            return super()._build_individual_model()
-
-        # Otherwise we are in Hybrid CBM territory
-        axis = self.concept_annotations
-
-        input_var, latent_var, input_cpd, latent_cpd = \
-            self._input_latent_block()
-
-        supervised = [
-            axis.concept(name)
-            for name in self.supervised_concept_names
-        ]
-        unsup_axis = [axis.concept(name) for name in self.unsup_names]
-        task_concepts = [axis.concept(name) for name in self.task_names]
-        concepts = ConceptVariable(
-            names=[c.name for c in supervised],
-            distribution=[self.distribution_of(c.name) for c in supervised],
-            dist_kwargs=[self.dist_kwargs_of(c.name) for c in supervised],
-            size=[c.cardinality for c in supervised],
-        )
-        # The unsupervised dimensions are non-interpretable (embedding)
-        # variables: they receive no supervision.
-        unsups = EmbeddingVariable(
-            names=self.unsup_names,
-            distribution=[
-                self._unsup_distribution_of(u.name)
-                for u in unsup_axis
-            ],
-            dist_kwargs=[
-                self._unsup_dist_kwargs_of(u.name)
-                for u in unsup_axis
-            ],
-            # Notice that, as above, this will be 1 for all unsupervised
-            # dimensions, as they are single neurons by construction.
-            size=[u.cardinality for u in unsup_axis],
-        )
-        tasks = ConceptVariable(
-            names=self.task_names,
-            distribution=[self.distribution_of(t.name) for t in task_concepts],
-            dist_kwargs=[self.dist_kwargs_of(t.name) for t in task_concepts],
-            size=[t.cardinality for t in task_concepts],
+        unsup = self._build_unsupervised_variables()
+        tasks = self.build_concept_variables(
+            self.task_names, plate_name="tasks"
         )
 
-        # For clarity, separate the encoders for the supervised concepts and the
-        # unsupervised parts of the bottleneck (notice this can be done in
-        # theory using a single encoder, but we want to keep the two groups
-        # separate for clarity).
+        # latent → supervised concepts: one linear encoder per concept group.
         encoders = ParametricCPD(
             variable=concepts,
             parents=[latent_var],
             parametrization=[
                 self._flexible_parametrization(
-                    variable=concept,
-                    first=LinearEmbeddingToConcept(
-                        in_embeddings=self.latent_size,
-                        out_concepts=concept.size,
-                    ),
-                    second=None,
+                    variable=c,
+                    first=LazyConstructor(LinearEmbeddingToConcept),
+                    second=LazyConstructor(LinearEmbeddingToConcept),
                 )
-                for concept in concepts
+                for c in concepts
             ],
         )
+        # latent → unsupervised dimensions: kept as a separate encoder group for
+        # clarity (they are never supervised).
         unsup_encoders = ParametricCPD(
-            variable=unsups,
+            variable=unsup,
             parents=[latent_var],
             parametrization=[
                 self._flexible_parametrization(
                     variable=u,
-                    first=LinearEmbeddingToConcept(
-                        in_embeddings=self.latent_size,
-                        out_concepts=u.size,
-                    ),
-                    second=None,
+                    first=LazyConstructor(LinearEmbeddingToConcept),
+                    second='auto',
                 )
-                for u in unsups
+                for u in unsup
             ],
         )
+        # concepts + unsupervised dimensions → tasks. The unsupervised dimensions
+        # are embedding parents, so a lazily-sized head would miss them; size the
+        # head explicitly over the whole bottleneck and fuse the parents with
+        # ``_merge_bottleneck_parents``.
         bottleneck_size = (
-            sum(c.size for c in concepts) + sum(u.size for u in unsups)
+            sum(c.size for c in concepts) + sum(u.size for u in unsup)
         )
         predictors = ParametricCPD(
             variable=tasks,
-            parents=[*concepts, *unsups],
+            parents=[*concepts, *unsup],
             parametrization=[
                 self._flexible_parametrization(
-                    variable=task,
+                    variable=t,
                     first=LinearConceptToConcept(
                         in_concepts=bottleneck_size,
-                        out_concepts=task.size,
+                        out_concepts=t.size,
                     ),
-                    second=None,
+                    second='auto',
                 )
-                for task in tasks
+                for t in tasks
             ],
             aggregate=_merge_bottleneck_parents,
         )
 
         return BayesianNetwork(
-            variables=[input_var, latent_var, *concepts, *unsups, *tasks],
+            variables=[input_var, latent_var, *concepts, *unsup, *tasks],
             factors=[
-                input_cpd,
-                latent_cpd,
-                *encoders,
-                *unsup_encoders,
-                *predictors,
+                input_cpd, latent_cpd, *encoders, *unsup_encoders, *predictors,
             ],
         )

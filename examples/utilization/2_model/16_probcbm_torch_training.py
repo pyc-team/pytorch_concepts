@@ -63,10 +63,10 @@ def train_model(model, query, x_train, target, vib_beta=0.0,
 
     vib_query_names = vib_query_names or []
     if teacher_force_gt is not None:
-        # ``build_query`` maps the ground truth to {variable_name: tensor},
-        # which is what the engine's teacher forcing consumes (uniformly for
-        # plate and individual layouts).
-        forced_query = model.build_query(teacher_force_gt)
+        # ``fully_observed_query`` maps the ground truth to {variable_name:
+        # tensor}, which is what the engine's teacher forcing consumes
+        # (uniformly for plate and individual layouts).
+        forced_query = model.fully_observed_query(teacher_force_gt)
         full_query = {**forced_query, **{n: None for n in vib_query_names}}
         logit_names = list(forced_query)
     else:

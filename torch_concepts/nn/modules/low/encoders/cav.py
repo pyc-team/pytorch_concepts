@@ -16,10 +16,12 @@ downstream head along the CAVs, reduced to the TCAV score) is stateless and
 lives in :mod:`torch_concepts.nn.functional` as
 :func:`~torch_concepts.nn.functional.tcav_score`.
 """
-from typing import Union
+import math
+from typing import List, Optional, Union
 
 import numpy as np
 import torch
+import torch.nn as nn
 from sklearn.linear_model import LogisticRegression
 
 from torch_concepts import Annotations
@@ -200,3 +202,133 @@ class CAVEmbeddingToConcept(BaseConceptLayer):
             embeddings @ self.cavs.t().to(embeddings)
             + self.bias.to(embeddings)
         )
+
+
+class ConceptActivationVectors(nn.Module):
+    """
+    Shared bank of per-concept activation vectors (the Post-hoc CBM concept bank).
+
+    Holds one CAV per concept — a direction in the backbone's embedding space —
+    with a per-concept intercept, and turns an embedding into the *normalised
+    signed distance* to each concept hyperplane,
+    ``s_i = (<f(x), v_i> + b_i) / ||v_i||`` (positive means the concept is
+    predicted present). This is the concept bank of the Post-hoc CBM
+    (Yuksekgonul et al., ICLR 2023): the CAVs are normally fitted post hoc — one
+    linear probe (SVM / logistic regression) per concept on the frozen backbone —
+    and passed in via ``vectors`` / ``intercepts``, then frozen
+    (``trainable=False``). Left trainable, the same table can be learned in place
+    as a bank of logistic-regression probes.
+
+    This differs from :class:`CAVEmbeddingToConcept`, which fits *itself* from
+    labelled activations with sklearn and stores frozen buffers: this table is
+    initialised from externally-fitted (or random) vectors and is meant to be
+    *shared* across a model's per-concept score layers, exactly as ProbCBM shares
+    one :class:`~torch_concepts.nn.ConceptAnchors` table.
+
+    Args:
+        n_concepts: Number of (binary) concepts.
+        embedding_size: Dimensionality of the backbone embedding.
+        vectors: Optional pre-fitted CAVs of shape ``(n_concepts,
+            embedding_size)``. Randomly initialised when omitted.
+        intercepts: Optional pre-fitted intercepts of shape ``(n_concepts,)``.
+            Zeros when omitted.
+        trainable: If True (default) the table is an ``nn.Parameter`` bank; if
+            False it is registered as buffers (the frozen post-hoc setting).
+    """
+
+    def __init__(
+        self,
+        n_concepts: int,
+        embedding_size: int,
+        vectors: Optional[torch.Tensor] = None,
+        intercepts: Optional[torch.Tensor] = None,
+        trainable: bool = True,
+    ):
+        super().__init__()
+        self.n_concepts = n_concepts
+        self.embedding_size = embedding_size
+
+        if vectors is None:
+            vectors = torch.empty(n_concepts, embedding_size)
+            nn.init.normal_(vectors, std=1.0 / math.sqrt(embedding_size))
+        else:
+            vectors = torch.as_tensor(vectors, dtype=torch.float).reshape(
+                n_concepts, embedding_size
+            )
+        if intercepts is None:
+            intercepts = torch.zeros(n_concepts)
+        else:
+            intercepts = torch.as_tensor(
+                intercepts, dtype=torch.float
+            ).reshape(n_concepts)
+
+        if trainable:
+            self.vectors = nn.Parameter(vectors)
+            self.intercepts = nn.Parameter(intercepts)
+        else:
+            self.register_buffer("vectors", vectors)
+            self.register_buffer("intercepts", intercepts)
+
+    def forward(
+        self,
+        embeddings: torch.Tensor,
+        concept_idx: Optional[List[int]] = None,
+    ) -> torch.Tensor:
+        """
+        Normalised signed distances of ``embeddings`` to the concept hyperplanes.
+
+        Args:
+            embeddings: Backbone embeddings of shape (..., embedding_size).
+            concept_idx: Optional indices selecting a subset of concepts.
+                ``None`` (default) scores every concept in the bank.
+
+        Returns:
+            torch.Tensor: Concept scores of shape (..., m), where ``m`` is the
+            number of selected concepts.
+        """
+        v = self.vectors
+        b = self.intercepts
+        if concept_idx is not None:
+            v = v[concept_idx]
+            b = b[concept_idx]
+        norm = v.norm(dim=-1)                       # (m,)
+        unit = (v / norm.unsqueeze(-1)).to(embeddings)
+        return embeddings @ unit.t() + (b / norm).to(embeddings)
+
+
+class CAVScoreEncoder(BaseConceptLayer):
+    """
+    CPD-facing concept-score layer over a shared :class:`ConceptActivationVectors`.
+
+    Thin adaptor so a Post-hoc CBM's concept-score CPDs read from one shared CAV
+    bank: its forward returns the bank's normalised signed distances for the
+    concepts this layer is responsible for (``concept_idx``, or all of them).
+    Mirrors :class:`~torch_concepts.nn.AnchorEmbeddingToConcept` over
+    :class:`~torch_concepts.nn.ConceptAnchors`.
+
+    Args:
+        cavs: The shared :class:`ConceptActivationVectors` bank.
+        concept_idx: Optional indices selecting which concepts this layer scores
+            (used by the per-concept building path). ``None`` scores all.
+    """
+
+    def __init__(
+        self,
+        cavs: ConceptActivationVectors,
+        concept_idx: Optional[List[int]] = None,
+    ):
+        n_selected = (
+            cavs.n_concepts if concept_idx is None else len(concept_idx)
+        )
+        super().__init__(
+            out_concepts=n_selected,
+            in_embeddings=cavs.embedding_size,
+        )
+        self.cavs = cavs
+        self.concept_idx = (
+            list(concept_idx) if concept_idx is not None else None
+        )
+
+    def forward(self, embeddings: torch.Tensor) -> torch.Tensor:
+        """Concept scores of shape (..., m) from the shared CAV bank."""
+        return self.cavs(embeddings, self.concept_idx)

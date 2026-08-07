@@ -9,7 +9,8 @@ extension (everything shared with the plain CBM is already covered by
 - Initialization and validation of ``additional_dims`` / ``additional_dim_types``
 - The unsupervised dimensions entering the PGM as non-interpretable
   ``EmbeddingVariable`` nodes (never supervised / teacher-forced)
-- Both building paths (plate vs individual) and the ``plate`` auto-detection
+- Plate grouping of the unsupervised dimensions (a single plate when
+  homogeneous, split per type otherwise, one variable each with ``plate=False``)
 - The per-type distribution policy for the unsupervised dimensions
   (continuous -> Delta, binary -> Bernoulli)
 - Forward pass / output shapes, including querying the unsupervised dimensions
@@ -34,7 +35,7 @@ from torch_concepts.nn.modules.high.models.hybrid_cbm import (
 )
 from torch_concepts.nn.modules.high.models.cbm import ConceptBottleneckModel
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
-from torch_concepts.nn.modules.mid.models.variable import (
+from torch_concepts.nn.modules.mid.variable import (
     ConceptVariable,
     EmbeddingVariable,
 )
@@ -58,8 +59,8 @@ def _binary_ann(concepts=('c1', 'c2', 'c3'), task='task'):
 def _task_head(model, task_name):
     """The ``LinearConceptToConcept`` producing ``task_name``'s logits.
 
-    Works for both building paths: the plate path stores the task CPD under the
-    plate name ``"tasks"``, the individual path under the task's own name.
+    Works for both building layouts: the plate layout stores the task CPD under
+    the plate name ``"tasks"``, the individual layout under the task's own name.
     """
     factors = model.pgm.factors
     cpd = factors['tasks'] if 'tasks' in factors else factors[task_name]
@@ -131,18 +132,18 @@ class TestHybridCBMInitialization(unittest.TestCase):
 
 
 class TestHybridCBMStructure(unittest.TestCase):
-    """The assembled PGM: variable kinds, both build paths, task head width."""
+    """The assembled PGM: variable kinds, plate grouping, task head width."""
 
     def setUp(self):
         self.ann = _binary_ann()
 
-    def test_plate_path_variables(self):
+    def test_homogeneous_unsup_is_a_single_plate(self):
         model = HybridConceptBottleneckModel(
             input_size=6, annotations=self.ann, additional_dims=4,
             task_names=['task'],
         )
-        # Homogeneous concepts + homogeneous continuous unsup dims -> plate path.
-        self.assertTrue(all(model.plate))
+        # Homogeneous concepts + homogeneous continuous unsup dims -> one plate
+        # each, so the PGM has exactly these variables.
         self.assertEqual(
             set(model.pgm.variables),
             {'input', 'latent', 'concepts', model.unsup_plate_name, 'tasks'},
@@ -161,23 +162,41 @@ class TestHybridCBMStructure(unittest.TestCase):
         self.assertIsInstance(variables['concepts'], ConceptVariable)
         self.assertIsInstance(variables['tasks'], ConceptVariable)
 
-    def test_individual_path_variables(self):
-        """A heterogeneous unsup group forces the per-variable building path."""
+    def test_mixed_unsup_types_split_into_per_type_plates(self):
+        """A heterogeneous unsup group splits into one plate per type."""
         model = HybridConceptBottleneckModel(
             input_size=6, annotations=self.ann, additional_dims=2,
             task_names=['task'],
             additional_dim_types=['continuous', 'binary'],
         )
-        self.assertFalse(all(model.plate))
+        # Two homogeneous unsup plates (continuous + binary), each an embedding.
+        unsup_vars = [
+            v for v in model.pgm.variables.values()
+            if v.variable_type == 'embedding' and v.name not in ('input', 'latent')
+        ]
+        self.assertEqual(len(unsup_vars), 2)
+        self.assertEqual(
+            {v.distribution for v in unsup_vars}, {Delta, Bernoulli},
+        )
+
+    def test_plate_false_gives_individual_variables(self):
+        """``plate=False`` builds one variable per concept and per unsup dim."""
+        model = HybridConceptBottleneckModel(
+            input_size=6, annotations=self.ann, additional_dims=2,
+            task_names=['task'], plate=False,
+        )
         # One variable per unsupervised dimension, each an EmbeddingVariable.
         for name in model.unsup_names:
             self.assertIn(name, model.pgm.variables)
             self.assertEqual(model.pgm.variables[name].variable_type, 'embedding')
+        # And one variable per supervised concept.
+        for name in model.supervised_concept_names:
+            self.assertIn(name, model.pgm.variables)
 
     def test_task_head_consumes_concepts_and_unsup_dims(self):
         """The task predictor's input width == supervised concepts + unsup dims."""
-        for dim_types, path in [('continuous', 'plate'),
-                                (['continuous', 'binary', 'continuous'], 'individual')]:
+        for dim_types in ('continuous',
+                          ['continuous', 'binary', 'continuous']):
             model = HybridConceptBottleneckModel(
                 input_size=6, annotations=self.ann, additional_dims=3,
                 task_names=['task'], additional_dim_types=dim_types,
@@ -186,7 +205,7 @@ class TestHybridCBMStructure(unittest.TestCase):
             # 3 supervised binary concepts + 3 unsupervised dims.
             self.assertEqual(
                 head.predictor.in_features, 3 + 3,
-                f"wrong task-head width on the {path} path",
+                f"wrong task-head width for dim_types={dim_types}",
             )
 
 
@@ -247,10 +266,10 @@ class TestHybridCBMForward(unittest.TestCase):
             self.assertIn('logits', out.params[name])
             self.assertEqual(out.params[name]['logits'].shape, (5, 1))
 
-    def test_build_query_excludes_unsup_dims(self):
+    def test_fully_observed_query_excludes_unsup_dims(self):
         """Teacher-forcing targets cover only the supervised concept variables."""
         gt = torch.randint(0, 2, (8, 4))  # c1, c2, c3, task
-        query = self.model.build_query(gt)
+        query = self.model.fully_observed_query(gt)
         # Plate layout: one entry per concept variable, none for the unsup plate.
         self.assertEqual(set(query), {'concepts', 'tasks'})
         self.assertEqual(query['concepts'].shape, (8, 3))
@@ -286,13 +305,15 @@ class TestHybridCBMTraining(unittest.TestCase):
         self.assertGreater(grad.abs().sum().item(), 0.0)
 
     def test_parameters_update(self):
-        """A few optimizer steps actually move the model's parameters."""
+        """A few (SGD) optimizer steps actually move the model's parameters."""
         model = HybridConceptBottleneckModel(
             input_size=6, annotations=self.ann, additional_dims=4,
             task_names=['task'],
         )
         model.train()
-        opt = torch.optim.AdamW(model.parameters(), lr=0.05)
+        # SGD (not Adam) keeps this runnable on CPU-only boxes whose torch build
+        # trips an accelerator health-check inside the fused Adam step.
+        opt = torch.optim.SGD(model.parameters(), lr=0.5)
         loss_fn = nn.BCEWithLogitsLoss()
 
         x = torch.randn(16, 6)

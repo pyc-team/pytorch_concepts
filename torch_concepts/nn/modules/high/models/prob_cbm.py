@@ -36,10 +36,10 @@ from ...low.predictors.anchor import (
 from ...low.sequential import Sequential
 from ...mid.inference.base import BaseInference
 from ...mid.inference.torch.deterministic import DeterministicInference
-from ...mid.models.bayesian_network import BayesianNetwork
-from ...mid.models.cpd import ParametricCPD
-from ...mid.models.variable import ConceptVariable, EmbeddingVariable, \
-    _DEFAULT_DIST_KWARGS
+from ...mid.graph.bayesian_network import BayesianNetwork
+from ...mid.factors.cpd import ParametricCPD
+from ...mid.variable import ConceptVariable, EmbeddingVariable
+from ...mid.distributions import DEFAULT_DIST_KWARGS
 from ...outputs import ModelOutput
 from .cbm import ConceptBottleneckModel
 
@@ -136,11 +136,11 @@ class ProbCBM(ConceptBottleneckModel):
     lightning : bool, default False
         If True, adds Lightning training capabilities.
     plate : bool or None, default None
-        Controls which building path is used.  ``None`` (default) auto-detects:
-        uses plates only when **all** graph levels are plate-compatible (see
-        :meth:`~torch_concepts.nn.modules.high.base.graph.DirectedGraphModel.plate_compatible_levels`),
-        otherwise falls back to individual variables.  Pass ``True`` to force
-        plates or ``False`` to force individual variables.
+        Per-level plate preference (forwarded to :class:`BaseModel`). ``None``
+        (default) / ``True`` group the (homogeneous, binary) concepts into a
+        single plate — one batched Gaussian-embedding variable and one
+        anchor-decoded concept variable; ``False`` uses one embedding/concept
+        variable per concept.
     **kwargs
         Forwarded to :class:`BaseModel` (e.g. ``backbone``, ``latent_size``,
         and the Lightning training arguments).
@@ -159,7 +159,7 @@ class ProbCBM(ConceptBottleneckModel):
         'binary': Bernoulli,
         'categorical': OneHotCategorical,
     }
-    variable_dist_kwargs = dict(_DEFAULT_DIST_KWARGS)
+    variable_dist_kwargs = dict(DEFAULT_DIST_KWARGS)
 
     def __init__(
         self,
@@ -193,7 +193,7 @@ class ProbCBM(ConceptBottleneckModel):
             )
 
         # Hyperparameters must be set before super().__init__, which
-        # dispatches to the (overridden) building paths below.
+        # dispatches to the (overridden) ``_build_model`` below.
         self.embedding_size = embedding_size
         self.class_embedding_size = class_embedding_size
         self.init_negative_scale = init_negative_scale
@@ -265,6 +265,21 @@ class ProbCBM(ConceptBottleneckModel):
             ),
         }
 
+    @staticmethod
+    def _variable_params(out: ModelOutput, name: str) -> Optional[dict]:
+        """A queried variable's ``{quantity: tensor}`` params, or ``None``.
+
+        ``ModelOutput.params`` is keyed by *quantity* and supports variable-first
+        indexing (``params[name] -> {quantity: view}``), but only for variables
+        that were actually queried — indexing an absent one raises. This wraps
+        that lookup so the VIB / uncertainty helpers can skip embeddings the
+        caller left out of the query.
+        """
+        try:
+            return out.params[name]
+        except KeyError:
+            return None
+
     @property
     def embedding_query_names(self) -> List[str]:
         """Query names of the probabilistic (Normal) embedding variables.
@@ -302,7 +317,7 @@ class ProbCBM(ConceptBottleneckModel):
         """
         per_concept = []
         for name in self.embedding_query_names:
-            params = out.params.get(name)
+            params = self._variable_params(out, name)
             if params is None or 'loc' not in params:
                 continue
             loc = params['loc'].reshape(
@@ -341,7 +356,7 @@ class ProbCBM(ConceptBottleneckModel):
         """
         parts = []
         for name in self.embedding_query_names:
-            params = out.params.get(name)
+            params = self._variable_params(out, name)
             if params is None or 'scale' not in params:
                 continue
             scale = params['scale'].reshape(
@@ -357,151 +372,93 @@ class ProbCBM(ConceptBottleneckModel):
         return torch.cat(parts, dim=1)
 
     # ------------------------------------------------------------------
-    # Building paths
+    # Model assembly (written once for both layouts)
     # ------------------------------------------------------------------
-    def _build_plate_model(self) -> BayesianNetwork:
-        """Build using one plate variable per bipartite level.
+    def _build_model(self) -> BayesianNetwork:
+        """Assemble ``input → latent → embeddings → concepts → tasks``.
 
-        A single ``Normal`` embedding variable holds every concept's
-        probabilistic embedding (event shape ``(n_concepts, embedding_size)``),
-        one plate concept variable decodes all concepts from anchor distances
-        in one shot, and one plate task variable holds all tasks.
+        The (homogeneous, binary) concepts are grouped into the minimum number
+        of plates by the shared plate layout; each group owns one ``Normal``
+        embedding variable (event shape ``(n_members, embedding_size)``) and one
+        concept variable decoded from anchor distances
+        (:class:`~torch_concepts.nn.AnchorEmbeddingToConcept`). The tasks consume
+        *every* concept's activation and are decoded from class-anchor distances
+        through the shared projection trunk
+        (:class:`~torch_concepts.nn.AnchorConceptToConcept`). Because both
+        building layouts produce a list of variables, the CPD wiring is written
+        once and works for a single plate (default) or one variable per concept.
         """
         axis = self.concept_annotations
-
-        input_var, latent_var, input_cpd, latent_cpd = \
-            self._input_latent_block()
+        input_var, latent_var, input_cpd, latent_cpd = self._input_latent_block()
 
         concept_names = self.intermediate_concept_names
-        n_concepts = len(concept_names)
-        concept0 = axis.concept(concept_names[0])
-        task0 = axis.concept(self.task_names[0])
+        idx_of = {n: i for i, n in enumerate(concept_names)}
 
         self._setup_anchor_components()
 
-        # All concepts' probabilistic embeddings in one Normal variable.
-        embeddings = EmbeddingVariable(
-            "embeddings",
-            distribution=Normal,
-            shape=(n_concepts, self.embedding_size),
-        )
-        concepts = ConceptVariable(
-            names="concepts",
-            members=concept_names,
-            distribution=self.distribution_of(concept0.name),
-            dist_kwargs=self.dist_kwargs_of(concept0.name),
-            size=concept0.cardinality,
-        )
-        tasks = ConceptVariable(
-            names="tasks",
-            members=self.task_names,
-            distribution=self.distribution_of(task0.name),
-            dist_kwargs=self.dist_kwargs_of(task0.name),
-            size=task0.cardinality,
-        )
-
-        emb_cpd = ParametricCPD(
-            variable=embeddings,
-            parents=[latent_var],
-            parametrization=self._gaussian_embedding_parametrization(
-                n_concepts
-            ),
-        )
-        encoders = ParametricCPD(
-            variable=concepts,
-            parents=[embeddings],
-            parametrization={
-                "logits": AnchorEmbeddingToConcept(self.concept_anchors),
-            },
-        )
-        predictors = ParametricCPD(
-            variable=tasks,
-            parents=[concepts],
-            parametrization={
-                "logits": AnchorConceptToConcept(
-                    projection=self.class_projection,
-                    cardinality=task0.cardinality,
-                    n_heads=len(self.task_names),
-                ),
-            },
-        )
-
-        return BayesianNetwork(
-            variables=[input_var, latent_var, embeddings, concepts, tasks],
-            factors=[input_cpd, latent_cpd, emb_cpd, encoders, predictors],
-        )
-
-    def _build_individual_model(self) -> BayesianNetwork:
-        """Build with one embedding/concept variable per concept and one
-        variable per task."""
-        axis = self.concept_annotations
-
-        input_var, latent_var, input_cpd, latent_cpd = \
-            self._input_latent_block()
-
-        concept_names = self.intermediate_concept_names
-        intermediate = [axis.concept(name) for name in concept_names]
-        task_concepts = [axis.concept(name) for name in self.task_names]
-
-        self._setup_anchor_components()
-
-        # One Normal embedding variable per concept.
-        embeddings = EmbeddingVariable(
-            names=[f"emb_{c.name}" for c in intermediate],
-            distribution=Normal,
-            size=self.embedding_size,
-        )
-        concepts = ConceptVariable(
-            names=concept_names,
-            distribution=[self.distribution_of(c.name) for c in intermediate],
-            dist_kwargs=[self.dist_kwargs_of(c.name) for c in intermediate],
-            size=[c.cardinality for c in intermediate],
-        )
-        tasks = ConceptVariable(
-            names=self.task_names,
-            distribution=[self.distribution_of(t.name) for t in task_concepts],
-            dist_kwargs=[self.dist_kwargs_of(t.name) for t in task_concepts],
-            size=[t.cardinality for t in task_concepts],
-        )
-
-        emb_cpds = ParametricCPD(
-            variable=embeddings,
-            parents=[latent_var],
-            # One independently-parametrized CPD per concept.
-            parametrization=[
-                self._gaussian_embedding_parametrization(1)
-                for _ in intermediate
-            ],
-        )
-        # One CPD per concept: each concept is decoded from its *own*
-        # embedding against its own anchor pair (shared anchor table).
-        encoders = [
-            ParametricCPD(
-                variable=concept,
-                parents=[embedding],
+        emb_vars: List[EmbeddingVariable] = []
+        concept_vars: List[ConceptVariable] = []
+        emb_cpds = []
+        encoders = []
+        for kind, cname, members in self._plate_layout(concept_names, "concepts"):
+            group_idx = [idx_of[m] for m in members]
+            m = len(members)
+            if kind == "plate":
+                c0 = axis.concept(members[0])
+                cvar = ConceptVariable(
+                    names=cname, members=members,
+                    distribution=self.distribution_of(c0.name),
+                    dist_kwargs=self.dist_kwargs_of(c0.name),
+                    size=c0.cardinality,
+                )
+                evar = EmbeddingVariable(
+                    names=f"{cname}__emb", distribution=Normal,
+                    shape=(m, self.embedding_size),
+                )
+            else:
+                cvar = self._make_concept_variable(cname)
+                evar = EmbeddingVariable(
+                    names=f"{cname}__emb", distribution=Normal,
+                    size=self.embedding_size,
+                )
+            emb_vars.append(evar)
+            concept_vars.append(cvar)
+            # latent → Gaussian embedding
+            emb_cpds.append(ParametricCPD(
+                variable=evar,
+                parents=[latent_var],
+                parametrization=self._gaussian_embedding_parametrization(m),
+            ))
+            # embedding → concept (anchor distances)
+            encoders.append(ParametricCPD(
+                variable=cvar,
+                parents=[evar],
                 parametrization={
                     "logits": AnchorEmbeddingToConcept(
-                        self.concept_anchors,
-                        concept_idx=[i],
+                        self.concept_anchors, concept_idx=group_idx,
                     ),
                 },
-            )
-            for i, (concept, embedding) in enumerate(zip(concepts, embeddings))
-        ]
+            ))
+
+        # concepts → tasks (distances to learnable class anchors).
+        tasks = self.build_concept_variables(self.task_names, plate_name="tasks")
         predictors = ParametricCPD(
             variable=tasks,
-            parents=[*concepts],
-            parametrization=[{
-                "logits": AnchorConceptToConcept(
+            parents=[*concept_vars],
+            parametrization=[
+                {"logits": AnchorConceptToConcept(
                     projection=self.class_projection,
-                    cardinality=t.cardinality,
-                    n_heads=1,
-                ),
-            } for t in task_concepts],
+                    cardinality=t.member_size,
+                    n_heads=len(t.members),
+                )}
+                for t in tasks
+            ],
         )
 
         return BayesianNetwork(
-            variables=[input_var, latent_var, *embeddings, *concepts, *tasks],
+            variables=[
+                input_var, latent_var, *emb_vars, *concept_vars, *tasks,
+            ],
             factors=[
                 input_cpd, latent_cpd, *emb_cpds, *encoders, *predictors,
             ],

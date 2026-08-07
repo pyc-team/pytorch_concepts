@@ -32,6 +32,7 @@ from .modules.low.encoders.whitening import ConceptWhitening, WhitenedEmbeddingT
 from .modules.low.encoders.cav import (
     CAVEmbeddingToConcept,
     ConceptActivationVectors,
+    CAVScoreEncoder,
 )
 
 # Predictors
@@ -160,6 +161,7 @@ __all__ = [
     "ConceptAnchors",
     "CAVEmbeddingToConcept",
     "ConceptActivationVectors",
+    "CAVScoreEncoder",
     "ResidualConceptEmbeddingToConcept",
 
     # Dense layers
