@@ -16,6 +16,23 @@ import torch
 import torch.nn as nn
 
 
+def _derive_stages(side: int, base_channels: int, max_base_size: int) -> Tuple[int, ...]:
+    """Stage widths for a ``side x side`` target, depth chosen from ``side`` itself.
+
+    Each stage doubles the resolution, so the depth is the number of halvings that
+    bring ``side`` down to ``max_base_size`` or below — as far as its factors of two
+    allow. Widths double from ``base_channels`` upwards, narrowest last.
+
+    >>> _derive_stages(28, 32, 8), _derive_stages(64, 32, 8)
+    ((64, 32), (128, 64, 32))
+    """
+    n, base = 0, side
+    while base > max_base_size and base % 2 == 0:
+        base //= 2
+        n += 1
+    return tuple(base_channels << i for i in reversed(range(n)))
+
+
 class ConvDecoder(nn.Module):
     """Decode a flat feature vector into a flat image via transposed convolutions.
 
@@ -34,24 +51,29 @@ class ConvDecoder(nn.Module):
     out_shape : tuple of int
         Image event shape ``(channels, height, width)``. ``height`` and
         ``width`` must be ``base_size * 2 ** len(hidden_channels)``.
-    hidden_channels : sequence of int, default ``(128, 64, 32)``
+    hidden_channels : sequence of int or int, default 32
         Channel count after each upsampling stage; its length is the number of
-        stages, so each entry doubles the resolution.
+        stages, so each entry doubles the resolution. An **int** is the narrowest
+        stage instead, and the depth is derived from ``out_shape`` — see
+        :func:`_derive_stages`. A config can then stay resolution-agnostic, which
+        matters when one sweep spans datasets of different sizes.
     base_size : int, optional
         Side of the spatial grid the linear projection produces. Derived from
         ``out_shape`` when omitted — ``side / 2 ** len(hidden_channels)``, which
-        is the only value that reaches the target — so a config only has to
-        choose the depth. Defaults to ``None`` (derive).
+        is the only value that reaches the target. Defaults to ``None`` (derive).
     activation : type, default ``nn.LeakyReLU``
         Activation class used between stages.
     batch_norm : bool, default True
         Whether to insert ``BatchNorm2d`` after each transposed convolution.
+    max_base_size : int, default 8
+        Largest starting grid an int ``hidden_channels`` will settle for; ignored
+        when the stages are given explicitly.
 
     Raises
     ------
     ValueError
-        If ``out_shape`` is not 3-dimensional, or its spatial size is not
-        ``base_size * 2 ** len(hidden_channels)``.
+        If ``out_shape`` is not 3-dimensional or not square, or its spatial size
+        is not ``base_size * 2 ** len(hidden_channels)``.
 
     Examples
     --------
@@ -62,15 +84,16 @@ class ConvDecoder(nn.Module):
     >>> decoder(torch.randn(8, 48)).shape
     torch.Size([8, 3072])
 
-    ``base_size`` follows from the depth, so MNIST works with the same config as
-    long as the depth divides the side (``28 = 7 * 2 ** 2``):
+    With an int, one call site serves any resolution — 28 takes two stages
+    (``28 = 7 * 2 ** 2``) and 64 takes three (``64 = 8 * 2 ** 3``):
 
-    >>> ConvDecoder(in_features=48, out_shape=(3, 28, 28),
-    ...             hidden_channels=(64, 32))(torch.randn(2, 48)).shape
+    >>> ConvDecoder(in_features=48, out_shape=(3, 28, 28))(torch.randn(2, 48)).shape
     torch.Size([2, 2352])
+    >>> ConvDecoder(in_features=48, out_shape=(3, 64, 64))(torch.randn(2, 48)).shape
+    torch.Size([2, 12288])
 
-    A depth the target cannot reach is rejected up front rather than silently
-    resized:
+    An explicit depth the target cannot reach is rejected up front rather than
+    silently resized:
 
     >>> ConvDecoder(in_features=48, out_shape=(3, 28, 28),
     ...             hidden_channels=(64, 32, 16))
@@ -83,10 +106,11 @@ class ConvDecoder(nn.Module):
         self,
         in_features: int,
         out_shape: Union[Tuple[int, ...], torch.Size],
-        hidden_channels: Sequence[int] = (128, 64, 32),
+        hidden_channels: Union[Sequence[int], int] = 32,
         base_size: Optional[int] = None,
         activation: type = nn.LeakyReLU,
         batch_norm: bool = True,
+        max_base_size: int = 8,
     ) -> None:
         super().__init__()
         out_shape = tuple(int(s) for s in out_shape)
@@ -96,13 +120,15 @@ class ConvDecoder(nn.Module):
                 f"got {out_shape}."
             )
         channels, height, width = out_shape
-        hidden_channels = tuple(int(c) for c in hidden_channels)
-        n_stages = len(hidden_channels)
         if height != width:
             raise ValueError(
                 f"ConvDecoder: out_shape {out_shape} is not square "
                 f"({height}x{width}). Resize the images to a square first."
             )
+        if isinstance(hidden_channels, int):
+            hidden_channels = _derive_stages(height, hidden_channels, max_base_size)
+        hidden_channels = tuple(int(c) for c in hidden_channels)
+        n_stages = len(hidden_channels)
         if base_size is None:
             # Each stage doubles the resolution, so the starting grid is fixed
             # once the depth is chosen. Deriving it lets a config pick only the
@@ -130,7 +156,10 @@ class ConvDecoder(nn.Module):
         self.base_size = int(base_size)
         self.out_features = channels * height * width
 
-        first = hidden_channels[0]
+        # No stages (a side with no factor of two to spend) leaves the projection
+        # emitting the image itself — a plain dense head, which is all a target
+        # that small warrants.
+        first = hidden_channels[0] if hidden_channels else channels
         self.project = nn.Linear(in_features, first * base_size * base_size)
         self.unflatten = nn.Unflatten(-1, (first, base_size, base_size))
 

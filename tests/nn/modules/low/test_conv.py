@@ -40,6 +40,39 @@ class TestShapes:
         assert decoder(torch.randn(2, 8)).shape == (2, 3072)
 
 
+class TestDerivedStages:
+    """An int ``hidden_channels`` picks the depth from the target resolution."""
+
+    @pytest.mark.parametrize(
+        "side, explicit",
+        [(28, (64, 32)), (64, (128, 64, 32))],  # ColorMNIST, CelebA at 64px
+    )
+    def test_matches_the_hand_written_stack(self, side, explicit):
+        """Deriving reproduces the stacks the configs used to spell out."""
+        given = ConvDecoder(96, (3, side, side), hidden_channels=explicit)
+        derived = ConvDecoder(96, (3, side, side), hidden_channels=32)
+        assert derived.base_size == given.base_size
+        assert sum(p.numel() for p in derived.parameters()) == sum(
+            p.numel() for p in given.parameters()
+        )
+        assert derived(torch.randn(2, 96)).shape == given(torch.randn(2, 96)).shape
+
+    @pytest.mark.parametrize(
+        "side, base_size", [(16, 8), (32, 8), (96, 6), (128, 8), (224, 7)]
+    )
+    def test_halves_until_the_base_grid_is_small_enough(self, side, base_size):
+        assert ConvDecoder(8, (3, side, side)).base_size == base_size
+
+    def test_max_base_size_is_configurable(self):
+        assert ConvDecoder(8, (3, 32, 32), max_base_size=4).base_size == 4
+
+    def test_an_odd_side_gets_no_stages_at_all(self):
+        """No factor of two to spend, so the projection emits the image directly."""
+        decoder = ConvDecoder(8, (3, 7, 7))
+        assert decoder.base_size == 7
+        assert decoder(torch.randn(2, 8)).shape == (2, 147)
+
+
 class TestErrors:
     def test_a_depth_the_target_cannot_reach_is_rejected(self):
         with pytest.raises(ValueError, match="not reachable"):

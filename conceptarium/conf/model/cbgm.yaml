@@ -63,8 +63,10 @@ model_cls:
   # Bottleneck (k concept contexts + 1 unsupervised) -> pixels, through
   # transposed convolutions rather than a dense head: a flat decoder to
   # CelebA's 12,288 pixels is ~6M parameters against ~0.6M here.
-  # The depth comes from the dataset (it must divide the image side);
-  # `base_size` is then derived, so this needs no per-dataset override.
+  #
+  # `hidden_channels` as an int is the NARROWEST stage; ConvDecoder picks the
+  # depth from the image size (28 -> 2 stages, 64 -> 3) and widths double
+  # upward, so one value serves every dataset in a sweep.
   #
   # Raw: the model composes the observation parameter's activation on top —
   # the IDENTITY on a Normal's `loc`, so this stack's output already IS the
@@ -73,7 +75,7 @@ model_cls:
     _target_: "torch_concepts.nn.ConvDecoder"
     in_features: ${math:"(${data_dims.n_concepts} + 1) * ${model.model_cls.embedding_size}"}
     out_shape: ${model.model_cls.input_size}
-    hidden_channels: ${dataset.decoder_channels}
+    hidden_channels: 32
 
 # The encoder side of the guide. attach_latent_encoder composes this with
 # the dataset's backbone into one extractor and stamps `out_features` on

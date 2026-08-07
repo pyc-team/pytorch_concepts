@@ -1,8 +1,8 @@
 # =============================================================
 # Train a Concept Bottleneck Generative Model.
 #
-# Sweeps over both generative datasets (colormnist, celeba_generative)
-# in one multirun:
+# Sweeps over both image datasets (colormnist, celeba) in one
+# multirun:
 #
 #   cd conceptarium
 #   python run_experiment.py --config-name cbgm \
@@ -12,6 +12,12 @@
 #
 # Then produce the generation / steering / counterfactual figures:
 #   python run_generative_analysis.py
+#
+# CelebA has 40 concepts, so steering.png would be 40 rows — pick a
+# few:
+#   python run_generative_analysis.py \
+#       steer_concepts="[Smiling,Male,Eyeglasses]" \
+#       counterfactual_concept=Smiling
 #
 # Requires `pyro-ppl` (VariationalInference), which is not in the
 # conceptarium environment files.
@@ -31,7 +37,7 @@ hydra:
     name: cbgm
   sweeper:
     params:
-      dataset: colormnist, celeba_generative
+      dataset: colormnist, celeba
 
 seed: 42
 

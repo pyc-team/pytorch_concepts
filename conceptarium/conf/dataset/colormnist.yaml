@@ -22,10 +22,6 @@ datamodule:
 
 default_task_names: [digit]
 
-# Transposed-conv decoder depth for a generative model. 28 = 7 * 2**2, so two
-# upsampling stages; ConvDecoder derives base_size=7 from that.
-decoder_channels: [64, 32]
-
 # Pretrained feature extractor for the guide q(z | input). Frozen, and
 # small: it is only the encoder side — the decoder is learned from
 # scratch. Must NOT be precomputed into embeddings (see conf/cbgm.yaml),

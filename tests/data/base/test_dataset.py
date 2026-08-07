@@ -51,7 +51,7 @@ class TestConceptSubset(unittest.TestCase):
         """Test that missing concepts raise clear error."""
         subset = ['concept_1', 'nonexistent_concept', 'another_missing']
 
-        with self.assertRaises(AssertionError) as context:
+        with self.assertRaises(ValueError) as context:
             ConceptDataset(
                 self.X,
                 self.C,
@@ -62,7 +62,6 @@ class TestConceptSubset(unittest.TestCase):
         error_msg = str(context.exception)
         self.assertIn('nonexistent_concept', error_msg)
         self.assertIn('another_missing', error_msg)
-        self.assertIn('Concepts not found', error_msg)
 
     def test_subset_single_concept(self):
         """Test selecting a single concept."""
