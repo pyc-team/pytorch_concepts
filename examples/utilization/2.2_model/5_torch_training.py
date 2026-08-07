@@ -15,8 +15,7 @@ import torch
 from torch import nn
 
 from torch_concepts import seed_everything
-from torch_concepts.nn import ConceptBottleneckModel, GraphConceptBottleneckModel, \
-    CausallyReliableConceptBottleneckModel, MLP
+from torch_concepts.nn import ConceptBottleneckModel, MLP
 from torch_concepts.data import BnLearnDataset
 
 from torchmetrics.classification import BinaryAccuracy
@@ -26,12 +25,12 @@ from torchmetrics.classification import BinaryAccuracy
 def main():
 
     seed_everything(42)
-    
+
     # Generate toy data
     print("=" * 60)
     print("Step 1: Generate toy XOR dataset")
     print("=" * 60)
-    
+
     dataset = BnLearnDataset(name="asia", n_gen=2000, seed=42)
     annotations = dataset.annotations
     n_features = dataset.n_features[-1]
@@ -49,7 +48,8 @@ def main():
     print("Step 2: Initialize ConceptBottleneckModel")
     print("=" * 60)
 
-    # Initialize the CBM (defaults for distributions and activations are handled internally)
+    # Initialize the CBM (defaults for distributions and activations are handled
+    # internally)
     model = ConceptBottleneckModel(
         input_size=n_features,
         annotations=annotations,
@@ -61,26 +61,35 @@ def main():
     print(f"Model created successfully!")
     print(f"Model type: {type(model).__name__}")
     print(f"Encoder output features: {model.latent_size}")
-    
+
     # Test forward pass
     print("\n" + "=" * 60)
     print("Step 3: Test forward pass")
     print("=" * 60)
-    
+
     batch_size = 8
     x_batch = x_train[:batch_size]
-    
+
     # Forward pass
     query = list(concept_names) + list(task_names)
     print(f"Query variables: {query}")
-    
+
     with torch.no_grad():
         out = model(query=query, input=x_batch)
-    
+
     print(f"Input shape: {x_batch.shape}")
-    print(f"Output {concept_names[0]} shape: {out.params[concept_names[0]]['logits'].shape}")
-    print(f"Output {concept_names[1]} shape: {out.params[concept_names[1]]['logits'].shape}")
-    print(f"Output {task_names[0]} shape: {out.params[task_names[0]]['logits'].shape}")
+    print(
+        f"Output {concept_names[0]} "
+        f"shape: {out.params[concept_names[0]]['logits'].shape}"
+    )
+    print(
+        f"Output {concept_names[1]} "
+        f"shape: {out.params[concept_names[1]]['logits'].shape}"
+    )
+    print(
+        f"Output {task_names[0]} "
+        f"shape: {out.params[task_names[0]]['logits'].shape}"
+    )
 
     # Test forward pass
     print("\n" + "=" * 60)
@@ -94,40 +103,46 @@ def main():
     model.train()
     for epoch in range(n_epochs):
         optimizer.zero_grad()
-        
+
         # Concatenate concepts and tasks as target
         target = c_train.union_with(y_train).float()
-        
+
         # Forward pass - query all variables (concepts + tasks)
         out = model(query=query, input=x_train)
-        
+
         # Compute loss on all outputs
         logits = torch.cat([out.params[name]['logits'] for name in query], dim=1)
         loss = loss_fn(logits, target)
-        
+
         loss.backward()
         optimizer.step()
         if epoch % 10 == 0:
             print(f"Epoch {epoch}: Loss {loss:.4f}")
-    
+
     # Evaluate
     print("\n" + "=" * 60)
     print("Step 5: Evaluation")
     print("=" * 60)
-    
+
     concept_acc_fn = BinaryAccuracy()
     task_acc_fn = BinaryAccuracy()
 
     model.eval()
     with torch.no_grad():
         out = model(query=query, input=x_train)
-        c_pred = torch.cat([out.params[name]['logits'] for name in concept_names], dim=1)
-        y_pred = torch.cat([out.params[name]['logits'] for name in task_names], dim=1)
-        
+        c_pred = torch.cat(
+            [out.params[name]['logits'] for name in concept_names],
+            dim=1,
+        )
+        y_pred = torch.cat(
+            [out.params[name]['logits'] for name in task_names],
+            dim=1,
+        )
+
         # Compute accuracy using BinaryAccuracy
         concept_acc = concept_acc_fn(c_pred, c_train.int()).item()
         task_acc = task_acc_fn(y_pred, y_train.int()).item()
-        
+
         print(f"Concept accuracy: {concept_acc:.4f}")
         print(f"Task accuracy: {task_acc:.4f}")
 

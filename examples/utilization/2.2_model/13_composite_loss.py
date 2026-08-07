@@ -13,7 +13,7 @@ Three scenarios are demonstrated:
 
 import torch
 import torch.nn as nn
-from torch.distributions import Bernoulli, Categorical, OneHotCategorical
+from torch.distributions import Bernoulli, OneHotCategorical
 from pytorch_lightning import Trainer
 
 from torch_concepts import seed_everything

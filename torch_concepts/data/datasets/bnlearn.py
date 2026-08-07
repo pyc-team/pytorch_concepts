@@ -52,7 +52,7 @@ class BnLearnDataset(ConceptDataset):
         # If root is not provided, create a local folder automatically
         if root is None:
             root = os.path.join(os.getcwd(), 'data', self.name)
-            
+
         self.root = root
         self.n_gen = n_gen
 
@@ -73,7 +73,7 @@ class BnLearnDataset(ConceptDataset):
             graph=graph,
             concept_names_subset=concept_subset, # subset of concept names
         )
-        
+
     @property
     def raw_filenames(self) -> List[str]:
         """List of raw filenames that need to be present in the raw directory
@@ -100,12 +100,12 @@ class BnLearnDataset(ConceptDataset):
             url = f'https://www.bnlearn.com/bnrepository/{self.name}/{self.name}.bif.gz'
             gz_path = download_url(url, self.root_dir)
             bif_path = self.raw_paths[0]
-            
+
             # Decompress .gz file
             with gzip.open(gz_path, 'rb') as f_in:
                 with open(bif_path, 'wb') as f_out:
                     shutil.copyfileobj(f_in, f_out)
-            
+
             # Remove the .gz file after extraction
             os.unlink(gz_path)
 
@@ -120,28 +120,34 @@ class BnLearnDataset(ConceptDataset):
 
         # generate data
         inference = BayesianModelSampling(self.bn_model)
-        df = inference.forward_sample(size=self.n_gen, 
+        df = inference.forward_sample(size=self.n_gen,
                                       seed=self.seed)
-        
+
         # extract embeddings from latent autoencoder state
         concepts = df.copy()
         embeddings = extract_embs_from_autoencoder(
-            df, 
+            df,
             self.autoencoder_kwargs if self.autoencoder_kwargs is not None else {}
         )
 
         # get concept annotations
         concept_names = list(self.bn_model.nodes())
-        cardinalities = [int(self.bn_model.get_cardinality()[node]) for node in concept_names]
+        cardinalities = [
+            int(self.bn_model.get_cardinality()[node]) for node in concept_names
+        ]
         # categorical concepts with card=2 will be treated as Bernoulli (card=1)
         cardinalities = [1 if card == 2 else card for card in cardinalities]
         # all bnlearn nodes are discrete: card==1 -> binary, card>1 -> categorical
-        types = ['binary' if card == 1 else 'categorical' for card in cardinalities]
+        types = [
+            'binary' if card == 1 else 'categorical' for card in cardinalities
+        ]
 
-        annotations = Annotations(labels=concept_names,
-                          cardinalities=cardinalities,
-                          types=types)
-        
+        annotations = Annotations(
+            labels=concept_names,
+            cardinalities=cardinalities,
+            types=types,
+        )
+
         # get the graph for the endogenous concepts
         graph = self.bn_model_dict['adjmat']
         graph = graph.astype(int)

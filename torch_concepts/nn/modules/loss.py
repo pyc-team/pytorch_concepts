@@ -14,7 +14,7 @@ from ...concept_graph import ConceptGraph
 
 def _get_forward_signature(module: nn.Module):
     """Introspect forward() to get accepted parameter names and whether it has **kwargs.
-    
+
     Returns:
         Tuple[set, bool]: (set of parameter names, has_var_keyword)
     """
@@ -31,11 +31,11 @@ def _get_forward_signature(module: nn.Module):
 
 def _normalize_loss_terms(terms, weights):
     """Normalize loss terms and weights to consistent list form.
-    
+
     Args:
         terms: A single nn.Module, a list of nn.Module, or None.
         weights: A list of floats, or None.
-        
+
     Returns:
         Tuple of (list_of_modules, list_of_weights), or (None, None) if terms is None.
     """
@@ -62,11 +62,11 @@ def get_concept_task_idx(annotations: Annotations, concepts: List[str], tasks: L
     # Concept-level indices
     concepts_idxs = [annotations.get_index(name) for name in concepts]
     tasks_idxs = [annotations.get_index(name) for name in tasks]
-    
+
     # Logit-level indices using cached get_slice
     concepts_logits = annotations.get_slice(concepts)
     tasks_logits = annotations.get_slice(tasks)
-    
+
     return concepts_idxs, tasks_idxs, concepts_logits, tasks_logits
 
 class ConceptLoss(nn.Module):
@@ -134,15 +134,29 @@ class ConceptLoss(nn.Module):
         continuous_weights: Optional[List[float]] = None,
     ):
         super().__init__()
-        
+
         # Normalize to lists
         binary, binary_weights = _normalize_loss_terms(binary, binary_weights)
-        categorical, categorical_weights = _normalize_loss_terms(categorical, categorical_weights)
-        continuous, continuous_weights = _normalize_loss_terms(continuous, continuous_weights)
-        
+        categorical, categorical_weights = _normalize_loss_terms(
+            categorical,
+            categorical_weights,
+        )
+        continuous, continuous_weights = _normalize_loss_terms(
+            continuous,
+            continuous_weights,
+        )
+
         # Validate against annotations (check_collection checks None vs not-None)
-        fn_collection = GroupConfig(binary=binary, categorical=categorical, continuous=continuous)
-        self.fn_collection = check_collection(annotations, fn_collection, 'loss')
+        fn_collection = GroupConfig(
+            binary=binary,
+            categorical=categorical,
+            continuous=continuous,
+        )
+        self.fn_collection = check_collection(
+            annotations,
+            fn_collection,
+            'loss',
+        )
 
         # Use cached type_groups from Annotations
         self.groups = annotations.type_groups
@@ -151,13 +165,13 @@ class ConceptLoss(nn.Module):
         # Register modules, weights, and signatures per type
         self._type_weights = {}
         self._type_signatures = {}
-        
+
         weights_map = {
             'binary': binary_weights,
             'categorical': categorical_weights,
             'continuous': continuous_weights,
         }
-        
+
         for type_name in ['binary', 'categorical', 'continuous']:
             terms = self.fn_collection.get(type_name)
             if terms is not None:
@@ -197,7 +211,7 @@ class ConceptLoss(nn.Module):
 
     def _compute_type_loss(self, type_name: str, kwargs: dict) -> torch.Tensor:
         """Compute weighted sum of loss terms for a specific concept type.
-        
+
         Each term receives only the kwargs its ``forward()`` signature accepts.
         If ``padding_mask`` is present in *kwargs* but a term's signature does
         not accept it (and has no ``**kwargs``), a warning is emitted so that
@@ -207,33 +221,35 @@ class ConceptLoss(nn.Module):
         terms = getattr(self, f'_{type_name}_terms')
         weights = self._type_weights[type_name]
         signatures = self._type_signatures[type_name]
-        
+
         has_padding = 'padding_mask' in kwargs
         total = torch.tensor(0.0, device=kwargs['input'].device)
-        
+
         for module, weight, (sig, has_var_kw) in zip(terms, weights, signatures):
             if has_var_kw:
                 term_kwargs = dict(kwargs)
             else:
                 term_kwargs = {k: v for k, v in kwargs.items() if k in sig}
-                if has_padding and 'padding_mask' not in sig and 'target' not in sig:
+                if has_padding and ('padding_mask' not in sig) and (
+                    'target' not in sig
+                ):
                     warnings.warn(
                         f"{module.__class__.__name__} does not accept a "
                         f"'padding_mask' parameter. Categorical concept "
                         f"logits are padded with -inf for concepts with "
                         f"cardinality < max_cardinality. If this module "
-                        f"could be affected by this, add a 'padding_mask' parameter "
-                        f"to its forward() to handle padded positions "
-                        f"correctly.",
+                        f"could be affected by this, add a 'padding_mask' "
+                        f"parameter to its forward() to handle padded "
+                        f"positions correctly.",
                         stacklevel=2,
                     )
             total = total + weight * module(**term_kwargs)
-        
+
         return total
 
     def _prepare_categorical(self, input: torch.Tensor, target: torch.Tensor):
         """Pad and stack categorical logits/targets for summary computation.
-        
+
         Returns:
             Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
                 ``(padded_logits, targets, padding_mask)`` ready for loss
@@ -268,7 +284,7 @@ class ConceptLoss(nn.Module):
 
     def forward(self, output: ModelOutput) -> torch.Tensor:
         """Compute total loss across all concept types.
-        
+
         Splits ``output.logits`` and ``output.target`` by concept type,
         merges them with any extras, computes individual losses (each a
         weighted sum of its terms dispatched by signature), and sums them.
@@ -276,36 +292,48 @@ class ConceptLoss(nn.Module):
         Args:
             output (ModelOutput): Structured model output containing
                 ``logits``, ``target``, and optionally ``extras``.
-            
+
         Returns:
             torch.Tensor: Total computed loss (scalar).
         """
         input = output.logits
         target = output.target
         extra = dict(output.extra) if output.extra else {}
-        
+
         total_loss = torch.tensor(0.0, device=input.device)
-        
+
         # Binary concepts
-        if self.fn_collection.get('binary'): 
+        if self.fn_collection.get('binary'):
             binary_logits = input[:, self.groups['binary']['logits_idx']]
-            binary_targets = target[:, self.groups['binary']['concept_idx']].float()
-            total_loss = total_loss + self._compute_type_loss('binary', {
-                'input': binary_logits, 'target': binary_targets, **extra
-            })
-        
+            binary_targets = \
+                target[:, self.groups['binary']['concept_idx']].float()
+            total_loss = total_loss + self._compute_type_loss(
+                'binary',
+                {
+                    'input': binary_logits, 'target': binary_targets, **extra
+                },
+            )
+
         # Categorical concepts
         if self.fn_collection.get('categorical'):
-            cat_logits, cat_targets, cat_mask = self._prepare_categorical(input, target)
-            total_loss = total_loss + self._compute_type_loss('categorical', {
-                'input': cat_logits, 'target': cat_targets,
-                'padding_mask': cat_mask, **extra
-            })
-        
+            cat_logits, cat_targets, cat_mask = self._prepare_categorical(
+                input,
+                target,
+            )
+            total_loss = total_loss + self._compute_type_loss(
+                'categorical',
+                {
+                    'input': cat_logits, 'target': cat_targets,
+                    'padding_mask': cat_mask, **extra
+                },
+            )
+
         # Continuous concepts
         if self.fn_collection.get('continuous'):
-            raise NotImplementedError("Continuous concepts not yet implemented.")
-        
+            raise NotImplementedError(
+                "Continuous concepts not yet implemented."
+            )
+
         return total_loss
 
 
@@ -379,21 +407,21 @@ class WeightedConceptLoss(nn.Module):
 
     def __repr__(self) -> str:
         return f"{self.__class__.__name__}(fn_collection={self.fn_collection})"
-    
+
     def forward(self, output: ModelOutput) -> torch.Tensor:
         """Compute weighted loss for concepts and tasks.
 
         Args:
             output (ModelOutput): Structured model output containing
                 ``logits``, ``target``, and optionally ``extras``.
-        
+
         Returns:
             torch.Tensor: Weighted combination of concept and task losses (scalar).
         """
         input = output.logits
         target = output.target
         extra = dict(output.extra) if output.extra else {}
-        
+
         concept_input = input[:, self.input_c_idx]
         concept_target = target[:, self.target_c_idx]
         task_input = input[:, self.input_t_idx]
@@ -406,7 +434,7 @@ class WeightedConceptLoss(nn.Module):
         t_sub.logits = task_input
         c_loss = self.concept_loss(c_sub)
         t_loss = self.task_loss(t_sub)
-        
+
         return c_loss * self.concept_weight + t_loss * self.task_weight
 
 
@@ -568,7 +596,7 @@ class DepthWeightedConceptLoss(nn.Module):
         input = output.logits
         target = output.target
         extra = dict(output.extra) if output.extra else {}
-        
+
         total_loss = torch.tensor(0.0, device=input.device)
         for i, d in enumerate(self._depth_levels):
             sub_input = input[:, self._input_idx[i]]

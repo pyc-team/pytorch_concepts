@@ -41,7 +41,8 @@ class ConceptBottleneckModel(BipartiteModel):
     task_names : Union[List[str], str]
         Names of the task variables (a subset of the annotation labels).
     inference : BaseInference, optional
-        Evaluation inference engine class. Defaults to ``DeterministicInference``.
+        Evaluation inference engine class. Defaults to
+        ``DeterministicInference``.
     inference_kwargs : dict, optional
         Keyword arguments forwarded to the evaluation inference engine.
     train_inference : BaseInference, optional
@@ -93,13 +94,15 @@ class ConceptBottleneckModel(BipartiteModel):
         )
         if all(self.plate):
             # if all graph levels are plate-compatible
-            # build the model with one plate variable per bipartite level (concepts, tasks)
+            # build the model with one plate variable per bipartite level
+            # (concepts, tasks)
             self.pgm = self._build_plate_model()
         else:
             # build the model with one variable per concept and one per task
             self.pgm = self._build_individual_model()
 
-        # once self.pgm is built, we can set up the inference engines (train and eval)
+        # once self.pgm is built, we can set up the inference engines
+        # (train and eval)
         self.setup_inference(
             inference,
             inference_kwargs,
@@ -117,25 +120,36 @@ class ConceptBottleneckModel(BipartiteModel):
         ``input`` enters the PGM as evidence and the backbone runs *inside* the
         PGM as the ``latent | input`` CPD.
         """
-        input_var = EmbeddingVariable("input", distribution=Delta, size=self.input_size)
-        latent_var = EmbeddingVariable("latent", distribution=Delta, size=self.latent_size)
+        input_var = EmbeddingVariable(
+            "input",
+            distribution=Delta,
+            size=self.input_size,
+        )
+        latent_var = EmbeddingVariable(
+            "latent",
+            distribution=Delta,
+            size=self.latent_size,
+        )
         input_cpd = ParametricCPD(
-            input_var, 
+            input_var,
             parents=[],
             parametrization=LearnablePrior(self.input_size),
         )
         latent_cpd = ParametricCPD(
-            latent_var, 
+            latent_var,
             parents=[input_var],
             parametrization=self.backbone,
         )
         return input_var, latent_var, input_cpd, latent_cpd
-    
+
     def _build_plate_model(self) -> BayesianNetwork:
-        """Build using one plate variable per bipartite level (concepts, tasks)."""
+        """Build using one plate variable per bipartite
+        level (concepts, tasks).
+        """
         axis = self.concept_annotations
 
-        input_var, latent_var, input_cpd, latent_cpd = self._input_latent_block()
+        input_var, latent_var, input_cpd, latent_cpd = \
+            self._input_latent_block()
 
         concept0 = axis.concept(self.intermediate_concept_names[0])
         task0 = axis.concept(self.task_names[0])
@@ -187,10 +201,14 @@ class ConceptBottleneckModel(BipartiteModel):
     def _build_individual_model(self) -> BayesianNetwork:
         """Build with one variable per concept and one per task."""
         axis = self.concept_annotations
-        
-        input_var, latent_var, input_cpd, latent_cpd = self._input_latent_block()
 
-        intermediate = [axis.concept(name) for name in self.intermediate_concept_names]
+        input_var, latent_var, input_cpd, latent_cpd = \
+            self._input_latent_block()
+
+        intermediate = [
+            axis.concept(name)
+            for name in self.intermediate_concept_names
+        ]
         task_concepts = [axis.concept(name) for name in self.task_names]
         concepts = ConceptVariable(
             names=self.intermediate_concept_names,

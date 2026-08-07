@@ -25,12 +25,23 @@ from .modules.low.priors import LearnablePrior, FixedPrior
 
 # Encoders
 from .modules.low.encoders.linear import LinearEmbeddingToConcept
+from .modules.low.encoders.cav import (
+    CAVEmbeddingToConcept,
+    ConceptActivationVectors,
+)
 
 # Predictors
 from .modules.low.predictors.call import CallableConceptToConcept
 from .modules.low.predictors.hypernet import HyperlinearConceptEmbeddingToConcept
 from .modules.low.predictors.linear import LinearConceptToConcept
 from .modules.low.predictors.mix import MixConceptEmbeddingToConcept
+from .modules.low.predictors.anchor import (
+    AnchorConceptToConcept,
+    AnchorEmbeddingToConcept,
+    ConceptAnchorProjection,
+    ConceptAnchors,
+)
+from .modules.low.predictors.residual import ResidualConceptEmbeddingToConcept
 
 # Dense layers
 from .modules.low.dense_layers import Dense, ResidualMLP, MLP, LinearEmbeddingEncoder, SelectorEmbeddingEncoder
@@ -53,6 +64,8 @@ from .modules.outputs import ModelOutput, InferenceOutput
 from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
 from .modules.high.models.cbm import ConceptBottleneckModel
 from .modules.high.models.hybrid_cbm import HybridConceptBottleneckModel
+from .modules.high.models.prob_cbm import ProbCBM
+from .modules.high.models.post_hoc_cbm import PostHocCBM
 from .modules.high.models.cem import ConceptEmbeddingModel
 from .modules.high.models.graph_cbm import GraphConceptBottleneckModel
 from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
@@ -125,6 +138,13 @@ __all__ = [
     "CallableConceptToConcept",
     "HyperlinearConceptEmbeddingToConcept",
     "MixConceptEmbeddingToConcept",
+    "AnchorConceptToConcept",
+    "AnchorEmbeddingToConcept",
+    "ConceptAnchorProjection",
+    "ConceptAnchors",
+    "CAVEmbeddingToConcept",
+    "ConceptActivationVectors",
+    "ResidualConceptEmbeddingToConcept",
 
     # Dense layers
     "Dense",
@@ -156,6 +176,8 @@ __all__ = [
     "BlackBoxTaskOnly",
     "ConceptBottleneckModel",
     "HybridConceptBottleneckModel",
+    "ProbCBM",
+    "PostHocCBM",
     "ConceptEmbeddingModel",
     "GraphConceptBottleneckModel",
     "CausallyReliableConceptBottleneckModel",
