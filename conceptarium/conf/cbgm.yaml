@@ -1,11 +1,14 @@
 # =============================================================
 # Train a Concept Bottleneck Generative Model.
 #
+# Sweeps over both generative datasets (colormnist, celeba_generative)
+# in one multirun:
+#
 #   cd conceptarium
-#   python run_experiment.py --config-name cbgm dataset=colormnist \
+#   python run_experiment.py --config-name cbgm \
 #       trainer.accelerator=gpu trainer.devices=1
-#   python run_experiment.py --config-name cbgm dataset=celeba_generative \
-#       trainer.accelerator=gpu trainer.devices=1
+#
+# Restrict to a single dataset with `dataset=colormnist` (drops -m).
 #
 # Then produce the generation / steering / counterfactual figures:
 #   python run_generative_analysis.py
@@ -23,6 +26,9 @@ defaults:
 hydra:
   job:
     name: cbgm
+  sweeper:
+    params:
+      dataset: colormnist, celeba_generative
 
 seed: 42
 
@@ -38,7 +44,7 @@ dataset:
     batch_size: 256
 
 trainer:
-  max_epochs: 30
+  max_epochs: 50
   monitor: "val_loss"
   patience: 10
   accelerator: "auto"
