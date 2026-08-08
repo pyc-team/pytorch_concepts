@@ -22,10 +22,23 @@ things a concept bottleneck generative model is *for*:
 ``generative_metrics.csv``
     Per-concept test accuracy and the reconstruction NLL.
 
+By default this runs on the newest matching run. Set ``all_jobs=true`` to
+produce the same three artefacts for **every** run in the registry that matches
+``filters`` — one set of figures per model, which is what comparing a sweep
+needs — plus a ``generative_metrics_all.csv`` collecting them into one table. A
+run whose checkpoint will not load (an architecture change since it was trained,
+usually) is reported and skipped rather than aborting the rest.
+
 Both engines are used, for different jobs: :class:`VariationalInference` is the
 only one that consults the guide, so it does the encoding; the ancestral engine
 does every decode. They share the same PGM by reference, so no weights are
 copied between them.
+
+On speed: the guide runs the image backbone live and torchvision preprocessing
+resizes to 224x224, so scoring the test set is the dominant cost — on
+Color-MNIST that is 64x the pixels of the original 28x28, minutes of ResNet on a
+CPU. ``accelerator`` picks the device; ``max_eval_batches`` caps the metric pass
+when an approximate number will do.
 """
 
 import csv
@@ -37,6 +50,7 @@ from typing import Dict, List, Optional, Tuple
 
 import hydra
 import torch
+from hydra.core.hydra_config import HydraConfig
 from hydra.utils import get_original_cwd, instantiate
 from omegaconf import DictConfig
 
@@ -59,10 +73,19 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Rebuilding a finished run
 # ---------------------------------------------------------------------------
-def resolve_job_dir(cfg: DictConfig) -> Path:
-    """The Hydra job directory to analyse: explicit, or the newest match."""
+def resolve_job_dirs(cfg: DictConfig) -> List[Path]:
+    """Every Hydra job directory to analyse, oldest first.
+
+    An explicit ``job_dir`` wins and may be a single path or a list. Otherwise
+    the registry is filtered by ``filters``: with ``all_jobs`` **every** match is
+    returned, which is what a sweep wants — one set of figures per trained model
+    — and without it only the newest.
+    """
     if cfg.get("job_dir"):
-        return Path(cfg.job_dir)
+        given = cfg.job_dir
+        if isinstance(given, str):
+            return [Path(given)]
+        return [Path(d) for d in given]
 
     csv_path = os.path.join(get_original_cwd(), "conceptarium", cfg.csv_path)
     filters = dict(cfg.filters) if cfg.get("filters") else None
@@ -74,7 +97,35 @@ def resolve_job_dir(cfg: DictConfig) -> Path:
             "(note that `debug: true` suppresses registration), or pass "
             "job_dir=<hydra job dir> explicitly."
         )
-    return Path(rows[-1]["run_dir"])
+    selected = rows if cfg.get("all_jobs") else rows[-1:]
+    return [Path(row["run_dir"]) for row in selected]
+
+
+def resolve_job_dir(cfg: DictConfig) -> Path:
+    """The single newest job directory matching ``cfg``.
+
+    Thin wrapper over :func:`resolve_job_dirs` for the callers that analyse one
+    model at a time (``run_generative_diagnostics.py``).
+    """
+    return resolve_job_dirs(cfg)[-1]
+
+
+def resolve_device(accelerator: Optional[str]) -> torch.device:
+    """Device to run the analysis on.
+
+    ``'auto'`` (or unset) picks CUDA when it is there and CPU otherwise —
+    deliberately not MPS, which :mod:`torch_concepts.backbone` refuses for the
+    same reason (torchvision preprocessing and HuggingFace models misbehave on
+    it).
+
+    This matters more than it looks. The guide runs the image backbone live, and
+    torchvision's preprocessing resizes to 224x224 — on Color-MNIST that is 64x
+    the pixels of the original 28x28 — so a full test-set pass is minutes of
+    ResNet on a CPU and seconds on a GPU.
+    """
+    if accelerator in (None, "auto"):
+        return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    return torch.device(accelerator)
 
 
 def rebuild(job_cfg: DictConfig):
@@ -120,7 +171,7 @@ def concept_variables(model) -> List:
     return [v for v in model.pgm.variables.values() if v.variable_type == "concept"]
 
 
-def concept_states(variable) -> List[Tuple[str, torch.Tensor]]:
+def concept_states(variable, device=None) -> List[Tuple[str, torch.Tensor]]:
     """Every state of ``variable`` as ``(label, value)``, in the PGM's layout.
 
     A binary concept is one column that is 0 or 1; a categorical one is a
@@ -129,10 +180,12 @@ def concept_states(variable) -> List[Tuple[str, torch.Tensor]]:
     """
     size = variable.size
     if size == 1:  # binary
-        return [("0", torch.zeros(1, 1)), ("1", torch.ones(1, 1))]
-    return [
-        (str(s), torch.eye(size)[s].unsqueeze(0)) for s in range(size)
-    ]
+        values = [("0", torch.zeros(1, 1)), ("1", torch.ones(1, 1))]
+    else:
+        values = [(str(s), torch.eye(size)[s].unsqueeze(0)) for s in range(size)]
+    if device is None:
+        return values
+    return [(label, value.to(device)) for label, value in values]
 
 
 def observation_of(model, out, name: str = "input") -> torch.Tensor:
@@ -255,7 +308,7 @@ def figure_steering(
     intervened concept. Clamping the others matters: left free they would be
     redrawn per state, confounding the intervention with fresh sampling noise.
     """
-    states = concept_states(variable)
+    states = concept_states(variable, device=samples["z"].device)
     n = len(states)
     # Column 0 of the generation is "the originally sampled image"; every
     # variation below is that same draw with one concept moved.
@@ -280,7 +333,13 @@ def figure_steering(
 # ---------------------------------------------------------------------------
 # Metrics
 # ---------------------------------------------------------------------------
-def evaluate(model, datamodule, query) -> List[Dict[str, object]]:
+def evaluate(
+    model,
+    datamodule,
+    query,
+    device: Optional[torch.device] = None,
+    max_batches: Optional[int] = None,
+) -> List[Dict[str, object]]:
     """Test metrics plus the reconstruction NLL.
 
     The concept metrics are the model's own :class:`ConceptMetrics` — the same
@@ -288,6 +347,12 @@ def evaluate(model, datamodule, query) -> List[Dict[str, object]]:
     categorical concepts are routed correctly without this script re-deriving
     the rule, and changing the metrics config changes the report. The NLL comes
     from the same ``ReconstructionLoss`` the objective used.
+
+    This is the expensive part of the script by a wide margin: every batch runs
+    the guide, and the guide runs the image backbone on upsampled inputs. Hence
+    ``device`` — pass a GPU when there is one — and ``max_batches``, which caps
+    the pass when an approximate number is enough. ``n_test_samples`` in the
+    output always reports how many samples were actually scored.
     """
     loader = datamodule.test_dataloader() or datamodule.val_dataloader()
     reconstruction = ReconstructionLoss(variable="input")
@@ -295,36 +360,54 @@ def evaluate(model, datamodule, query) -> List[Dict[str, object]]:
     metrics.reset()
     total, nll = 0, 0.0
 
-    with torch.no_grad():
-        for batch in loader:
+    # inference_mode over no_grad: same effect on autograd, and it also skips
+    # view/version tracking, which is pure overhead for a pass that never
+    # backprops.
+    with torch.inference_mode():
+        for index, batch in enumerate(loader):
+            if max_batches is not None and index >= max_batches:
+                logger.info("stopping evaluation after %d batches (max_batches)", index)
+                break
             x, c = batch["inputs"]["x"], batch["concepts"]["c"]
+            if device is not None:
+                x, c = x.to(device), c.to(device)
             out = model(query=query, input=x)
             out.extra = {"evidence": {"input": x}}
             metrics.update(out, model.prepare_target(c))
-            nll += float(reconstruction(out)) * x.shape[0]
+            # Accumulate on-device and read once at the end: float() on a CUDA
+            # tensor synchronises, so doing it per batch serialises the loop
+            # against the GPU it was just handed to.
+            nll += reconstruction(out) * x.shape[0]
             total += x.shape[0]
 
     rows = [{"metric": k, "value": float(v)} for k, v in metrics.compute().items()]
-    rows.append({"metric": "reconstruction_nll", "value": nll / max(total, 1)})
+    rows.append({"metric": "reconstruction_nll", "value": float(nll) / max(total, 1)})
     rows.append({"metric": "n_test_samples", "value": total})
     return rows
 
 
 # ---------------------------------------------------------------------------
-@hydra.main(config_path="conf", config_name="generative_analysis", version_base="1.3")
-def main(cfg: DictConfig) -> None:
+# One model
+# ---------------------------------------------------------------------------
+def analyse_job(cfg: DictConfig, job_dir: Path, device: torch.device) -> List[Dict]:
+    """Figures and metrics for a single trained model, written beside it."""
     seed_everything(cfg.get("seed", 42))
 
-    job_dir = resolve_job_dir(cfg)
     job_cfg, ckpt_path = load_job(job_dir)
     if ckpt_path is None:
-        raise SystemExit(f"No checkpoint under {job_dir / 'checkpoints'}.")
+        # A plain exception, not SystemExit: the caller analyses a *list* of runs
+        # and catches Exception to skip the broken ones, and SystemExit is a
+        # BaseException that would sail past that and kill the whole sweep.
+        raise FileNotFoundError(f"No checkpoint under {job_dir / 'checkpoints'}.")
     logger.info("analysing %s", job_dir)
 
     datamodule, model = rebuild(job_cfg)
     state = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     model.load_state_dict(state["state_dict"])
     model.eval()
+    # Moves the backbone with it: `Backbone` is an nn.Module holding its
+    # torchvision model as a submodule, and reads `.device` off its parameters.
+    model.to(device)
 
     shape = tuple(datamodule.n_features)
     concepts = concept_variables(model)
@@ -368,7 +451,7 @@ def main(cfg: DictConfig) -> None:
     n = int(cfg.get("n_samples", 10))
 
     batch = next(iter(datamodule.test_dataloader() or datamodule.val_dataloader()))
-    images = batch["inputs"]["x"][:n]
+    images = batch["inputs"]["x"][:n].to(device)
 
     # One generation pass feeds both figures: the third row of the overview, and
     # the `z`/concept draws the steering figures replay.
@@ -384,7 +467,10 @@ def main(cfg: DictConfig) -> None:
             model, engine, shape, generated, samples, concepts, variable, out_dir
         )
 
-    rows = evaluate(model, datamodule, vi_query)
+    rows = evaluate(
+        model, datamodule, vi_query,
+        device=device, max_batches=cfg.get("max_eval_batches"),
+    )
     csv_out = out_dir / "generative_metrics.csv"
     with open(csv_out, "w", newline="") as fh:
         writer = csv.DictWriter(fh, fieldnames=["metric", "value"])
@@ -393,6 +479,53 @@ def main(cfg: DictConfig) -> None:
     logger.info("wrote %s", csv_out)
     for row in rows:
         print(f"{row['metric']:>28}: {row['value']}")
+    return rows
+
+
+# ---------------------------------------------------------------------------
+@hydra.main(config_path="conf", config_name="generative_analysis", version_base="1.3")
+def main(cfg: DictConfig) -> None:
+    job_dirs = resolve_job_dirs(cfg)
+    device = resolve_device(cfg.get("accelerator"))
+    logger.info("analysing %d run(s) on %s", len(job_dirs), device)
+
+    summary: List[Dict] = []
+    failures: List[Tuple[Path, Exception]] = []
+    for job_dir in job_dirs:
+        print(f"\n=== {job_dir} ===")
+        try:
+            rows = analyse_job(cfg, job_dir, device)
+        except Exception as error:
+            # One unreadable run must not cost the rest of a sweep its figures.
+            # The common cause is a checkpoint predating an architecture change,
+            # which surfaces here as a state_dict shape mismatch.
+            logger.exception("skipping %s: %s", job_dir, error)
+            failures.append((job_dir, error))
+            continue
+        for row in rows:
+            summary.append({"run_dir": str(job_dir), **row})
+
+    # A sweep is only comparable side by side, so collect every run's metrics
+    # into one table next to this analysis job rather than only beside each run.
+    if len(job_dirs) > 1 and summary:
+        # `chdir: false`, so cwd is the original working directory rather than
+        # this job's; ask Hydra where its output actually went.
+        combined = Path(HydraConfig.get().runtime.output_dir) / "generative_metrics_all.csv"
+        with open(combined, "w", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=["run_dir", "metric", "value"])
+            writer.writeheader()
+            writer.writerows(summary)
+        logger.info("wrote %s", combined)
+        print(f"\ncombined metrics: {combined}")
+
+    if failures:
+        print(f"\n{len(failures)} of {len(job_dirs)} run(s) failed:")
+        for job_dir, error in failures:
+            print(f"  {job_dir}: {type(error).__name__}: {error}")
+        # Nothing at all came out: fail the process rather than exiting 0 on an
+        # empty result, which a caller would read as success.
+        if len(failures) == len(job_dirs):
+            raise SystemExit(1)
 
 
 if __name__ == "__main__":

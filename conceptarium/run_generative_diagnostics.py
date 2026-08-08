@@ -41,6 +41,7 @@ from run_generative_analysis import (
     concept_variables,
     observation_of,
     rebuild,
+    resolve_device,
     resolve_job_dir,
     save_grid,
 )
@@ -52,7 +53,8 @@ logger = logging.getLogger(__name__)
 # Posterior statistics
 # ---------------------------------------------------------------------------
 def posterior_statistics(
-    model, datamodule, vi_query, max_batches: Optional[int]
+    model, datamodule, vi_query, max_batches: Optional[int],
+    device: Optional[torch.device] = None,
 ) -> Dict[str, torch.Tensor]:
     """Encode the test split and collect what ``q(z | x)`` looks like in bulk.
 
@@ -70,17 +72,22 @@ def posterior_statistics(
     probs: Dict[str, List[torch.Tensor]] = {v.name: [] for v in concepts}
     recon_loc: List[torch.Tensor] = []
 
-    with torch.no_grad():
+    with torch.inference_mode():
         for index, batch in enumerate(loader):
             if max_batches is not None and index >= max_batches:
                 break
             x = batch["inputs"]["x"]
+            if device is not None:
+                x = x.to(device)
             out = model(query=vi_query, input=x)
-            locs.append(out.guide_params["loc"]["z"].tensor.detach())
-            scales.append(out.guide_params["scale"]["z"].tensor.detach())
+            # Straight to the CPU: these accumulate over the whole scan, and the
+            # statistics below are cheap enough that keeping them on an
+            # accelerator only costs memory.
+            locs.append(out.guide_params["loc"]["z"].tensor.cpu())
+            scales.append(out.guide_params["scale"]["z"].tensor.cpu())
             for variable in concepts:
-                probs[variable.name].append(out.probs[variable.name].tensor.detach())
-            recon_loc.append(observation_of(model, out).tensor.detach())
+                probs[variable.name].append(out.probs[variable.name].tensor.cpu())
+            recon_loc.append(observation_of(model, out).tensor.cpu())
 
     return {
         "loc": torch.cat(locs),
@@ -173,13 +180,13 @@ def range_report(images: torch.Tensor, suffix: str) -> List[Dict]:
 # ---------------------------------------------------------------------------
 def decode(model, engine, query, z: torch.Tensor) -> torch.Tensor:
     """Decode explicit latent codes, drawing every other variable ancestrally."""
-    with torch.no_grad():
+    with torch.inference_mode():
         return observation_of(model, engine.query(query=query, evidence={"z": z})).tensor
 
 
 def decode_and_probs(model, engine, query, z: torch.Tensor, concepts):
     """``decode``, also returning the concept probabilities used on the way."""
-    with torch.no_grad():
+    with torch.inference_mode():
         out = engine.query(query=query, evidence={"z": z})
     probs = {v.name: out.probs[v.name].tensor.detach() for v in concepts}
     return observation_of(model, out).tensor, probs
@@ -219,6 +226,9 @@ def main(cfg: DictConfig) -> None:
     state = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     model.load_state_dict(state["state_dict"])
     model.eval()
+    device = resolve_device(cfg.get("accelerator"))
+    model.to(device)
+    logger.info("running on %s", device)
 
     shape = tuple(datamodule.n_features)
     concepts = concept_variables(model)
@@ -242,7 +252,7 @@ def main(cfg: DictConfig) -> None:
     max_batches = cfg.get("max_batches")
 
     # --- the expensive pass: what does q(z | x) look like over the data? ---
-    stats = posterior_statistics(model, datamodule, vi_query, max_batches)
+    stats = posterior_statistics(model, datamodule, vi_query, max_batches, device)
     loc, scale = stats["loc"], stats["scale"]
     logger.info("encoded %d samples", loc.shape[0])
 
@@ -256,12 +266,14 @@ def main(cfg: DictConfig) -> None:
 
     # --- the six rows ---
     batch = next(iter(datamodule.test_dataloader() or datamodule.val_dataloader()))
-    images = batch["inputs"]["x"][:n]
+    images = batch["inputs"]["x"][:n].to(device)
 
-    with torch.no_grad():
+    with torch.inference_mode():
         encoded = model(query=vi_query, input=images)
     z_mean = encoded.guide_params["loc"]["z"].tensor
     z_scale = encoded.guide_params["scale"]["z"].tensor
+    aggregate_mean = aggregate_mean.to(device)
+    aggregate_std = aggregate_std.to(device)
 
     # Row 2 vs 3: the analysis script only ever shows row 2, the posterior MEAN.
     # If row 3 — an honest draw from q(z|x), which is what training actually
@@ -273,9 +285,11 @@ def main(cfg: DictConfig) -> None:
     # Row 4 vs 5: the same decoder at prior codes and at codes drawn from the
     # aggregate posterior. A large gap means the decoder is fine and the prior is
     # simply in the wrong place; no gap means the decoder is the problem.
-    z_prior = torch.randn(n, z_mean.shape[-1])
+    z_prior = torch.randn(n, z_mean.shape[-1], device=device)
     gen_prior, prior_probs = decode_and_probs(model, engine, query, z_prior, concepts)
-    z_aggregate = aggregate_mean + aggregate_std * torch.randn(n, z_mean.shape[-1])
+    z_aggregate = aggregate_mean + aggregate_std * torch.randn(
+        n, z_mean.shape[-1], device=device
+    )
     gen_aggregate = decode(model, engine, query, z_aggregate)
 
     rows += concept_sharpness(prior_probs, "prior")

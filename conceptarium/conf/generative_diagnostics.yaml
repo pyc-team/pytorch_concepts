@@ -32,6 +32,11 @@ filters:
 
 seed: 42
 
+# auto picks cuda when present, else cpu. Worth setting: the guide runs the
+# image backbone live on inputs torchvision resizes to 224x224, which dominates
+# the scan below.
+accelerator: auto        # auto | cpu | cuda
+
 # Columns in diagnostics.png.
 n_samples: 10
 # Quantise sampled concepts to a hard state before decoding. null follows the
