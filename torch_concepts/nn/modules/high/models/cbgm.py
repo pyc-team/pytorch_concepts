@@ -78,6 +78,16 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         Dimensionality of ``z``.
     embedding_size : int, default 16
         Width ``m`` of a single context embedding.
+    use_unknown : bool, default True
+        Whether the bottleneck carries the *unsupervised* context. ``True`` is
+        the paper's ``w = [w_1, ..., w_k, w_{k+1}]``. ``False`` removes the slot
+        entirely, shrinking the bottleneck to ``m * k`` and making the
+        orthogonality penalty vacuous — the ablation in Table 3 of the paper,
+        where it costs both steerability and sample quality.
+
+        The unsupervised context is always ``embedding_size`` wide: the
+        orthogonality penalty is a cosine similarity against the concept
+        contexts (Eq. 5), which is undefined between vectors of different widths.
     context_hidden_size : int or None, default None
         Width of a hidden layer in the context networks ``z -> w``. ``None``
         builds them as :class:`~torch_concepts.nn.LinearEmbeddingEncoder`, which
@@ -213,6 +223,7 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         decoder: nn.Module = None,
         latent_size: int = 64,
         embedding_size: int = 16,
+        use_unknown: bool = True,
         context_hidden_size: Optional[int] = None,
         context_norm: str = "none",
         observation: Type = Normal,
@@ -237,6 +248,7 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
             **kwargs,
         )
         self.embedding_size = embedding_size
+        self.use_unknown = bool(use_unknown)
         self.context_hidden_size = context_hidden_size
         self.context_norm = context_norm
         if context_hidden_size is None and context_norm != "none":
@@ -358,6 +370,10 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         their embeddings; the concept bottleneck layer mixes them and appends the
         unsupervised context; the decoder turns that bottleneck into the
         observation's distribution parameters.
+
+        With ``use_unknown=False`` the unsupervised context is left out of the
+        graph entirely — variable, encoder and decoder parent alike — so the
+        decoder reads the ``k`` mixed concept contexts and nothing else.
         """
 
         # --- variables ---
@@ -371,12 +387,16 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
             plate_name="embeddings",
         )
         # The pre-defined concepts are incomplete in a generative setting, so the
-        # bottleneck carries one extra, unsupervised context embedding.
-        unknown = EmbeddingVariable(
-            "unknown",
-            distribution=Delta,
-            shape=(1, self.embedding_size),
-        )
+        # bottleneck carries one extra, unsupervised context embedding. Held as a
+        # list -- empty under the `use_unknown=False` ablation -- so each of the
+        # places it participates can splat it and stay branch-free.
+        unknowns = [
+            EmbeddingVariable(
+                "unknown",
+                distribution=Delta,
+                shape=(1, self.embedding_size),
+            )
+        ] if self.use_unknown else []
         ordered_names = [m for cvar in concepts for m in cvar.members]
         reordered_axis = self.concept_annotations.subset(ordered_names)
         n_concepts = len(ordered_names)
@@ -416,11 +436,11 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
             )
 
         emb_encoders = ParametricCPD(
-            variable=[*embeddings, unknown],
+            variable=[*embeddings, *unknowns],
             parents=[latent],
             parametrization=[
                 {"value": context_network(e.shape[0])}
-                for e in [*embeddings, unknown]
+                for e in [*embeddings, *unknowns]
             ],
         )
         c_encoders = [
@@ -484,7 +504,7 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
             scale_head = decoder_head(copy.deepcopy(self.decoder))
         decoder_cpd = ParametricCPD(
             variable=observed,
-            parents=[mixing, unknown],
+            parents=[mixing, *unknowns],
             parametrization=self._flexible_parametrization(
                 variable=observed,
                 first=decoder_head(self.decoder),
@@ -494,6 +514,6 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         )
 
         return BayesianNetwork(
-            variables=[latent, *embeddings, unknown, *concepts, mixing, observed],
+            variables=[latent, *embeddings, *unknowns, *concepts, mixing, observed],
             factors=[latent_cpd, *emb_encoders, *c_encoders, mixing_cpd, decoder_cpd],
         )

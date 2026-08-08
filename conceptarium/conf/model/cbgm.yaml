@@ -22,6 +22,12 @@ model_cls:
   embedding_size: 16   # m, width of one concept context
   plate: false         # one variable per concept (the reference layout)
 
+  # Whether the bottleneck carries the unsupervised context. true is the paper's
+  # w = [w_1 ... w_k, w_{k+1}]; false removes it, which also makes the
+  # orthogonality term vacuous (it has nothing to push against) -- the paper's
+  # Table 3 ablation. The decoder's in_features below follows this automatically.
+  use_unknown: true
+
   # The context networks z -> w. Setting `context_hidden_size` swaps the default
   # LinearEmbeddingEncoder for a NonLinearEmbeddingEncoder.
   #
@@ -138,7 +144,7 @@ model_cls:
   # detail. Costs ~25% more parameters.
   decoder:
     _target_: "torch_concepts.nn.ConvDecoder"
-    in_features: ${math:"(${data_dims.n_concepts} + 1) * ${model.model_cls.embedding_size}"}
+    in_features: ${math:"(${data_dims.n_concepts} + (1 if ${model.model_cls.use_unknown} else 0)) * ${model.model_cls.embedding_size}"}
     out_shape: ${model.model_cls.input_size}
     hidden_channels: 32
     norm: group

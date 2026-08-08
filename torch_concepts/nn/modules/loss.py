@@ -335,8 +335,13 @@ class OrthogonalityLoss(TypeAwareLoss):
 
     Args:
         variables (list of str): Deterministic (``Delta``) variables whose
-            values are concatenated, in order, into the bottleneck. Default
-            ``['mixing', 'unknown']``.
+            values are concatenated, in order, into the bottleneck, the
+            **unsupervised context last**. Default ``['mixing', 'unknown']``. If
+            that last variable is not in the bottleneck the penalty has nothing
+            to push against, so it warns once and contributes ``0`` rather than
+            failing — see
+            :class:`~torch_concepts.nn.ConceptBottleneckGenerativeModel`'s
+            ``use_unknown``.
         n_concepts (int, optional): Number of supervised concepts. Inferred from
             the target's annotation when omitted.
 
@@ -353,6 +358,7 @@ class OrthogonalityLoss(TypeAwareLoss):
         super().__init__()
         self.variables = list(variables)
         self.n_concepts = n_concepts
+        self._warned_vacuous = False
 
     def extra_repr(self) -> str:
         return f"variables={self.variables}, n_concepts={self.n_concepts}"
@@ -365,6 +371,29 @@ class OrthogonalityLoss(TypeAwareLoss):
                 f"bottleneck variables {self.variables} must be Delta variables "
                 "included in the query."
             )
+
+        # The penalty is a similarity *against* the unsupervised context, which
+        # the ``variables`` contract puts last. A model built without one (CBGM's
+        # ``use_unknown=False`` ablation) makes the term vacuous rather than wrong, so
+        # it contributes zero — that is what lets the ablation be a single flag
+        # instead of also needing the loss config swapped.
+        unsupervised = self.variables[-1]
+        annotation = value.annotation
+        if (unsupervised not in annotation.label_to_index
+                and unsupervised not in annotation.label_groups):
+            if not self._warned_vacuous:
+                warnings.warn(
+                    f"OrthogonalityLoss: {unsupervised!r} is not in the bottleneck, "
+                    "so the penalty is vacuous and contributes 0. This is expected "
+                    "when the model was built without an unsupervised context "
+                    "(e.g. ConceptBottleneckGenerativeModel(use_unknown=False)); if you "
+                    "did not intend that, check the model and the `variables` "
+                    "argument.",
+                    stacklevel=2,
+                )
+                self._warned_vacuous = True
+            return torch.zeros((), device=value.device, dtype=value.dtype)
+
         context = torch.cat([value[name] for name in self.variables], dim=-1)
 
         n_concepts = self.n_concepts

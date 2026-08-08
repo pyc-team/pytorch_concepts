@@ -15,6 +15,14 @@
 # Then produce the generation / steering / counterfactual figures:
 #   python run_generative_analysis.py
 #
+# To ablate the unsupervised context -- the paper's Table 3 row, where removing
+# it cost steerability (25.6 -> 16.5) and image quality (FID -> 44.1) -- set
+# `model.model_cls.use_unknown=false`. That one flag drops the variable from the
+# graph, shrinks the decoder input, and makes the orthogonality term vacuous:
+#   python run_experiment.py --config-name cbgm -m dataset=colormnist \
+#       alpha=50 kl=0.3 model.model_cls.use_unknown=true,false
+#   python run_generative_analysis.py all_jobs=true
+#
 # CelebA has 40 concepts, hence 40 steering figures — pick a few:
 #   python run_generative_analysis.py \
 #       steer_concepts="[Smiling,Male,Eyeglasses]"
