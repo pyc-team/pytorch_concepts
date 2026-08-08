@@ -27,11 +27,13 @@ datamodule:
 
 default_task_names: [digit]
 
-# Pretrained feature extractor for the guide q(z | input). Frozen, and
-# small: it is only the encoder side — the decoder is learned from
-# scratch. Must NOT be precomputed into embeddings (see conf/cbgm.yaml),
-# since the raw pixels are the reconstruction target.
+# Feature extractor for the guide q(z | input): unfrozen, so it fine-tunes
+# to colormnist's digit strokes instead of staying stuck on frozen ImageNet
+# features (the suspected cause of the low digit-concept accuracy vs the
+# trivially-separable color concept). Must NOT be precomputed into
+# embeddings (see conf/cbgm.yaml), since the raw pixels are the
+# reconstruction target.
 backbone:
   _target_: torch_concepts.backbone.ImageBackbone
   name: resnet18
-  freeze: True
+  freeze: False
