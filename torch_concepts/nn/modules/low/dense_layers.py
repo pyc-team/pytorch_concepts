@@ -259,36 +259,15 @@ class LinearEmbeddingEncoder(torch.nn.Module):
     ``n_embeddings * out_features``, then unflattens the last dimension to
     ``(n_embeddings, out_features)``.
 
-    With ``hidden_size`` it becomes a two-layer MLP instead, optionally
-    normalised. That matters when the *input* is a latent the model will later
-    sample from a prior rather than from a posterior — a concept bottleneck
-    generative model, say. A bare linear map extrapolates without bound, so
-    embeddings produced from an unusual latent are unusual by the same factor and
-    land far outside anything the downstream decoder was trained on. A hidden
-    layer with ``norm='layer'`` bounds them instead. The reference CBGM
-    implementation uses ``Linear -> BatchNorm1d`` here for the same reason;
-    ``'layer'`` is preferred because it normalises each embedding row on its own
-    and so behaves identically whatever the batch holds.
-
     Attributes:
         out_shape (Tuple[int, int]): Target shape used by ``nn.Unflatten``.
-        encoder (nn.Sequential): The encoder, ending in ``Unflatten``.
+        encoder (nn.Sequential): ``Linear -> Unflatten`` encoder.
 
     Args:
         in_features (int): Number of input features.
         out_features (int): Feature dimension of each output embedding.
         n_embeddings (int, optional): Number of output embeddings.
             Defaults to ``1``.
-        hidden_size (int, optional): Width of a hidden layer. ``None`` (the
-            default) keeps the single linear projection.
-        norm (str, optional): ``'layer'``, ``'batch'`` or ``'none'``, applied to
-            each output embedding row. Defaults to ``'none'``. ``'batch'``
-            reproduces the reference implementation exactly but is a
-            ``BatchNorm1d``, so it accepts a single batch axis only and will
-            raise under an inference engine that adds a leading sample
-            dimension; ``'layer'`` has no such restriction.
-        activation (type, optional): Activation used after the hidden layer.
-            Ignored without ``hidden_size``. Defaults to ``nn.LeakyReLU``.
 
     Example:
         >>> import torch
@@ -304,14 +283,9 @@ class LinearEmbeddingEncoder(torch.nn.Module):
         >>> out.shape
         torch.Size([4, 5, 16])
 
-        Deeper and normalised, for a generative bottleneck:
-
-        >>> encoder = LinearEmbeddingEncoder(
-        ...     in_features=128, out_features=16, n_embeddings=5,
-        ...     hidden_size=256, norm='layer',
-        ... )
-        >>> encoder(torch.randn(4, 128)).shape
-        torch.Size([4, 5, 16])
+    See Also:
+        NonLinearEmbeddingEncoder: the same interface with a hidden layer and
+            optional normalisation, for when a linear map is not enough.
 
     References:
         Espinosa Zarlenga et al. "Concept Embedding Models: Beyond the
@@ -324,9 +298,6 @@ class LinearEmbeddingEncoder(torch.nn.Module):
         in_features: int,
         out_features: int,
         n_embeddings: int = 1,
-        hidden_size: Optional[int] = None,
-        norm: str = 'none',
-        activation: type = torch.nn.LeakyReLU,
     ):
         """
         Initialize the linear embedding encoder.
@@ -335,34 +306,141 @@ class LinearEmbeddingEncoder(torch.nn.Module):
             in_features: Number of input features.
             out_features: Dimension of each output embedding.
             n_embeddings: Number of output embeddings.
-            hidden_size: Width of an optional hidden layer.
-            norm: Normalisation over each output embedding row.
-            activation: Activation after the hidden layer.
         """
         super().__init__()
 
         self.out_shape = (n_embeddings, out_features)
 
-        layers = []
-        if hidden_size is not None:
-            layers += [torch.nn.Linear(in_features, hidden_size), activation()]
-            in_features = hidden_size
-        layers += [
-            torch.nn.Linear(in_features, n_embeddings * out_features),
-            torch.nn.Unflatten(-1, self.out_shape),
-        ]
-        # After the unflatten, so 'layer' normalises one embedding row rather
-        # than the concatenation of all of them, and 'batch' matches the
-        # reference's BatchNorm1d over the flat projection.
-        if norm == 'layer':
-            layers.append(torch.nn.LayerNorm(out_features))
-        elif norm == 'batch':
-            layers.insert(-1, torch.nn.BatchNorm1d(n_embeddings * out_features))
-        elif norm != 'none':
+        self.encoder = torch.nn.Sequential(
+            torch.nn.Linear(
+                in_features,
+                n_embeddings * out_features
+            ),
+            torch.nn.Unflatten(-1, self.out_shape)
+        )
+
+    def forward(self, x: torch.Tensor):
+        """
+        Encode into a set of embeddings.
+
+        Args:
+            x: Input tensor of shape ``(..., in_features)``.
+
+        Returns:
+            torch.Tensor: Embeddings of shape ``(..., n_embeddings, out_features)``.
+        """
+        return self.encoder(x)
+
+
+class NonLinearEmbeddingEncoder(torch.nn.Module):
+    """
+    Non-linear encoder that transforms embeddings into a set of embeddings.
+
+    Drop-in replacement for :class:`LinearEmbeddingEncoder` — same call
+    signature plus ``hidden_size``, same ``(..., n_embeddings, out_features)``
+    output — with one hidden layer and an optional normalisation on each output
+    embedding: ``Linear -> activation -> Linear -> Unflatten [-> norm]``.
+
+    Reach for it when the input is a latent the model will later sample from a
+    *prior* rather than from the posterior it was trained on, as in a concept
+    bottleneck generative model. A linear map extrapolates without bound, so an
+    unusual latent produces embeddings that are unusual by the same factor and
+    land far outside anything the downstream decoder ever saw — which shows up
+    as a model that reconstructs well and generates badly. A hidden layer gives
+    the map somewhere to bend; ``norm='layer'`` bounds what comes out of it.
+
+    Attributes:
+        out_shape (Tuple[int, int]): Target shape used by ``nn.Unflatten``.
+        encoder (nn.Sequential): The encoder stack.
+
+    Args:
+        in_features (int): Number of input features.
+        out_features (int): Feature dimension of each output embedding.
+        n_embeddings (int, optional): Number of output embeddings.
+            Defaults to ``1``.
+        hidden_size (int): Width of the hidden layer. Required — without one
+            this would be a :class:`LinearEmbeddingEncoder`.
+        norm (str, optional): ``'layer'``, ``'batch'`` or ``'none'``, applied to
+            each output embedding row. Defaults to ``'layer'``. ``'batch'`` is a
+            ``BatchNorm1d`` over the flat projection, which reproduces the
+            reference CBGM implementation but accepts a single batch axis only —
+            it raises under an inference engine that adds a leading sample
+            dimension, and it makes one generated sample decode differently from
+            a batch of them. ``'layer'`` has neither problem.
+        activation (type, optional): Activation after the hidden layer.
+            Defaults to ``nn.LeakyReLU``.
+
+    Example:
+        >>> import torch
+        >>> from torch_concepts.nn import NonLinearEmbeddingEncoder
+        >>>
+        >>> encoder = NonLinearEmbeddingEncoder(
+        ...     in_features=128,
+        ...     out_features=16,
+        ...     n_embeddings=5,
+        ...     hidden_size=256,
+        ... )
+        >>> encoder(torch.randn(4, 128)).shape
+        torch.Size([4, 5, 16])
+
+        Extra leading axes — an inference engine's sample dimension — pass
+        through untouched:
+
+        >>> encoder(torch.randn(2, 4, 128)).shape
+        torch.Size([2, 4, 5, 16])
+
+    See Also:
+        LinearEmbeddingEncoder: the single-projection version.
+    """
+
+    def __init__(
+        self,
+        in_features: int,
+        out_features: int,
+        n_embeddings: int = 1,
+        hidden_size: Optional[int] = None,
+        norm: str = 'layer',
+        activation: type = torch.nn.LeakyReLU,
+    ):
+        """
+        Initialize the non-linear embedding encoder.
+
+        Args:
+            in_features: Number of input features.
+            out_features: Dimension of each output embedding.
+            n_embeddings: Number of output embeddings.
+            hidden_size: Width of the hidden layer.
+            norm: Normalisation over each output embedding row.
+            activation: Activation after the hidden layer.
+        """
+        super().__init__()
+
+        if hidden_size is None:
             raise ValueError(
-                "LinearEmbeddingEncoder: norm must be 'layer', 'batch' or "
+                "NonLinearEmbeddingEncoder: `hidden_size` is required; without a "
+                "hidden layer this is a LinearEmbeddingEncoder, so use that."
+            )
+        if norm not in ('layer', 'batch', 'none'):
+            raise ValueError(
+                "NonLinearEmbeddingEncoder: norm must be 'layer', 'batch' or "
                 f"'none', got {norm!r}."
             )
+
+        self.out_shape = (n_embeddings, out_features)
+
+        layers = [
+            torch.nn.Linear(in_features, hidden_size),
+            activation(),
+            torch.nn.Linear(hidden_size, n_embeddings * out_features),
+        ]
+        # 'batch' goes before the unflatten so it normalises the flat projection
+        # the way the reference does; 'layer' after it, so each embedding row is
+        # normalised on its own rather than the concatenation of all of them.
+        if norm == 'batch':
+            layers.append(torch.nn.BatchNorm1d(n_embeddings * out_features))
+        layers.append(torch.nn.Unflatten(-1, self.out_shape))
+        if norm == 'layer':
+            layers.append(torch.nn.LayerNorm(out_features))
 
         self.encoder = torch.nn.Sequential(*layers)
 
@@ -377,7 +455,6 @@ class LinearEmbeddingEncoder(torch.nn.Module):
             torch.Tensor: Embeddings of shape ``(..., n_embeddings, out_features)``.
         """
         return self.encoder(x)
-
 
 
 class SelectorEmbeddingEncoder(torch.nn.Module):

@@ -22,7 +22,10 @@ model_cls:
   embedding_size: 16   # m, width of one concept context
   plate: false         # one variable per concept (the reference layout)
 
-  # The context networks z -> w. The reference leaves these a bare Linear (it
+  # The context networks z -> w. Setting `context_hidden_size` swaps the default
+  # LinearEmbeddingEncoder for a NonLinearEmbeddingEncoder.
+  #
+  # The reference leaves these a bare Linear (it
   # ends them in BatchNorm1d), which is fine there because it is a VAE-GAN: the
   # discriminator supplies both the nonlinearity the generator needs and a
   # training signal on prior-sampled z. This is a pure VAE with neither, and a

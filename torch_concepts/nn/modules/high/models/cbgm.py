@@ -36,7 +36,7 @@ import torch_concepts as pyc
 from .....annotations import Annotations
 from .....concept_graph import ConceptGraph
 from .....distributions import Delta
-from ...low.dense_layers import LinearEmbeddingEncoder
+from ...low.dense_layers import LinearEmbeddingEncoder, NonLinearEmbeddingEncoder
 from ...low.predictors.mix import MixConceptEmbeddingToEmbedding
 from ...low.priors import FixedPrior
 from ...low.scales import GlobalScale
@@ -80,20 +80,22 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         Width ``m`` of a single context embedding.
     context_hidden_size : int or None, default None
         Width of a hidden layer in the context networks ``z -> w``. ``None``
-        leaves them a bare ``Linear``, which is the reference's layout — but the
-        reference is a VAE-*GAN*, whose discriminator supplies the missing
-        nonlinearity elsewhere. In the pure VAE built here a linear context
-        network plus a shallow decoder makes the whole path ``z -> pixels``
-        close to affine, and an affine generator reproduces the data mean near
-        the codes it was trained on and diverges away from them — sharp
-        reconstructions, incoherent prior samples.
+        builds them as :class:`~torch_concepts.nn.LinearEmbeddingEncoder`, which
+        is the reference's layout — but the reference is a VAE-*GAN*, whose
+        discriminator supplies the missing nonlinearity elsewhere. In the pure
+        VAE built here a linear context network plus a shallow decoder makes the
+        whole path ``z -> pixels`` close to affine, and an affine generator
+        reproduces the data mean near the codes it was trained on and diverges
+        away from them — sharp reconstructions, incoherent prior samples. Set it
+        to swap in :class:`~torch_concepts.nn.NonLinearEmbeddingEncoder`.
     context_norm : str, default 'none'
         Normalisation on the context embeddings: ``'layer'``, ``'batch'`` or
-        ``'none'`` (see
-        :class:`~torch_concepts.nn.LinearEmbeddingEncoder`). The reference uses
-        ``BatchNorm1d`` here, which bounds the embeddings when ``z`` wanders off
-        the posterior; ``'layer'`` does the same without depending on the batch,
-        so a single generated sample decodes the way a batch of them does.
+        ``'none'``. Only meaningful alongside ``context_hidden_size`` — passing
+        it alone raises rather than being dropped, since a
+        ``LinearEmbeddingEncoder`` takes no normalisation. The reference uses
+        ``BatchNorm1d``, which bounds the embeddings when ``z`` wanders off the
+        posterior; ``'layer'`` does the same without depending on the batch, so
+        a single generated sample decodes the way a batch of them does.
     observation : type, default ``torch.distributions.Normal``
         Distribution family of the generated variable. ``Bernoulli`` for images
         in ``[0, 1]``; ``Normal`` needs a ``scale`` too — see ``global_scale``.
@@ -145,9 +147,10 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
 
     * The decoder input is the paper's ``m(k + 1)`` bottleneck; the code also
       prepends the concept probabilities.
-    * The reference context generators end in ``BatchNorm1d``. Here they are bare
-      by default; pass ``context_norm='batch'`` to match it, or ``'layer'`` for
-      the batch-independent equivalent.
+    * The reference context generators end in ``BatchNorm1d``. Here they default
+      to a bare :class:`~torch_concepts.nn.LinearEmbeddingEncoder`; set
+      ``context_hidden_size`` and ``context_norm='batch'`` to approach it, or
+      ``'layer'`` for the batch-independent equivalent.
     * The reference concept head is a per-concept ``Linear(bins * m, bins)``. A
       **categorical** concept here keeps the reused CEM head — a ``Linear(m, 1)``
       shared across states — while a **binary** one matches the reference's
@@ -236,6 +239,13 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         self.embedding_size = embedding_size
         self.context_hidden_size = context_hidden_size
         self.context_norm = context_norm
+        if context_hidden_size is None and context_norm != "none":
+            raise ValueError(
+                f"{type(self).__name__}: `context_norm={context_norm!r}` needs "
+                "`context_hidden_size` too. Without it the context networks are "
+                "LinearEmbeddingEncoders, which take no normalisation — the "
+                "setting would be silently dropped."
+            )
         self.observation = observation
         self.global_scale = global_scale
         self.scale_init = scale_init
@@ -387,18 +397,29 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
                 "scale": FixedPrior(torch.ones(self.latent_size)),
             },
         )
-        # z -> embeddings: one batched encoder per group, plus the unsupervised one.
+        # z -> embeddings: one batched encoder per group, plus the unsupervised
+        # one. Linear is the reference's layout; `context_hidden_size` swaps in
+        # the non-linear encoder instead (see the class docstring for when).
+        def context_network(n_embeddings: int) -> nn.Module:
+            if self.context_hidden_size is None:
+                return LinearEmbeddingEncoder(
+                    in_features=self.latent_size,
+                    out_features=self.embedding_size,
+                    n_embeddings=n_embeddings,
+                )
+            return NonLinearEmbeddingEncoder(
+                in_features=self.latent_size,
+                out_features=self.embedding_size,
+                n_embeddings=n_embeddings,
+                hidden_size=self.context_hidden_size,
+                norm=self.context_norm,
+            )
+
         emb_encoders = ParametricCPD(
             variable=[*embeddings, unknown],
             parents=[latent],
             parametrization=[
-                {"value": LinearEmbeddingEncoder(
-                    in_features=self.latent_size,
-                    out_features=self.embedding_size,
-                    n_embeddings=e.shape[0],
-                    hidden_size=self.context_hidden_size,
-                    norm=self.context_norm,
-                )}
+                {"value": context_network(e.shape[0])}
                 for e in [*embeddings, unknown]
             ],
         )

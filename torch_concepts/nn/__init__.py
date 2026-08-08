@@ -40,7 +40,7 @@ from .modules.low.predictors.mix import MixConceptEmbeddingToConcept, \
     MixConceptEmbeddingToEmbedding
 
 # Dense layers
-from .modules.low.dense_layers import Dense, ResidualMLP, MLP, LinearEmbeddingEncoder, SelectorEmbeddingEncoder
+from .modules.low.dense_layers import Dense, ResidualMLP, MLP, LinearEmbeddingEncoder, NonLinearEmbeddingEncoder, SelectorEmbeddingEncoder
 from .modules.low.conv import ConvDecoder
 from .modules.low.sequential import Sequential
 
@@ -159,6 +159,7 @@ __all__ = [
     "MLP",
     "Sequential",
     "LinearEmbeddingEncoder",
+    "NonLinearEmbeddingEncoder",
     "SelectorEmbeddingEncoder",
     "ConvDecoder",
 
