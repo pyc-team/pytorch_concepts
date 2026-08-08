@@ -1,14 +1,15 @@
 # =============================================================
 # Train a Concept Bottleneck Generative Model.
 #
-# Sweeps over both image datasets (colormnist, celeba) in one
-# multirun:
+# Sweeps both image datasets (colormnist, celeba) x the concept
+# weight `alpha` -- 6 jobs -- in one multirun:
 #
 #   cd conceptarium
-#   python run_experiment.py --config-name cbgm \
+#   python run_experiment.py --config-name cbgm -m \
 #       trainer.accelerator=gpu trainer.devices=1
 #
-# Restrict to a single dataset with `dataset=colormnist` (drops -m).
+# Restrict either axis on the command line, e.g.
+# `dataset=colormnist` or `alpha=100` (a single value on both drops -m).
 #
 # Then produce the generation / steering / counterfactual figures:
 #   python run_generative_analysis.py
@@ -36,6 +37,7 @@ hydra:
   sweeper:
     params:
       dataset: colormnist, celeba
+      alpha: 50, 100, 400
 
 seed: 42
 
@@ -49,7 +51,18 @@ recon: 1.0    # -log p(input | bottleneck)
 # noise level; here it left q(z|x) free to drift off the prior, which is what
 # made prior samples decode to noise. ~23 equalises them at init -- sweep it.
 kl: 10.0      # KL( q(z|input) || p(z) )
-alpha: 5.0    # concept supervision  (reference ALPHA)
+# Not the reference's 5.0. Under `soft_mixing` the concepts are not teacher-forced,
+# so a concept is only predictable if q(z|x) encoded it -- and it is RECONSTRUCTION
+# that decides what z encodes. That term sums over D pixels and carries the same
+# 1/sigma^2 factor, so at alpha=5 it outweighs concept supervision 81:1 on the
+# encoder (measured at init, D=2352, sigma=0.3).
+#
+# The cost falls on whichever concept contributes least to pixel MSE. On a
+# colormnist-shaped toy, color (a global tint, which reconstruction encodes for
+# free) held 0.999 at every setting while the 10-way digit went
+#   alpha 5 -> 0.103 (chance)   100 -> 0.972   1000 -> 0.997
+# Equalising the two gradients at init needs ~400; the sweep above brackets that.
+alpha: 100.0  # concept supervision  (reference ALPHA)
 beta: 1.0     # orthogonality        (reference BETA)
 
 loss:
