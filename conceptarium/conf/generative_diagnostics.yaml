@@ -1,0 +1,47 @@
+# =============================================================
+# Why does a trained generative concept model reconstruct well
+# but generate badly?
+#
+#   cd conceptarium
+#   python run_generative_diagnostics.py                 # newest cbgm run
+#   python run_generative_diagnostics.py job_dir=outputs/multirun/.../0
+#
+# Produces, next to the job directory:
+#   diagnostics.png     six rows isolating each candidate cause
+#   diagnostics.csv     the numbers behind them
+#
+# Read `diagnostics.png` top to bottom against the decision rule
+# printed at the end of the run: whichever row jumps in quality
+# names the cause worth fixing.
+# =============================================================
+hydra:
+  mode: RUN
+  job:
+    name: generative_diagnostics
+    chdir: false
+  run:
+    dir: "outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_${hydra.job.name}"
+
+# Explicit Hydra job directory to analyse. When null, the newest registry row
+# matching `filters` is used.
+job_dir: null
+csv_path: runs.csv
+filters:
+  status: success
+  model.model_cls._target_: torch_concepts.nn.ConceptBottleneckGenerativeModel
+
+seed: 42
+
+# Columns in diagnostics.png.
+n_samples: 10
+# Quantise sampled concepts to a hard state before decoding. null follows the
+# model's own `soft_mixing`, matching run_generative_analysis.py.
+hard_sampling: null
+
+# Test batches to scan for the posterior statistics. The whole split is not
+# needed — a few thousand samples pin down the aggregate posterior — and the
+# guide runs the backbone live, which is slow on CPU. null scans everything.
+max_batches: 20
+
+# Per-dimension KL below this counts a latent dimension as collapsed.
+collapsed_kl: 0.01

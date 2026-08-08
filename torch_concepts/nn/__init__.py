@@ -52,6 +52,9 @@ from .modules.loss import ConceptLoss, WeightedConceptLoss, DepthWeightedConcept
     L1LogitRegularizer, CompositeLoss, ReconstructionLoss, KLDivergenceLoss, \
     OrthogonalityLoss, NLLProbLoss
 
+# Training callbacks
+from .modules.callbacks import LossWeightWarmup
+
 # Metrics
 from .modules.metrics import ConceptMetrics, compute_cace
 
@@ -172,6 +175,9 @@ __all__ = [
     "KLDivergenceLoss",
     "OrthogonalityLoss",
     "NLLProbLoss",
+
+    # Training callbacks
+    "LossWeightWarmup",
 
     # Metrics
     "ConceptMetrics",

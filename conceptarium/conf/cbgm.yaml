@@ -2,14 +2,15 @@
 # Train a Concept Bottleneck Generative Model.
 #
 # Sweeps both image datasets (colormnist, celeba) x the concept
-# weight `alpha` -- 6 jobs -- in one multirun:
+# weight `alpha` x the KL weight -- 2*3*4 = 24 jobs -- in one multirun:
 #
 #   cd conceptarium
 #   python run_experiment.py --config-name cbgm -m \
 #       trainer.accelerator=gpu trainer.devices=1
 #
-# Restrict either axis on the command line, e.g.
-# `dataset=colormnist` or `alpha=100` (a single value on both drops -m).
+# That is a lot; restrict any axis on the command line, e.g.
+# `dataset=colormnist alpha=100` leaves the 4 kl values
+# (a single value on every axis drops -m).
 #
 # Then produce the generation / steering / counterfactual figures:
 #   python run_generative_analysis.py
@@ -38,6 +39,9 @@ hydra:
     params:
       dataset: colormnist, celeba
       alpha: 50, 100, 400
+      # Brackets the reference's effective weight (~0.31, see `kl` below) as
+      # well as the value the earlier sweep assumed.
+      kl: 0.3, 1, 3, 10
 
 seed: 42
 
@@ -47,9 +51,23 @@ seed: 42
 recon: 1.0    # -log p(input | bottleneck)
 # Not 1.0: with a Gaussian likelihood the reconstruction gradient carries a
 # 1/sigma^2 factor, so at the model config's fixed sigma=0.3 it outweighs the KL
-# ~23:1 on the encoder. beta=1 is only the true ELBO when sigma is the real
-# noise level; here it left q(z|x) free to drift off the prior, which is what
-# made prior samples decode to noise. ~23 equalises them at init -- sweep it.
+# on the encoder. beta=1 is only the true ELBO when sigma is the real noise
+# level; here it left q(z|x) free to drift off the prior.
+#
+# CAUTION, this is NOT the reference's 10. The reference computes
+#   prior_loss = (-0.5 * sum(1 + logvar - mean^2 - exp(logvar))) / numel(mean) * 10
+# i.e. it divides the KL by (batch x latent_size) before scaling, while
+# KLDivergenceLoss here sums the event and averages only the batch. In this
+# convention the reference's weight is 10 / latent_size = 10/32 ~= 0.31, so the
+# earlier sweep around 10 was anchored ~32x too high. The reference's
+# reconstruction is also a MEAN over discriminator features, not a sum over
+# pixels, so neither term is directly comparable -- treat 0.31 as a landmark to
+# bracket, not a target.
+#
+# Also note the recon:KL ratios quoted below assume D=2352 pixels carry signal.
+# On colormnist they do not: `colorize` writes the intensity into ONE RGB
+# channel, so 1568 of those dims are identically zero and most of the rest are
+# background. The true ratio is milder than the arithmetic suggests.
 kl: 10.0      # KL( q(z|input) || p(z) )
 # Not the reference's 5.0. Under `soft_mixing` the concepts are not teacher-forced,
 # so a concept is only predictable if q(z|x) encoded it -- and it is RECONSTRUCTION
@@ -90,6 +108,16 @@ trainer:
   accelerator: "auto"
   logger: null       # null / wandb
   log_model: false
+
+  # Ramp the KL weight 0 -> `kl` over the first 5 epochs. At full strength from
+  # step 0 the KL is trivially minimised by ignoring the input: the guide matches
+  # the prior, z carries nothing, and the decoder settles on the data mean before
+  # reconstruction has taught it anything. Dimensions lost that way rarely come
+  # back, and the run still reports a respectable val_loss.
+  callbacks:
+    - _target_: "torch_concepts.nn.LossWeightWarmup"
+      term: KLDivergenceLoss
+      epochs: 5
 
 matmul_precision: medium
 

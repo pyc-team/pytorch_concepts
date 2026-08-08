@@ -10,10 +10,37 @@ the very end so the CPD contract is unchanged.
 
 from __future__ import annotations
 
+import math
 from typing import Optional, Sequence, Tuple, Union
 
 import torch
 import torch.nn as nn
+
+
+#: Normalisations :class:`ConvDecoder` will insert between stages.
+NORMS = ("batch", "group", "none")
+
+
+def _norm_layer(kind: str, channels: int) -> Optional[nn.Module]:
+    """A normalisation over ``channels``, or ``None`` for ``'none'``.
+
+    ``'group'`` exists for the generative case. ``BatchNorm`` keeps running
+    statistics accumulated from whatever the decoder saw in training — for a VAE
+    that is bottlenecks driven by ``q(z | x)`` — and then normalises by them at
+    ``eval()``. Decoding a *prior* sample feeds it a differently-distributed
+    input, so generations are normalised by statistics that do not describe them
+    while reconstructions are fine. ``GroupNorm`` has no running statistics and
+    cannot develop that split.
+    """
+    if kind == "batch":
+        return nn.BatchNorm2d(channels)
+    if kind == "group":
+        # gcd keeps the group count legal for any width; 8 is the usual default
+        # and degrades to LayerNorm-per-pixel on a 3-channel output.
+        return nn.GroupNorm(math.gcd(8, channels), channels)
+    if kind == "none":
+        return None
+    raise ValueError(f"ConvDecoder: norm must be one of {NORMS}, got {kind!r}.")
 
 
 def _derive_stages(side: int, base_channels: int, max_base_size: int) -> Tuple[int, ...]:
@@ -64,7 +91,22 @@ class ConvDecoder(nn.Module):
     activation : type, default ``nn.LeakyReLU``
         Activation class used between stages.
     batch_norm : bool, default True
-        Whether to insert ``BatchNorm2d`` after each transposed convolution.
+        Legacy switch for ``BatchNorm2d`` between stages. Superseded by
+        ``norm``, which is consulted first whenever it is given.
+    norm : str, optional
+        ``'batch'``, ``'group'`` or ``'none'``. Defaults to ``None``, meaning
+        "follow ``batch_norm``". Prefer ``'group'`` in a generative model: see
+        :func:`_norm_layer` for why ``BatchNorm`` and prior sampling interact
+        badly.
+    refine : bool, default False
+        Insert a same-resolution ``Conv2d(3x3) -> norm -> activation`` block
+        after the linear projection and after every upsampling stage bar the
+        last. Off by default, because a decoder with the default settings is
+        otherwise **almost affine** — the stack is one ``Linear``, one
+        activation and two transposed convolutions — and an affine generator
+        reproduces the data mean near the training codes and diverges away from
+        them. On a 28x28 target this takes the stack from one activation to
+        three, for ~25% more parameters.
     max_base_size : int, default 8
         Largest starting grid an int ``hidden_channels`` will settle for; ignored
         when the stages are given explicitly.
@@ -110,9 +152,17 @@ class ConvDecoder(nn.Module):
         base_size: Optional[int] = None,
         activation: type = nn.LeakyReLU,
         batch_norm: bool = True,
+        norm: Optional[str] = None,
+        refine: bool = False,
         max_base_size: int = 8,
     ) -> None:
         super().__init__()
+        # `norm` supersedes `batch_norm` but does not break it: existing callers
+        # pass only the boolean and keep the behaviour they had.
+        if norm is None:
+            norm = "batch" if batch_norm else "none"
+        if norm not in NORMS:
+            raise ValueError(f"ConvDecoder: norm must be one of {NORMS}, got {norm!r}.")
         out_shape = tuple(int(s) for s in out_shape)
         if len(out_shape) != 3:
             raise ValueError(
@@ -163,8 +213,23 @@ class ConvDecoder(nn.Module):
         self.project = nn.Linear(in_features, first * base_size * base_size)
         self.unflatten = nn.Unflatten(-1, (first, base_size, base_size))
 
+        def block(width: int) -> list[nn.Module]:
+            """Same-resolution refinement: conv, norm, activation."""
+            layers: list[nn.Module] = [
+                nn.Conv2d(width, width, kernel_size=3, padding=1)
+            ]
+            if (layer := _norm_layer(norm, width)) is not None:
+                layers.append(layer)
+            layers.append(activation())
+            return layers
+
         widths = list(hidden_channels) + [channels]
         stages: list[nn.Module] = []
+        # A refinement on the projected grid, before any upsampling: without it
+        # the only thing between the bottleneck and the first transposed
+        # convolution is `project`, a single affine map.
+        if refine and hidden_channels:
+            stages += block(first)
         for i, (in_c, out_c) in enumerate(zip(widths, widths[1:])):
             stages.append(
                 nn.ConvTranspose2d(in_c, out_c, kernel_size=4, stride=2, padding=1)
@@ -172,9 +237,11 @@ class ConvDecoder(nn.Module):
             # The last stage stays bare: it emits the raw parameter, which the
             # DefaultActivation composed downstream maps into its domain.
             if i < len(widths) - 2:
-                if batch_norm:
-                    stages.append(nn.BatchNorm2d(out_c))
+                if (layer := _norm_layer(norm, out_c)) is not None:
+                    stages.append(layer)
                 stages.append(activation())
+                if refine:
+                    stages += block(out_c)
         self.stages = nn.Sequential(*stages)
         self.flatten = nn.Flatten(start_dim=-3)
 

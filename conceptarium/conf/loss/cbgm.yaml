@@ -25,8 +25,15 @@ terms:
   - _target_: "torch_concepts.nn.ReconstructionLoss"
     variable: input
 
+  # `free_bits` floors each latent dimension's batch-averaged KL. Nothing in the
+  # ELBO stops a dimension collapsing onto the prior and carrying nothing, and
+  # once enough have, q(z) occupies a thin sliver of a space p(z) spreads mass
+  # over uniformly -- so a draw from the prior lands where the decoder was never
+  # trained. That is the "reconstructs fine, generates badly" failure, and it is
+  # invisible in val_loss. Check `n_dims_collapsed` in diagnostics.csv.
   - _target_: "torch_concepts.nn.KLDivergenceLoss"
     latents: [z]
+    free_bits: 0.5
 
   - _target_: "torch_concepts.nn.ConceptLoss"
     binary_param: probs

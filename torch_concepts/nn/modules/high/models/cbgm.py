@@ -78,6 +78,22 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         Dimensionality of ``z``.
     embedding_size : int, default 16
         Width ``m`` of a single context embedding.
+    context_hidden_size : int or None, default None
+        Width of a hidden layer in the context networks ``z -> w``. ``None``
+        leaves them a bare ``Linear``, which is the reference's layout — but the
+        reference is a VAE-*GAN*, whose discriminator supplies the missing
+        nonlinearity elsewhere. In the pure VAE built here a linear context
+        network plus a shallow decoder makes the whole path ``z -> pixels``
+        close to affine, and an affine generator reproduces the data mean near
+        the codes it was trained on and diverges away from them — sharp
+        reconstructions, incoherent prior samples.
+    context_norm : str, default 'none'
+        Normalisation on the context embeddings: ``'layer'``, ``'batch'`` or
+        ``'none'`` (see
+        :class:`~torch_concepts.nn.LinearEmbeddingEncoder`). The reference uses
+        ``BatchNorm1d`` here, which bounds the embeddings when ``z`` wanders off
+        the posterior; ``'layer'`` does the same without depending on the batch,
+        so a single generated sample decodes the way a batch of them does.
     observation : type, default ``torch.distributions.Normal``
         Distribution family of the generated variable. ``Bernoulli`` for images
         in ``[0, 1]``; ``Normal`` needs a ``scale`` too — see ``global_scale``.
@@ -129,8 +145,9 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
 
     * The decoder input is the paper's ``m(k + 1)`` bottleneck; the code also
       prepends the concept probabilities.
-    * The reference context generators end in ``BatchNorm1d``;
-      :class:`~torch_concepts.nn.LinearEmbeddingEncoder` does not.
+    * The reference context generators end in ``BatchNorm1d``. Here they are bare
+      by default; pass ``context_norm='batch'`` to match it, or ``'layer'`` for
+      the batch-independent equivalent.
     * The reference concept head is a per-concept ``Linear(bins * m, bins)``. A
       **categorical** concept here keeps the reused CEM head — a ``Linear(m, 1)``
       shared across states — while a **binary** one matches the reference's
@@ -193,6 +210,8 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         decoder: nn.Module = None,
         latent_size: int = 64,
         embedding_size: int = 16,
+        context_hidden_size: Optional[int] = None,
+        context_norm: str = "none",
         observation: Type = Normal,
         global_scale: bool = True,
         scale_init: float = 1.0,
@@ -215,6 +234,8 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
             **kwargs,
         )
         self.embedding_size = embedding_size
+        self.context_hidden_size = context_hidden_size
+        self.context_norm = context_norm
         self.observation = observation
         self.global_scale = global_scale
         self.scale_init = scale_init
@@ -375,6 +396,8 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
                     in_features=self.latent_size,
                     out_features=self.embedding_size,
                     n_embeddings=e.shape[0],
+                    hidden_size=self.context_hidden_size,
+                    norm=self.context_norm,
                 )}
                 for e in [*embeddings, unknown]
             ],

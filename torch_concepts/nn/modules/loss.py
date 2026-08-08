@@ -266,23 +266,37 @@ class KLDivergenceLoss(TypeAwareLoss):
             ``['z']``.
         distribution (type, optional): Distribution family shared by guide and
             prior. Inferred from the reported parameter names when omitted.
+        free_bits (float): Per-dimension floor, in nats, below which a
+            dimension's KL stops being penalised. Default ``0.0`` (off, the
+            plain ELBO term).
+
+            Raise it when a *generative* model reconstructs well but samples
+            badly. Nothing in the ELBO stops a dimension from collapsing to the
+            prior and carrying no information, and once enough of them have, the
+            aggregate posterior occupies a thin region of a latent space the
+            prior spreads mass over uniformly — so a draw from ``p(z)`` lands
+            where the decoder has never been trained. A floor of ~0.5 nats keeps
+            every dimension in use and the two distributions closer in shape.
 
     Example:
         >>> from torch_concepts.nn import KLDivergenceLoss
         >>> loss_fn = KLDivergenceLoss(latents=['z'])
+        >>> loss_fn = KLDivergenceLoss(latents=['z'], free_bits=0.5)
     """
 
     def __init__(
         self,
         latents: Sequence[str] = ("z",),
         distribution: Optional[type] = None,
+        free_bits: float = 0.0,
     ):
         super().__init__()
         self.latents = list(latents)
         self.distribution = distribution
+        self.free_bits = float(free_bits)
 
     def extra_repr(self) -> str:
-        return f"latents={self.latents}"
+        return f"latents={self.latents}, free_bits={self.free_bits}"
 
     def forward(self, output: ModelOutput, target=None) -> torch.Tensor:
         total = None
@@ -293,8 +307,19 @@ class KLDivergenceLoss(TypeAwareLoss):
                 q_params, f"KLDivergenceLoss({name!r})"
             )
             kl = dist.kl_divergence(family(**q_params), family(**p_params))
-            # One scalar per latent dimension: sum the event, average the batch.
-            value = kl.sum(-1).mean()
+            if self.free_bits:
+                # Clamp each dimension's BATCH-AVERAGED KL, then sum: a
+                # dimension already below the floor contributes a constant and
+                # its gradient vanishes, while the rest are still pulled down.
+                # Averaging first (rather than clamping each sample) is the
+                # usual formulation and is the gentler one — it lets an
+                # individual sample sit under the floor as long as the dimension
+                # is carrying information overall. Clamping the summed total
+                # instead would simply switch the whole term off.
+                value = kl.reshape(-1, kl.shape[-1]).mean(0).clamp_min(self.free_bits).sum()
+            else:
+                # One scalar per latent dimension: sum the event, average the batch.
+                value = kl.sum(-1).mean()
             total = value if total is None else total + value
         return total
 

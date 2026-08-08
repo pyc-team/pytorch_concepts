@@ -7,6 +7,8 @@ neural network architectures in concept-based models.
 Reference: https://torch-spatiotemporal.readthedocs.io/en/latest/
 """
 
+from typing import Optional
+
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -257,15 +259,36 @@ class LinearEmbeddingEncoder(torch.nn.Module):
     ``n_embeddings * out_features``, then unflattens the last dimension to
     ``(n_embeddings, out_features)``.
 
+    With ``hidden_size`` it becomes a two-layer MLP instead, optionally
+    normalised. That matters when the *input* is a latent the model will later
+    sample from a prior rather than from a posterior — a concept bottleneck
+    generative model, say. A bare linear map extrapolates without bound, so
+    embeddings produced from an unusual latent are unusual by the same factor and
+    land far outside anything the downstream decoder was trained on. A hidden
+    layer with ``norm='layer'`` bounds them instead. The reference CBGM
+    implementation uses ``Linear -> BatchNorm1d`` here for the same reason;
+    ``'layer'`` is preferred because it normalises each embedding row on its own
+    and so behaves identically whatever the batch holds.
+
     Attributes:
         out_shape (Tuple[int, int]): Target shape used by ``nn.Unflatten``.
-        encoder (nn.Sequential): ``Linear -> Unflatten`` encoder.
+        encoder (nn.Sequential): The encoder, ending in ``Unflatten``.
 
     Args:
         in_features (int): Number of input features.
         out_features (int): Feature dimension of each output embedding.
         n_embeddings (int, optional): Number of output embeddings.
             Defaults to ``1``.
+        hidden_size (int, optional): Width of a hidden layer. ``None`` (the
+            default) keeps the single linear projection.
+        norm (str, optional): ``'layer'``, ``'batch'`` or ``'none'``, applied to
+            each output embedding row. Defaults to ``'none'``. ``'batch'``
+            reproduces the reference implementation exactly but is a
+            ``BatchNorm1d``, so it accepts a single batch axis only and will
+            raise under an inference engine that adds a leading sample
+            dimension; ``'layer'`` has no such restriction.
+        activation (type, optional): Activation used after the hidden layer.
+            Ignored without ``hidden_size``. Defaults to ``nn.LeakyReLU``.
 
     Example:
         >>> import torch
@@ -281,6 +304,15 @@ class LinearEmbeddingEncoder(torch.nn.Module):
         >>> out.shape
         torch.Size([4, 5, 16])
 
+        Deeper and normalised, for a generative bottleneck:
+
+        >>> encoder = LinearEmbeddingEncoder(
+        ...     in_features=128, out_features=16, n_embeddings=5,
+        ...     hidden_size=256, norm='layer',
+        ... )
+        >>> encoder(torch.randn(4, 128)).shape
+        torch.Size([4, 5, 16])
+
     References:
         Espinosa Zarlenga et al. "Concept Embedding Models: Beyond the
         Accuracy-Explainability Trade-Off", NeurIPS 2022.
@@ -292,6 +324,9 @@ class LinearEmbeddingEncoder(torch.nn.Module):
         in_features: int,
         out_features: int,
         n_embeddings: int = 1,
+        hidden_size: Optional[int] = None,
+        norm: str = 'none',
+        activation: type = torch.nn.LeakyReLU,
     ):
         """
         Initialize the linear embedding encoder.
@@ -300,18 +335,36 @@ class LinearEmbeddingEncoder(torch.nn.Module):
             in_features: Number of input features.
             out_features: Dimension of each output embedding.
             n_embeddings: Number of output embeddings.
+            hidden_size: Width of an optional hidden layer.
+            norm: Normalisation over each output embedding row.
+            activation: Activation after the hidden layer.
         """
         super().__init__()
 
         self.out_shape = (n_embeddings, out_features)
 
-        self.encoder = torch.nn.Sequential(
-            torch.nn.Linear(
-                in_features,
-                n_embeddings * out_features
-            ),
-            torch.nn.Unflatten(-1, self.out_shape)
-        )
+        layers = []
+        if hidden_size is not None:
+            layers += [torch.nn.Linear(in_features, hidden_size), activation()]
+            in_features = hidden_size
+        layers += [
+            torch.nn.Linear(in_features, n_embeddings * out_features),
+            torch.nn.Unflatten(-1, self.out_shape),
+        ]
+        # After the unflatten, so 'layer' normalises one embedding row rather
+        # than the concatenation of all of them, and 'batch' matches the
+        # reference's BatchNorm1d over the flat projection.
+        if norm == 'layer':
+            layers.append(torch.nn.LayerNorm(out_features))
+        elif norm == 'batch':
+            layers.insert(-1, torch.nn.BatchNorm1d(n_embeddings * out_features))
+        elif norm != 'none':
+            raise ValueError(
+                "LinearEmbeddingEncoder: norm must be 'layer', 'batch' or "
+                f"'none', got {norm!r}."
+            )
+
+        self.encoder = torch.nn.Sequential(*layers)
 
     def forward(self, x: torch.Tensor):
         """

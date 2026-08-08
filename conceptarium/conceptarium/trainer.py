@@ -18,6 +18,7 @@ from pytorch_lightning.loggers.logger import DummyLogger
 
 from env import PROJECT_NAME, WANDB_ENTITY
 from hydra.core.hydra_config import HydraConfig
+from hydra.utils import instantiate
 from conceptarium.hydra import parse_hyperparams
 from wandb.sdk.lib.runid import generate_id     
         
@@ -121,6 +122,11 @@ class Trainer(_Trainer_):
                 logging_interval="step",
             )
         )
+        # Extra callbacks straight from the config, e.g. a
+        # `torch_concepts.nn.LossWeightWarmup` on the KL term. Appended last so
+        # they see the state the built-in ones leave behind.
+        for callback_cfg in cfg.trainer.get("callbacks") or []:
+            callbacks.append(instantiate(callback_cfg, _convert_="all"))
 
         # logger selection and setup
         if cfg.trainer.get("logger") is not None:
@@ -131,7 +137,7 @@ class Trainer(_Trainer_):
         trainer_kwargs = {
             k: v
             for k, v in cfg.trainer.items()
-            if k not in ["monitor", "patience", "logger", "log_model", "save_top_k", "save_last", "save_weights_only"]
+            if k not in ["monitor", "patience", "logger", "log_model", "save_top_k", "save_last", "save_weights_only", "callbacks"]
         }
         super().__init__(
             callbacks=callbacks,
