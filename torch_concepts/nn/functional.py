@@ -179,6 +179,62 @@ def grouped_concept_exogenous_mixture(c_emb: torch.Tensor,
     return out
 
 
+def concept_orthogonality(context: torch.Tensor, n_concepts: int) -> torch.Tensor:
+    """
+    Orthogonality penalty between the concept contexts and the unsupervised one.
+
+    The concept bottleneck of a generative model ends in an *unsupervised*
+    context vector carrying whatever the pre-defined concepts do not encode.
+    Nothing stops it from re-encoding them, which would make the concepts
+    useless as steering knobs, so it is pushed away from every concept context
+    by penalising the absolute cosine similarity (Eq. 5 of the paper).
+
+    Args:
+        context: Concept bottleneck of shape ``(batch_size, (n_concepts + 1) * emb_size)``
+            -- the ``n_concepts`` mixed concept contexts followed by the
+            unsupervised one, as produced by
+            :class:`~torch_concepts.nn.MixConceptEmbeddingToEmbedding`.
+        n_concepts: Number of supervised concepts (``k``).
+
+    Returns:
+        torch.Tensor: Scalar penalty, the batch-mean absolute cosine similarity
+        **summed** over the concepts.
+
+    Example:
+        >>> import torch
+        >>> from torch_concepts.nn.functional import concept_orthogonality
+        >>>
+        >>> context = torch.randn(4, 3 * 16)   # 2 concepts + 1 unsupervised, emb 16
+        >>> concept_orthogonality(context, n_concepts=2).shape
+        torch.Size([])
+
+    Note:
+        Eq. 5 of the paper averages over the concepts; the authors' released
+        code (``utils/gan_loss.py::OrthogonalProjectionLoss``, called once per
+        concept) sums. This reproduces the code, so scale ``beta`` by ``1/k``
+        to recover the paper's normalisation.
+
+    References:
+        Ismail et al. "Concept Bottleneck Generative Models", ICLR 2024.
+        https://openreview.net/forum?id=L9U5MJJleF
+    """
+    # Move the concept axis to the front so each concept's (*leading, emb_size)
+    # block is contiguous: that is the layout the reference reduces over, and
+    # float32 reductions are layout-sensitive in the last ulp.
+    contexts = context.unflatten(-1, (n_concepts + 1, -1)).movedim(-2, 0).contiguous()
+    concept_context = contexts[:-1]
+    unknown_context = contexts[-1:].expand_as(concept_context).contiguous()
+    # Normalising before the cosine is redundant but matches the reference
+    # implementation bit for bit (it normalises, then applies CosineSimilarity).
+    similarity = torch.nn.functional.cosine_similarity(
+        torch.nn.functional.normalize(concept_context, dim=-1),
+        torch.nn.functional.normalize(unknown_context, dim=-1),
+        dim=-1,
+        eps=1e-6,
+    )
+    return similarity.abs().flatten(start_dim=1).mean(-1).sum()
+
+
 def selection_eval(
     selection_weights: torch.Tensor,
     *predictions: torch.Tensor,

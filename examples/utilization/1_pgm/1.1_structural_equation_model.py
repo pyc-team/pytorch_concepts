@@ -23,7 +23,7 @@ from torch.distributions import Bernoulli
 from torch_concepts import seed_everything, EmbeddingVariable, ConceptVariable
 from torch_concepts.distributions import Delta
 from torch_concepts.nn import ParametricCPD, BayesianNetwork, AncestralSamplingInference, \
-    CallableConceptToConcept, LearnablePrior
+    CallableConceptToConcept, DefaultActivation, LearnablePrior
 
 
 def main():
@@ -40,7 +40,10 @@ def main():
     # One structural equation (parametrization module) per variable.
     layers = {
         # genotype: learnable predisposition driven by the exogenous noise.
-        "genotype": torch.nn.Sequential(torch.nn.Linear(1, 1), torch.nn.Sigmoid()),
+        "genotype": torch.nn.Sequential(
+            torch.nn.Linear(1, 1),
+            DefaultActivation("probs", Bernoulli),
+        ),
         # smoking := 1[genotype].
         "smoking": CallableConceptToConcept(lambda g: (g > 0.5).float(), use_bias=False),
         # tar := genotype OR smoking. Parents are concatenated along the last

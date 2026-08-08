@@ -1,3 +1,16 @@
+# =============================================================
+# CelebA: 40 binary facial attributes, native 3x218x178.
+#
+# Serves the discriminative models and the generative ones alike —
+# the only preparation that differs by experiment is which concepts
+# you steer, and that is an argument to run_generative_analysis.py.
+#
+# NOTE: `max_samples` does not work for CelebA (input_data is a
+# list of filenames, not a tensor). Subsample with a splitter.
+#
+# `root` is injected by setup_run_env as DATA_ROOT/${dataset.name},
+# so the download and the embedding cache are shared. Do not set it.
+# =============================================================
 defaults:
   - _commons
   - _self_
@@ -7,16 +20,22 @@ name: celeba
 datamodule:
   _target_: torch_concepts.data.datamodules.celeba.CelebADataModule
 
-  # as default, we use the native splitter provided by the dataset 
-  splitter: 
+  # as default, we use the native splitter provided by the dataset
+  splitter:
     _target_: torch_concepts.data.splitters.native.NativeSplitter
 
   # all CelebA attributes are binary facial features
   label_descriptions: null
 
+  # Native CelebA is 3x218x178 = 116,412 pixels, which no decoder should have
+  # to emit. Centre-cropped to the shorter side and resized: 3x64x64 = 12,288.
+  # 64 is also what the literature trains on, so this is not a generative-only
+  # concession.
+  image_size: 64
+
 default_task_names: [Attractive]
 
 backbone:
   _target_: torch_concepts.backbone.ImageBackbone
-  name: resnet50
+  name: resnet18
   freeze: True

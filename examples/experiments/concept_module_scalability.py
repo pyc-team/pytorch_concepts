@@ -41,6 +41,7 @@ from torch_concepts.distributions import Delta
 from torch_concepts.nn import (
     ParametricCPD,
     BayesianNetwork,
+    DefaultActivation,
     DeterministicInference,
     LinearEmbeddingToConcept,
     LearnablePrior,
@@ -83,7 +84,7 @@ def build_individual(names: List[str]) -> BayesianNetwork:
     concepts = ConceptVariable(names, distribution=Bernoulli)            # N variables
     cpds = ParametricCPD(                                                 # N CPDs
         concepts, parents=[latent_var],
-        parametrization=Sequential(LinearEmbeddingToConcept(LATENT_DIMS, 1), nn.Sigmoid()),
+        parametrization=Sequential(LinearEmbeddingToConcept(LATENT_DIMS, 1), DefaultActivation("probs", Bernoulli)),
     )
     return BayesianNetwork(
         variables=[input_var, latent_var, *concepts],
@@ -98,7 +99,7 @@ def build_shared(names: List[str]) -> BayesianNetwork:
     cpd = ParametricCPD(
         concepts, parents=[latent_var],
         parametrization=Sequential(
-            LinearEmbeddingToConcept(LATENT_DIMS, concepts.size), nn.Sigmoid()),
+            LinearEmbeddingToConcept(LATENT_DIMS, concepts.size), DefaultActivation("probs", Bernoulli)),
     )
     return BayesianNetwork(variables=[input_var, latent_var, concepts],
                            factors=[input_cpd, backbone, cpd])

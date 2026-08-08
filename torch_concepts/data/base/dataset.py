@@ -13,7 +13,6 @@ import torch
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset, default_collate
 from tqdm import tqdm
-from copy import deepcopy
 from typing import Dict, List, Optional, Union
 import warnings
 
@@ -455,43 +454,22 @@ class ConceptDataset(Dataset):
                                 annotations: Annotations,
                                 concept_names_subset: Optional[List[str]] = None):
         """If ``concept_names_subset`` is provided, the annotations are reduced
-        to include only the specified concepts. 
+        to include only the specified concepts.
+
+        Delegates to :meth:`~torch_concepts.annotations.Annotations.subset`, which
+        validates the requested labels and slices every per-concept field. Notably
+        it returns *lists*: :meth:`set_concepts` and :meth:`set_graph` index a
+        ``pd.DataFrame`` by :attr:`concept_names`, and pandas reads a **tuple** as a
+        single MultiIndex key rather than a list of columns.
 
         Args:
             annotations: Annotations object for all concepts.
-            concept_names_subset: List of strings naming the subset of concepts to use. 
+            concept_names_subset: List of strings naming the subset of concepts to use.
                                     If :obj:`None`, will use all concepts.
         """
         self.concept_names_all = annotations.labels
         if concept_names_subset is not None:
-            # sanity check, all subset concepts must be in all concepts
-            missing_concepts = set(concept_names_subset) - set(self.concept_names_all)
-            assert not missing_concepts, f"Concepts not found in dataset: {missing_concepts}"
-            to_select = deepcopy(concept_names_subset)
-            
-            # Get indices of selected concepts
-            indices = [self.concept_names_all.index(name) for name in to_select]
-            
-            # Reduce annotations by extracting only the selected concepts
-            axis_annotation = annotations
-            reduced_labels = tuple(axis_annotation.labels[i] for i in indices)
-            
-            # Reduce cardinalities
-            reduced_cardinalities = tuple(axis_annotation.cardinalities[i] for i in indices)
-        
-            # Reduce states
-            reduced_states = tuple(axis_annotation.states[i] for i in indices)
-
-            # Reduce types
-            reduced_types = tuple(axis_annotation.types[i] for i in indices)
-
-            # Create reduced annotations
-            self._annotations = Annotations(
-                labels=reduced_labels,
-                cardinalities=reduced_cardinalities,
-                states=reduced_states,
-                types=reduced_types,
-            )
+            self._annotations = annotations.subset(concept_names_subset)
 
     def _maybe_reorder_by_type(self, annotations: Annotations) -> Annotations:
         """Reorder ``annotations`` so same-type concepts sit contiguously

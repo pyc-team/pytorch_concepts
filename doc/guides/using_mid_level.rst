@@ -94,9 +94,21 @@ Concept Bottleneck Model ``input → latent → concepts → task`` as a probabi
     constructor arguments (e.g., ``logits`` for a Bernoulli distribution). Parent-less (root) variables use a prior such as
     :class:`~torch_concepts.nn.LearnablePrior`.
 
+    A CPD applies **no activation**: whatever a parametrization module emits is handed to the
+    distribution verbatim, so it must already lie in that parameter's domain — ``probs`` in
+    ``[0, 1]``, ``scale`` positive, and so on. Rather than remembering which squashing function
+    each parameter wants, compose a raw layer with
+    :class:`~torch_concepts.nn.DefaultActivation`, which reads the family's standard choice off
+    its ``DistributionSpec``: ``DefaultActivation('probs', Bernoulli)`` is a sigmoid,
+    ``DefaultActivation('probs', OneHotCategorical)`` a softmax, ``DefaultActivation('scale',
+    Normal)`` a softplus, and an unconstrained parameter such as ``logits`` or ``loc`` resolves
+    to the identity. Use ``DefaultActivation.for_variable(variable, param)`` wherever the
+    variable is in scope — a plate needs it to normalise each member separately.
+
     .. code-block:: python
 
-       from torch_concepts.nn import ParametricCPD, LearnablePrior, Sequential, LinearConceptToConcept, LinearEmbeddingToConcept
+       from torch_concepts.nn import (ParametricCPD, LearnablePrior, Sequential, DefaultActivation,
+                                      LinearConceptToConcept, LinearEmbeddingToConcept)
        import torch.nn as nn
 
        # Input —> root, generally provided as evidence at inference time
@@ -133,7 +145,8 @@ Concept Bottleneck Model ``input → latent → concepts → task`` as a probabi
            parents=[smoking],
            parametrization={
                'loc':   LinearConceptToConcept(in_concepts=1, out_concepts=1),
-               'scale': Sequential(LinearConceptToConcept(in_concepts=1, out_concepts=1), nn.Softplus()),
+               'scale': Sequential(LinearConceptToConcept(in_concepts=1, out_concepts=1),
+                                   DefaultActivation('scale', Normal)),
            },
        )
 

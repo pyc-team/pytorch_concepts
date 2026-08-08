@@ -68,22 +68,34 @@ def make_temperature_schedule(
     initial_temperature: float,
     annealing: Union[str, Callable[[int], float]],
     annealing_rate: float,
+    final_temperature: float = 1e-6,
 ) -> Callable[[int], float]:
     """Build a ``step -> temperature`` schedule.
 
     ``annealing`` may be ``'constant'``, ``'exponential'`` (decays as
-    ``T0 * exp(-rate * step)``), ``'linear'`` (decays as
-    ``max(eps, T0 - rate * step)``), or a user-supplied callable.
+    ``T0 * exp(-rate * step)``), ``'linear'`` (decays as ``T0 - rate * step``),
+    or a user-supplied callable.
+
+    Both decays are clamped below at ``final_temperature``, so the schedule
+    reaches a floor and stays there rather than sliding towards zero: a relaxed
+    sample is only useful while its gradient is, and a temperature that keeps
+    shrinking eventually makes every draw a one-hot with a vanishing gradient.
+    Around ``0.1`` a Concrete draw already puts ~94% of its mass on one state.
+    A user-supplied callable is returned untouched and is responsible for its
+    own floor.
     """
     if callable(annealing):
         return annealing
+    floor = float(final_temperature)
     if annealing == "constant":
         return lambda step: float(initial_temperature)
     if annealing == "exponential":
-        return lambda step: float(initial_temperature) * math.exp(-annealing_rate * step)
+        return lambda step: max(
+            floor, float(initial_temperature) * math.exp(-annealing_rate * step)
+        )
     if annealing == "linear":
         return lambda step: max(
-            1e-6, float(initial_temperature) - annealing_rate * step
+            floor, float(initial_temperature) - annealing_rate * step
         )
     raise ValueError(
         f"Unknown annealing schedule {annealing!r}. Use "

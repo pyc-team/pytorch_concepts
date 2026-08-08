@@ -18,7 +18,6 @@ import torch.nn as nn
 
 from ...graph.bayesian_network import BayesianNetwork
 from ...factors.cpd import ParametricCPD
-from ..utils import make_temperature_schedule
 from ....outputs import InferenceOutput
 from .base import PyroBaseInference, trace_to_params, _import_pyro
 
@@ -55,6 +54,10 @@ class VariationalInference(PyroBaseInference):
     initial_temperature, annealing, annealing_rate
         Temperature schedule for the relaxed-discrete sites; see
         :func:`~torch_concepts.nn.modules.mid.inference.base.make_temperature_schedule`.
+    hard : bool, default True
+        Whether an unobserved discrete site propagates its exact mode (a
+        straight-through bit / one-hot row) or the soft relaxed draw; see
+        :meth:`PyroBaseInference._pyro_relaxed_distribution`.
     """
 
     name = "VariationalInference"
@@ -68,8 +71,16 @@ class VariationalInference(PyroBaseInference):
         initial_temperature: float = 1.0,
         annealing: Union[str, Callable[[int], float]] = "constant",
         annealing_rate: float = 0.0,
+        final_temperature: float = 1e-6,
+        hard: bool = True,
     ):
-        super().__init__(pgm)
+        super().__init__(
+            pgm, hard=hard,
+            initial_temperature=initial_temperature,
+            annealing=annealing,
+            annealing_rate=annealing_rate,
+            final_temperature=final_temperature,
+        )
         self._require_directed()
 
         # Detect PGM device before building guides.
@@ -86,18 +97,6 @@ class VariationalInference(PyroBaseInference):
         self.n_samples = int(n_samples)
         self.max_plate_nesting = int(max_plate_nesting)
         self._warned_latent_evidence = False
-        # Retained for repr/introspection; the live schedule lives in ``_schedule``.
-        self.initial_temperature = float(initial_temperature)
-        self.annealing = annealing
-        self.annealing_rate = float(annealing_rate)
-        self._schedule = make_temperature_schedule(
-            initial_temperature, annealing, annealing_rate
-        )
-        self._step: int = 0
-        self.register_buffer(
-            "_temperature",
-            torch.tensor(float(self._schedule(self._step))),
-        )
 
         # Construction-time notices.
         if self._latent_names:
@@ -128,6 +127,7 @@ class VariationalInference(PyroBaseInference):
             initial_temperature=self.initial_temperature,
             annealing=self.annealing,
             annealing_rate=self.annealing_rate,
+            final_temperature=self.final_temperature,
         )
 
     # ------------------------------------------------------------------
@@ -199,14 +199,6 @@ class VariationalInference(PyroBaseInference):
             name: [p.name for p in self.pgm.guides[name].parents]
             for name in self._latent_names
         }
-
-    @property
-    def temperature(self) -> torch.Tensor:
-        return self._temperature
-
-    def step(self) -> None:
-        self._step += 1
-        self._temperature.fill_(float(self._schedule(self._step)))
 
     # ------------------------------------------------------------------
     def _merge_observables(

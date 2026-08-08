@@ -1,0 +1,64 @@
+# =============================================================
+# Post-hoc analysis of a trained generative concept model.
+#
+#   cd conceptarium
+#   python run_generative_analysis.py                 # newest cbgm run
+#   python run_generative_analysis.py job_dir=outputs/multirun/.../0
+#   python run_generative_analysis.py all_jobs=true   # every matching run
+#
+# Produces, next to each job directory:
+#   overview.png            original / reconstruction / generation
+#   steering_<concept>.png  one generated sample, then that same sample
+#                           at every state of that concept
+#   generative_metrics.csv
+#
+# and, when more than one run was analysed, one combined
+# generative_metrics_all.csv in this job's own output directory.
+# =============================================================
+hydra:
+  mode: RUN
+  job:
+    name: generative_analysis
+    chdir: false
+  run:
+    dir: "outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}_${hydra.job.name}"
+
+# Explicit Hydra job directory to analyse -- a single path, or a list of them.
+# When null, the registry rows matching `filters` are used. Note the registry
+# deliberately omits `notes`, so filter on config keys instead.
+job_dir: null
+csv_path: runs.csv
+filters:
+  status: success
+  model.model_cls._target_: torch_concepts.nn.ConceptBottleneckGenerativeModel
+
+# false: analyse only the newest matching run. true: analyse every one of them,
+# writing a figure set per model -- what comparing a sweep needs. Ignored when
+# `job_dir` is given explicitly.
+all_jobs: false
+
+seed: 42
+
+# auto picks cuda when present, else cpu (never mps -- torchvision preprocessing
+# and HuggingFace models misbehave there, so the backbone refuses it too).
+#
+# This is worth setting. The guide runs the image backbone live and torchvision
+# resizes to 224x224, which on Color-MNIST is 64x the pixels of the original
+# 28x28: a full 10k-image test pass measured ~440s on 8 CPU threads, ~60% of it
+# inside the ResNet. On a GPU it is seconds.
+accelerator: auto        # auto | cpu | cuda
+
+# Cap the metric pass at this many batches; null scores the whole test split.
+# Only the metrics are affected -- the figures are unconditional -- and
+# `n_test_samples` in the output always says how many samples were scored. Set
+# it when sweeping many runs on a CPU box, where the full pass dominates.
+max_eval_batches: null
+
+# Columns in overview.png (originals / reconstructions / generations).
+n_samples: 10
+# Quantise sampled concepts to a hard state before decoding. null follows the
+# model's own `soft_mixing` (soft if it was trained soft), which is what keeps
+# the decoder on the distribution it was trained on. true/false to force it.
+hard_sampling: null
+# Concepts to steer, one figure each. null = every concept in the model.
+steer_concepts: null

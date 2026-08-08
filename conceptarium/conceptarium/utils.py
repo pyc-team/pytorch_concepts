@@ -6,6 +6,7 @@ This module provides helper functions for:
 - Dynamic class loading and instantiation
 - Managing concept annotations and distributions
 """
+import math
 import os
 import torch
 import logging
@@ -177,12 +178,30 @@ def update_config_from_data(cfg: DictConfig, dm: ConceptDataModule) -> DictConfi
         cfg: Hydra DictConfig containing model configuration.
         dm: ConceptDataModule instance with dataset information.
         
+    Also publishes the data-derived sizes under a model-neutral ``data_dims``
+    node, so a config can interpolate them where plain YAML cannot compute them:
+
+    * ``data_dims.n_pixels`` — flattened input width (``prod(n_features)``);
+    * ``data_dims.n_concepts`` — number of annotated concepts.
+
+    A generative model's decoder needs both — its output is ``n_pixels`` wide and
+    its input is a function of ``n_concepts`` — and neither is knowable before the
+    datamodule is built.
+
+    Args:
+        cfg: Hydra DictConfig containing model configuration.
+        dm: ConceptDataModule instance with dataset information.
+
     Returns:
-        Updated cfg with model.input_size, model.backbone, and 
+        Updated cfg with model.input_size, model.backbone, and
         model.embs_precomputed set from datamodule.
     """
     with open_dict(cfg):
         cfg.model.model_cls.update(
             input_size = dm.n_features[-1] if len(dm.n_features)==1 else dm.n_features,
         )
+        cfg.data_dims = {
+            "n_pixels": int(math.prod(dm.n_features)),
+            "n_concepts": len(dm.annotations.labels),
+        }
     return cfg

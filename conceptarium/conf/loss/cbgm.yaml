@@ -1,0 +1,47 @@
+# =============================================================
+# ELBO for a concept bottleneck generative model.
+#
+# Four independent, reusable terms summed by CompositeLoss:
+#
+#   reconstruction  -log p(input | bottleneck)
+#   KL              KL( q(z|input) || p(z) )
+#   concept         supervision on the bottleneck's concepts
+#   orthogonality   pushes the unsupervised context away from the
+#                   supervised ones, so concepts stay steerable
+#
+# The weights below are the defaults; `weights` here is OVERRIDDEN by
+# conf/cbgm.yaml, which exposes each entry as a named, sweepable key
+# (recon/kl/alpha/beta) — edit the numbers there, not here.
+#
+# CBGM sets `param_for_discrete_var = "probs"`, so the concept
+# term must read `probs` — hence NLLProbLoss / BCELoss rather than
+# CrossEntropyLoss / BCEWithLogitsLoss, which expect logits.
+# =============================================================
+_target_: "torch_concepts.nn.CompositeLoss"
+
+weights: [1.0, 1.0, 5.0, 1.0]
+
+terms:
+  - _target_: "torch_concepts.nn.ReconstructionLoss"
+    variable: input
+
+  # `free_bits` floors each latent dimension's batch-averaged KL. Nothing in the
+  # ELBO stops a dimension collapsing onto the prior and carrying nothing, and
+  # once enough have, q(z) occupies a thin sliver of a space p(z) spreads mass
+  # over uniformly -- so a draw from the prior lands where the decoder was never
+  # trained. That is the "reconstructs fine, generates badly" failure, and it is
+  # invisible in val_loss. Check `n_dims_collapsed` in diagnostics.csv.
+  - _target_: "torch_concepts.nn.KLDivergenceLoss"
+    latents: [z]
+    free_bits: 0.5
+
+  - _target_: "torch_concepts.nn.ConceptLoss"
+    binary_param: probs
+    categorical_param: probs
+    binary:
+      _target_: "torch.nn.BCELoss"
+    categorical:
+      _target_: "torch_concepts.nn.NLLProbLoss"
+
+  - _target_: "torch_concepts.nn.OrthogonalityLoss"
+    variables: [mixing, unknown]

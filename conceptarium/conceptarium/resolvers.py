@@ -14,28 +14,38 @@ from env import CACHE
 
 def math_eval(node):
     """Evaluate mathematical expressions from AST nodes.
-    
+
     Safely evaluates mathematical expressions parsed as AST nodes. Supports
-    basic arithmetic operations: +, -, *, /, //, **, and unary minus.
-    
+    basic arithmetic operations: +, -, *, /, //, **, unary minus, and the
+    conditional ``a if cond else b``.
+
     Args:
         node: AST node representing a mathematical expression.
-        
+
     Returns:
         int or float: Result of the evaluated expression.
-        
+
     Raises:
         TypeError: If the node contains unsupported operations.
-        
+
     Note:
         Adapted from https://stackoverflow.com/a/9558001
         This is safer than eval() as it only supports arithmetic operations.
-        
+
     Example:
         >>> import ast
         >>> expr = ast.parse("2 + 3 * 4", mode="eval").body
         >>> math_eval(expr)
         14
+
+        The conditional lets a config size something off a boolean flag.
+        OmegaConf renders a bool as Python's ``True``/``False``, so an
+        interpolated flag parses straight into this branch:
+
+        >>> math_eval(ast.parse("(2 + 1) * (16 if True else 0)", mode="eval").body)
+        48
+        >>> math_eval(ast.parse("(2 + 1) * (16 if False else 0)", mode="eval").body)
+        0
     """
     # adapted from https://stackoverflow.com/a/9558001
     import ast
@@ -51,12 +61,16 @@ def math_eval(node):
         ast.USub: operator.neg,
     }
     match node:
+        # bool is a subclass of int, so an interpolated `True`/`False` lands here
+        # and can drive the conditional below.
         case ast.Constant(value) if isinstance(value, (int, float)):
             return value  # integer
         case ast.BinOp(left, op, right):
             return operators[type(op)](math_eval(left), math_eval(right))
         case ast.UnaryOp(op, operand):  # e.g., -1
             return operators[type(op)](math_eval(operand))
+        case ast.IfExp(test, body, orelse):  # e.g., 16 if True else 0
+            return math_eval(body) if math_eval(test) else math_eval(orelse)
         case _:
             raise TypeError(node)
 

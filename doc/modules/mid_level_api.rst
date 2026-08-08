@@ -34,6 +34,19 @@ Factors
    ParametricFactor
    ParametricCPD
 
+Activations
+-----------
+
+A CPD applies no activation, so a parametrization module must already emit a
+value in its parameter's domain. ``DefaultActivation`` supplies the family's
+standard mapping for a given parameter.
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   DefaultActivation
+
 Probabilistic Models
 --------------------
 

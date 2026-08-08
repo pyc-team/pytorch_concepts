@@ -22,7 +22,7 @@ from torch.distributions import Bernoulli, OneHotCategorical
 from torch_concepts import seed_everything, EmbeddingVariable, ConceptVariable
 from torch_concepts.distributions import Delta
 from torch_concepts.nn import (
-    ParametricCPD, BayesianNetwork, DeterministicInference,
+    ParametricCPD, BayesianNetwork, DeterministicInference, DefaultActivation,
     LinearEmbeddingToConcept, LinearConceptToConcept, LearnablePrior, Sequential,
 )
 
@@ -41,16 +41,19 @@ def main():
         variables=[x, concepts, xor, y1],
         factors=[
             ParametricCPD(x, parents=[], parametrization=LearnablePrior(X)),
+            # A CPD applies no activation, so each head is a raw layer composed
+            # with `DefaultActivation`: it reads the standard squashing function
+            # for that parameter off the variable's distribution family.
             ParametricCPD(concepts, parents=[x], parametrization=Sequential(
                 LinearEmbeddingToConcept(in_embeddings=X, out_concepts=concepts.size),
-                torch.nn.Sigmoid())),
+                DefaultActivation.for_variable(concepts, "probs"))),
             ParametricCPD(xor, parents=[concepts], parametrization=Sequential(
                 LinearConceptToConcept(in_concepts=concepts.size, out_concepts=2),
-                torch.nn.Softmax(dim=-1))),
+                DefaultActivation.for_variable(xor, "probs"))),
             # child wired to a SINGLE member of the plate via concepts.member("c1")
             ParametricCPD(y1, parents=[concepts.member("c1")], parametrization=Sequential(
                 LinearConceptToConcept(in_concepts=1, out_concepts=1),
-                torch.nn.Sigmoid())),
+                DefaultActivation.for_variable(y1, "probs"))),
         ],
     )
 

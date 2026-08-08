@@ -1,0 +1,39 @@
+# =============================================================
+# Colored MNIST: 3x28x28 RGB digits, concepts {parity, color, digit}.
+#
+# Replaces the stale TODO_colormnist.yaml, which targeted a
+# `conceptarium.data.datamodules.colormnist` module that does not
+# exist and used a `coloring` schema the datamodule never had.
+#
+# NOTE: ConceptDataset reorders concepts by type, so the actual
+# order follows the type grouping regardless of what is requested
+# here. Always read `dm.concept_names`.
+# =============================================================
+defaults:
+  - _commons
+  - _self_
+
+name: colormnist
+
+datamodule:
+  _target_: torch_concepts.data.datamodules.colormnist.ColorMNISTDataModule
+  colors: ['red', 'green']
+  coloring: 'random'
+
+  # `parity` is a deterministic function of `digit`, so keeping both gives the
+  # bottleneck a concept carrying no information the others lack -- and makes
+  # steering it incoherent, since no image can have digit=3 and parity=even.
+  concept_subset: [color, digit]
+
+default_task_names: [digit]
+
+# Feature extractor for the guide q(z | input): unfrozen, so it fine-tunes
+# to colormnist's digit strokes instead of staying stuck on frozen ImageNet
+# features (the suspected cause of the low digit-concept accuracy vs the
+# trivially-separable color concept). Must NOT be precomputed into
+# embeddings (see conf/cbgm.yaml), since the raw pixels are the
+# reconstruction target.
+backbone:
+  _target_: torch_concepts.backbone.ImageBackbone
+  name: resnet18
+  freeze: False

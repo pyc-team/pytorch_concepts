@@ -6,7 +6,7 @@ from torchmetrics import Metric, MetricCollection
 from copy import deepcopy
 
 from ...annotations import Annotations
-from .outputs import CONTINUOUS_QUANTITIES, ModelOutput
+from .outputs import CONTINUOUS_QUANTITIES, ModelOutput, supervised_subset
 from .utils import GroupConfig, check_collection
 
 
@@ -351,8 +351,13 @@ class ConceptMetrics(nn.Module):
         any_pred = discrete if discrete is not None else continuous
         if any_pred is None or any_pred.shape[0] == 0:
             return
-        binary = discrete.binary() if discrete is not None else None
-        categorical = discrete.categorical() if discrete is not None else None
+        # Variables the target provides no truth for (a generative model's
+        # reconstructed observation, say) are dropped rather than looked up.
+        binary = supervised_subset(
+            discrete.binary() if discrete is not None else None, target)
+        categorical = supervised_subset(
+            discrete.categorical() if discrete is not None else None, target)
+        continuous = supervised_subset(continuous, target)
 
         # Summary metrics — one MetricCollection.update() per type, each scored on
         # the quantity it reports and aligned to the target by concept name.

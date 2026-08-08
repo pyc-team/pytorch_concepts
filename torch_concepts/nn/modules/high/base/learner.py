@@ -332,6 +332,11 @@ class BaseLearner(pl.LightningModule):
         evidence = self.default_evidence(inputs)
         out = self.forward(query=query, evidence=evidence)
 
+        # Publish the observed values so a loss term can score them. A generative
+        # term (e.g. ReconstructionLoss) needs the *observed* variable, which is
+        # in the evidence rather than in the concept target.
+        out.extra = {**(out.extra or {}), "evidence": evidence}
+
         target = self.prepare_target(c_loss)
 
         # --- Compute loss (scaled space) ---
@@ -363,6 +368,21 @@ class BaseLearner(pl.LightningModule):
         # TODO: train interventions using the context manager 'with ...'
         loss = self.shared_step(batch, step='train')
         return loss
+
+    def on_train_batch_end(self, outputs, batch, batch_idx):
+        """Advance the relaxation temperature once per optimiser step.
+
+        *Both* engines, on the same schedule, so evaluation reads the temperature
+        training reached instead of sitting at the initial one — testing a
+        relaxation the model never trained at.
+
+        After the backward pass, not at the end of ``training_step``: the
+        temperature is part of the forward graph and is updated in place, so
+        mutating it earlier would invalidate the graph autograd is about to walk.
+        """
+        engines = {id(e): e for e in (self.train_inference, self.eval_inference) if e}
+        for engine in engines.values():
+            engine.temperature_step()
 
     def validation_step(self, batch):
         """Validation step called by PyTorch Lightning.

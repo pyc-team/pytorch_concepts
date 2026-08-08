@@ -184,7 +184,28 @@ class TestVariationalStep:
     def test_step_increments_temperature(self):
         pgm, _, _ = _make_simple_pgm()
         vi = VariationalInference(pgm, initial_temperature=2.0, annealing="exponential", annealing_rate=0.1)
+        vi.train()
         t0 = float(vi.temperature)
-        vi.step()
+        vi.temperature_step()
         t1 = float(vi.temperature)
         assert t1 != t0
+
+    def test_step_is_a_no_op_outside_training(self):
+        """Evaluation must read the temperature training left behind."""
+        pgm, _, _ = _make_simple_pgm()
+        vi = VariationalInference(pgm, initial_temperature=2.0, annealing="exponential", annealing_rate=0.1)
+        vi.eval()
+        t0 = float(vi.temperature)
+        vi.temperature_step()
+        assert float(vi.temperature) == t0
+
+    def test_annealing_stops_at_the_final_temperature(self):
+        pgm, _, _ = _make_simple_pgm()
+        vi = VariationalInference(
+            pgm, initial_temperature=2.0, annealing="exponential",
+            annealing_rate=0.5, final_temperature=0.1,
+        )
+        vi.train()
+        for _ in range(500):
+            vi.temperature_step()
+        assert float(vi.temperature) == pytest.approx(0.1)

@@ -1,15 +1,17 @@
-"""Tests for TrilActivation (torch_concepts.nn.modules.low.scales).
+"""Tests for TrilActivation and GlobalScale (torch_concepts.nn.modules.low.scales).
 
 A scale head is a ``Sequential`` of a raw layer and the activation that makes
 its output a valid distribution parameter. For a ``Normal``'s per-element
 ``scale`` that activation is stock ``nn.Softplus``; ``TrilActivation`` supplies
 the one case torch has no equivalent for — a ``MultivariateNormal``'s
-matrix-valued ``scale_tril``.
+matrix-valued ``scale_tril``. ``GlobalScale`` is a raw *layer* for the same
+slot: one learnable value, input-independent, for a homoscedastic likelihood.
 """
 import pytest
 import torch
+import torch.nn.functional as F
 
-from torch_concepts.nn.modules.low.scales import TrilActivation
+from torch_concepts.nn.modules.low.scales import TrilActivation, GlobalScale
 from torch_concepts.nn.modules.low.sequential import Sequential
 
 
@@ -77,3 +79,56 @@ class TestSoftplusScaleHead:
         head = Sequential(PyCLayer(), torch.nn.Softplus())
         out = head(concepts=torch.zeros(2, 3), embeddings=torch.zeros(2, 3))
         assert out.shape == (2, 3)
+
+
+class TestGlobalScale:
+    def test_exactly_one_trainable_parameter(self):
+        scale = GlobalScale(size=784)
+        assert sum(p.numel() for p in scale.parameters()) == 1
+
+    def test_softplus_of_raw_matches_init(self):
+        for init in (0.1, 1.0, 3.0):
+            scale = GlobalScale(size=16, init=init)
+            assert F.softplus(scale.raw).item() == pytest.approx(init, abs=1e-6)
+
+    def test_not_learnable_has_no_parameters(self):
+        """A pinned scale is a hyper-parameter, not something to train."""
+        scale = GlobalScale(size=784, init=0.3, learnable=False)
+        assert sum(p.numel() for p in scale.parameters()) == 0
+        assert F.softplus(scale.raw).item() == pytest.approx(0.3, abs=1e-6)
+        # ...and still produces the same output as its learnable twin.
+        assert torch.allclose(scale(torch.randn(3, 4)),
+                              GlobalScale(size=784, init=0.3)(torch.randn(3, 4)))
+
+    def test_fixed_raw_is_a_non_persistent_buffer(self):
+        """Follows .to(device) without landing in state_dict -- config sets it."""
+        scale = GlobalScale(size=8, init=0.3, learnable=False)
+        assert "raw" in dict(scale.named_buffers())
+        assert "raw" not in scale.state_dict()
+
+    def test_output_shape_and_uniformity(self):
+        scale = GlobalScale(size=784)
+        out = scale(torch.randn(5, 4, 16))  # only shape[0] is read
+        assert out.shape == (5, 784)
+        assert bool((out == out[0, 0]).all())
+
+    def test_ignores_the_input_content(self):
+        scale = GlobalScale(size=8)
+        a = scale(torch.zeros(3, 2))
+        b = scale(torch.randn(3, 2) * 100)
+        assert torch.equal(a, b)
+
+    def test_gradient_reaches_the_single_parameter_through_expand(self):
+        scale = GlobalScale(size=8)
+        out = scale(torch.randn(3, 2))
+        out.sum().backward()
+        assert scale.raw.grad is not None
+        assert scale.raw.grad.item() != 0.0
+
+    def test_composes_as_a_raw_scale_head(self):
+        """The class's whole purpose: drop-in as the raw layer under Softplus,
+        exactly like a per-element head, but parameter-free w.r.t. the input."""
+        head = Sequential(GlobalScale(size=4, init=0.5), torch.nn.Softplus())
+        out = head(torch.randn(6, 3))
+        assert out.shape == (6, 4)
+        assert torch.allclose(out, torch.full_like(out, 0.5), atol=1e-6)

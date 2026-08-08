@@ -1,0 +1,164 @@
+# =============================================================
+# Concept Bottleneck Generative Model (VAE variant).
+#
+# Generative direction z -> concepts -> input, trained as a VAE
+# through a variational guide q(z | input).
+#
+# Unlike the discriminative models there are no tasks: every
+# concept is supervised, so `task_names` must NOT be set.
+#
+# `input_size` is injected by update_config_from_data, and
+# `annotations` / `graph` / `backbone` / `loss` / `metrics` are
+# passed by run_experiment.py — none of them belong here.
+# =============================================================
+defaults:
+  - _commons
+  - _self_
+
+model_cls:
+  _target_: "torch_concepts.nn.ConceptBottleneckGenerativeModel"
+
+  latent_size: 32      # dim(z)
+  embedding_size: 16   # m, width of one concept context
+  plate: false         # one variable per concept (the reference layout)
+
+  # Whether the bottleneck carries the unsupervised context. true is the paper's
+  # w = [w_1 ... w_k, w_{k+1}]; false removes it, which also makes the
+  # orthogonality term vacuous (it has nothing to push against) -- the paper's
+  # Table 3 ablation. The decoder's in_features below follows this automatically.
+  use_unknown: true
+
+  # The context networks z -> w. Setting `context_hidden_size` swaps the default
+  # LinearEmbeddingEncoder for a NonLinearEmbeddingEncoder.
+  #
+  # The reference leaves these a bare Linear (it
+  # ends them in BatchNorm1d), which is fine there because it is a VAE-GAN: the
+  # discriminator supplies both the nonlinearity the generator needs and a
+  # training signal on prior-sampled z. This is a pure VAE with neither, and a
+  # linear context network feeding the shallow decoder below made the whole path
+  # z -> pixels very nearly AFFINE. An affine generator reproduces the data mean
+  # near the codes it was trained on and diverges away from them, which is
+  # exactly the observed symptom: a few blurry samples and mostly noise.
+  #
+  # `layer` rather than the reference's `batch`: LayerNorm normalises each
+  # embedding row on its own, so one generated sample decodes the way a batch of
+  # them does, and it survives the extra leading sample axis the inference
+  # engines add (BatchNorm1d does not -- it raises).
+  context_hidden_size: 256
+  context_norm: layer
+
+  # Gaussian likelihood over pixel intensities. `loc` is the decoder's raw
+  # output (identity-activated, so it must NOT squash its own output —
+  # unbounded is correct here, the network learns to land in [0, 1]).
+  # `scale` is ONE global sigma, not a second copy of the decoder.
+  #
+  # It is FIXED, not learned. The Gaussian NLL's gradient carries a 1/sigma^2
+  # factor, so a learned sigma — which settles at the residual RMS and keeps
+  # shrinking as the fit improves — silently inflates reconstruction against the
+  # KL and anneals beta to ~0: sharp reconstructions, garbage samples from the
+  # prior. Pinning it makes that trade-off a hyper-parameter you set here and
+  # tune against `kl` in conf/cbgm.yaml.
+  #
+  # Measured on colormnist (D=2352) at init, encoder-gradient recon:KL —
+  #   sigma 0.1 -> 204:1   0.2 -> 51:1   0.3 -> 23:1   0.5 -> 8:1   1.0 -> 2:1
+  # Lower sigma = sharper but blurrier-prior; raise `kl` to compensate.
+  observation:
+    _target_: hydra.utils.get_class
+    path: torch.distributions.Normal
+  global_scale: true
+  scale_init: 0.3
+  scale_learnable: false
+
+  # Sample the concepts instead of teacher-forcing them, so the bottleneck mixes
+  # by a score in (0, 1). Under a hard 0/1 score the unselected state embedding
+  # receives EXACTLY zero reconstruction gradient, so an intervention that
+  # selects it feeds the decoder an input it was never trained on — which is why
+  # a hard-mixed model does not steer. Also switches both inference engines to
+  # soft discrete draws, so train and test see the same kind of code.
+  soft_mixing: true
+
+  # Base families, restoring CBGM's own class defaults over the relaxed ones
+  # `_commons` sets for the discriminative models. Keep them plain: the engine
+  # relaxes them itself when it samples (Concrete under `soft_mixing`, its
+  # straight-through variant otherwise), and torch's Relaxed* families are
+  # TransformedDistributions rather than subclasses of Bernoulli /
+  # OneHotCategorical, so naming them here would miss that dispatch entirely.
+  variable_distributions:
+    binary:
+      _target_: hydra.utils.get_class
+      path: torch.distributions.Bernoulli
+    categorical:
+      _target_: hydra.utils.get_class
+      path: torch.distributions.OneHotCategorical
+    continuous:
+      _target_: hydra.utils.get_class
+      path: torch.distributions.Normal
+  variable_dist_kwargs:
+    binary: null
+    categorical: null
+    continuous: null
+
+  # Variational inference for BOTH train and eval: the guide q(z | input)
+  # is what makes a reconstruction possible. Ancestral sampling (which
+  # draws z from the prior instead) is swapped in by the analysis script.
+  #
+  # The relaxation is annealed: soft early, so gradient reaches every state of
+  # every concept (the whole point of `soft_mixing`), then sharpened so training
+  # ENDS on near-discrete codes and the bottleneck actually commits to a state.
+  # 1.0 -> 0.1 in ~2.3k optimiser steps at rate 1e-3; at 0.1 a Concrete draw
+  # puts ~94% of its mass on one state (measured for binary, 4-way and 10-way).
+  # The eval engine shares the training temperature buffer, so evaluation and
+  # the analysis script decode at whatever value training finished on.
+  inference:
+    _target_: "torch_concepts.nn.VariationalInference"
+    _partial_: true
+    initial_temperature: 1.0
+    annealing: exponential
+    annealing_rate: 0.001
+    final_temperature: 0.1
+  train_inference: ${model.model_cls.inference}
+
+  # Bottleneck (k concept contexts + 1 unsupervised) -> pixels, through
+  # transposed convolutions rather than a dense head: a flat decoder to
+  # CelebA's 12,288 pixels is ~6M parameters against ~0.6M here.
+  #
+  # `hidden_channels` as an int is the NARROWEST stage; ConvDecoder picks the
+  # depth from the image size (28 -> 2 stages, 64 -> 3) and widths double
+  # upward, so one value serves every dataset in a sweep.
+  #
+  # Raw: the model composes the observation parameter's activation on top —
+  # the IDENTITY on a Normal's `loc`, so this stack's output already IS the
+  # mean. Squashing it here would only shrink the range, not "activate" it.
+  #
+  # `norm: group` rather than the default BatchNorm2d. BatchNorm's running
+  # statistics are accumulated from bottlenecks driven by q(z|x) and then used to
+  # normalise at eval(); decoding a PRIOR sample presents a differently
+  # distributed input, so generations are normalised by statistics that do not
+  # describe them while reconstructions are fine. GroupNorm keeps no running
+  # statistics and cannot develop that split.
+  #
+  # `refine: true` inserts a same-resolution 3x3 conv block after the projection
+  # and after each upsample. Without it this stack has exactly ONE activation
+  # (Linear -> ConvT -> BN -> LeakyReLU -> ConvT on colormnist) -- see
+  # `context_hidden_size` above for why that is the problem rather than a
+  # detail. Costs ~25% more parameters.
+  decoder:
+    _target_: "torch_concepts.nn.ConvDecoder"
+    in_features: ${math:"(${data_dims.n_concepts} + (1 if ${model.model_cls.use_unknown} else 0)) * ${model.model_cls.embedding_size}"}
+    out_shape: ${model.model_cls.input_size}
+    hidden_channels: 32
+    norm: group
+    refine: true
+
+# The encoder side of the guide. attach_latent_encoder composes this with
+# the dataset's backbone into one extractor and stamps `out_features` on
+# it; CBGM then uses that extractor as its guide's shared trunk, so the
+# backbone runs once per step and `loc`/`scale` are two linear readouts.
+# `output_size` must be reachable from the backbone's width.
+latent_encoder:
+  _target_: torch_concepts.nn.MLP
+  hidden_size: 256
+  output_size: 128
+  n_layers: 1
+  activation: leaky_relu
+  dropout: 0.

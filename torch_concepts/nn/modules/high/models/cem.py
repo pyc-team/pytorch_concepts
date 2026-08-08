@@ -31,10 +31,8 @@ from torch.distributions import Bernoulli, OneHotCategorical, Normal
 from .....annotations import Annotations
 from .....distributions import Delta
 from ...low.dense_layers import LinearEmbeddingEncoder
-from ...low.encoders.linear import LinearEmbeddingToConcept
 from ...low.predictors.mix import MixConceptEmbeddingToConcept
 from ...low.priors import LearnablePrior
-from ...low.sequential import Sequential
 from ...mid.inference.base import BaseInference
 from ...mid.inference.torch.deterministic import DeterministicInference
 from ...mid.graph.bayesian_network import BayesianNetwork
@@ -195,25 +193,16 @@ class ConceptEmbeddingModel(BipartiteModel):
                 for e in embeddings
             ],
         )
-        # embeddings → concepts: decode one score per state embedding (per group).
-        # `second='auto'` throughout: these encoders/predictors are built with a
-        # fixed output width, so a continuous variable's scale head is an
-        # independent copy of `first` (a no-op for the discrete ones).
         c_encoders = [
             ParametricCPD(
                 variable=cvar,
                 parents=[evar],
                 parametrization=self._flexible_parametrization(
                     variable=cvar,
-                    first=Sequential(
-                        LinearEmbeddingToConcept(
-                            in_embeddings=self.embedding_size,
-                            out_concepts=1,
-                        ),
-                        # Collapse the (n_concepts, 1) score dims -> n_concepts
-                        nn.Flatten(start_dim=-2),
-                    ),
-                    second='auto',
+                    # Two independent heads: `second` is only consulted for a
+                    # continuous concept, which needs its own scale head.
+                    first=self.build_concept_head(cvar, evar),
+                    second=self.build_concept_head(cvar, evar),
                 ),
             )
             for cvar, evar in zip(concepts, embeddings)
@@ -223,7 +212,7 @@ class ConceptEmbeddingModel(BipartiteModel):
         # embedding. The mixer indexes concepts positionally, so its axis must
         # follow the concatenation (group-member) order, not the annotation order.
         ordered_names = [m for cvar in concepts for m in cvar.members]
-        mix_axis = self.axis_concepts.subset(ordered_names)
+        reordered_axis = self.axis_concepts.subset(ordered_names)
 
         # by default, the concatenation of concepts and embeddings is done along the last axis, 
         # but the mixer expects the embeddings to be the second-last axis (the last axis is the concept states). 
@@ -234,18 +223,24 @@ class ConceptEmbeddingModel(BipartiteModel):
                 "embeddings": torch.cat(list(embeddings.values()), dim=-2),
             }
 
+        def task_head(tvar):
+            return MixConceptEmbeddingToConcept(
+                in_concepts=reordered_axis,
+                in_embeddings=self.embedding_size,
+                out_concepts=tvar.size,
+                # A binary concept's two state embeddings (w+, w-) already arrive as
+                # two rows from build_concept_embedding_variables — nothing to fabricate.
+                expand_binary_embeddings=False,
+            )
+
         predictors = ParametricCPD(
             variable=tasks,
             parents=[*concepts, *embeddings],
             parametrization=[
                 self._flexible_parametrization(
                     variable=tvar,
-                    first=MixConceptEmbeddingToConcept(
-                        in_concepts=mix_axis,
-                        in_embeddings=self.embedding_size,
-                        out_concepts=tvar.size,
-                    ),
-                    second='auto',
+                    first=task_head(tvar),
+                    second=task_head(tvar),
                 )
                 for tvar in tasks
             ],

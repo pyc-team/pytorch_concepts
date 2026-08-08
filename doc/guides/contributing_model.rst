@@ -83,6 +83,10 @@ pass, Lightning training, concept queries — is inherited.
      the matching factory for per-concept state embeddings. Called with the *same*
      ``names`` as ``build_concept_variables``, it returns a list that lines up
      element-by-element: group *i*'s embedding matrix feeds group *i*'s concepts.
+     A concept contributes one embedding row per state (its cardinality) — except
+     a **binary** concept, which contributes **two** (:math:`w^+`, :math:`w^-`)
+     even though it is a single Bernoulli, matching the Concept Embedding Model's
+     positive/negative context pair (Espinosa Zarlenga et al., NeurIPS 2022).
 
    **Building the PGM**
 
@@ -285,7 +289,7 @@ pass, Lightning training, concept queries — is inherited.
                               LinearEmbeddingToConcept(in_embeddings=self.embedding_size, out_concepts=1),
                               nn.Flatten(start_dim=-2),
                           ),
-                          second="auto",
+                          second=concept_head(),
                       ),
                   )
                   for cvar, evar in zip(concepts, embeddings)
@@ -315,7 +319,7 @@ pass, Lightning training, concept queries — is inherited.
                               in_embeddings=self.embedding_size,
                               out_concepts=tvar.size,
                           ),
-                          second="auto",
+                          second=task_head(tvar),
                       )
                       for tvar in tasks
                   ],
