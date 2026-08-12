@@ -158,7 +158,7 @@ def main():
 
     # Save the native task labels before generated concepts are selected as
     # ground truth below. That selection changes ``concept_names`` to the
-    # generated vocabulary, where the native ``parity`` name is absent.
+    # generated vocabulary.
     train_labels = train_dataset.concepts[
         :, train_dataset.concept_names.index("parity")
     ].long()
@@ -166,8 +166,6 @@ def main():
         :, val_dataset.concept_names.index("parity")
     ].long()
 
-    # Concept generation is an explicit preprocessing step, just like backbone
-    # embedding precomputation. It is never run from a dataset constructor.
     train_dataset.generate_concepts(
         pipeline,
         class_names=["even", "odd"],
