@@ -37,7 +37,7 @@ from torch_concepts.data.lf_postprocessing import (
     ThresholdAnnotationFilter,
 )
 from torch_concepts.data.concept_generators import LiteLLMBackend, LLMConceptGenerator
-from torch_concepts.data.datasets.mnist import ColorMNISTDataset
+from torch_concepts.data import ColorMNISTDataset
 
 
 def _image_data_url(image: torch.Tensor) -> str:
@@ -77,8 +77,9 @@ def dataset_aware_prompt(dataset, class_names=None, num_examples=4, **kwargs):
     for index in example_indices.tolist():
         sample = dataset[index]
         native = sample["concepts"]["native"]
-        digit = int(native[:10].argmax())
-        color = "red" if native[10].item() else "green"
+        digit = int(native[dataset.concept_names.index("digit")])
+        color_id = int(native[dataset.concept_names.index("color")])
+        color = ("red", "green")[color_id]
         content.extend([
             {
                 "type": "image_url",
@@ -145,17 +146,25 @@ def main():
     val_dataset = ColorMNISTDataset(
         root="./data",
         train=False,
-        download=True,
-        random=False,
+        coloring={"red": range(6), "green": range(6, 10)},
         indices=range(10000),
     )
     train_dataset = ColorMNISTDataset(
         root="./data",
         train=True,
-        download=True,
-        random=False,
+        coloring={"red": range(6), "green": range(6, 10)},
         indices=range(10000),
     )
+
+    # Save the native task labels before generated concepts are selected as
+    # ground truth below. That selection changes ``concept_names`` to the
+    # generated vocabulary, where the native ``parity`` name is absent.
+    train_labels = train_dataset.concepts[
+        :, train_dataset.concept_names.index("parity")
+    ].long()
+    val_labels = val_dataset.concepts[
+        :, val_dataset.concept_names.index("parity")
+    ].long()
 
     # Concept generation is an explicit preprocessing step, just like backbone
     # embedding precomputation. It is never run from a dataset constructor.
@@ -186,9 +195,6 @@ def main():
     ).clamp_min(1e-6)
     train_concepts = (train_concepts - mean) / std
     val_concepts = (val_concepts - mean) / std
-
-    train_labels = (train_dataset.targets % 2 == 0).long()
-    val_labels = (val_dataset.targets % 2 == 0).long()
 
     model = nn.Linear(train_concepts.shape[1], 2)
     optimizer = torch.optim.AdamW(model.parameters(), lr=0.05, weight_decay=1e-3)

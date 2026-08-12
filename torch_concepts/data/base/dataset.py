@@ -700,14 +700,15 @@ class ConceptDataset(Dataset):
                 f"input_data has {self.n_samples}.")
 
         # Align the columns (and pick out a subset, if one was requested).
+        selected_labels = list(self._annotations.labels)
         if isinstance(concepts, (AnnotatedTensor, pd.DataFrame)):
             # By name: correct whatever order they arrive in, and idempotent.
-            concepts = concepts[self.concept_names]
+            concepts = concepts[selected_labels]
             concepts = getattr(concepts, 'tensor', concepts)
         elif isinstance(concepts, (np.ndarray, Tensor)):
             # By position: the only reading available for unlabelled columns.
             concepts = concepts[:, [self.concept_names_all.index(n)
-                                    for n in self.concept_names]]
+                                    for n in selected_labels]]
         else:
             raise TypeError(f"Concepts must be a np.ndarray, pd.DataFrame, "
                 f"AnnotatedTensor, or Tensor, got {type(concepts).__name__}.")
@@ -732,10 +733,10 @@ class ConceptDataset(Dataset):
         # is still the concept axis) and collation would fail on a list of
         # AnnotatedTensors.
         concept_ann = self._annotations.to_concept_space()
-        if values.dim() >= 2 and values.shape[1] == concept_ann.size:
-            self.concepts = AnnotatedTensor(values, concept_ann, axis=1)
+        if concepts.dim() >= 2 and concepts.shape[1] == concept_ann.size:
+            self.concepts = AnnotatedTensor(concepts, concept_ann, axis=1)
         else:
-            self.concepts = values
+            self.concepts = concepts
         self._resolve_ground_truth()
 
     def add_exogenous(self,

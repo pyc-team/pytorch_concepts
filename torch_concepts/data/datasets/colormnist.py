@@ -40,6 +40,7 @@ class ColorMNISTDataset(ConceptDataset):
               instantiating the train and test splits with different maps.
         seed: Seed for the random colour assignment. Default ``42``.
         concept_subset: Optional subset of concept names.
+        indices: Optional subset of MNIST sample indices to keep.
 
     Example:
         >>> from torch_concepts.data import ColorMNISTDataset
@@ -69,6 +70,7 @@ class ColorMNISTDataset(ConceptDataset):
         coloring: Union[str, Dict[str, Sequence[int]]] = 'random',
         seed: int = 42,
         concept_subset: Optional[List[str]] = None,
+        indices: Optional[Sequence[int]] = None,
     ):
         unknown = [c for c in colors if c not in CHANNELS]
         if unknown:
@@ -79,6 +81,10 @@ class ColorMNISTDataset(ConceptDataset):
 
         self.root = root or default_root('mnist')
         images, digits = load_mnist(self.root, train)
+        if indices is not None:
+            indices = torch.as_tensor(list(indices), dtype=torch.long)
+            images = images[indices]
+            digits = digits[indices]
         color_ids = self._assign_colors(digits, colors, coloring, seed)
 
         labels = ['digit', 'parity', 'color']

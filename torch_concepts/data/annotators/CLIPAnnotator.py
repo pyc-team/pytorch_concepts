@@ -211,7 +211,22 @@ class CLIPAnnotator(Annotator):
 
     def encode_images(self, images: Sequence[Any]) -> Tensor:
         """Preprocess, encode, and normalize images with Hugging Face."""
-        inputs = self.processor(images=list(images), return_tensors="pt")
+        processor_kwargs = {}
+        if images and all(
+            isinstance(image, Tensor)
+            and image.is_floating_point()
+            and image.numel() > 0
+            and image.min().item() >= 0.0
+            and image.max().item() <= 1.0
+            for image in images
+        ):
+            # Hugging Face image processors otherwise divide by 255 again.
+            processor_kwargs["do_rescale"] = False
+        inputs = self.processor(
+            images=list(images),
+            return_tensors="pt",
+            **processor_kwargs,
+        )
         pixel_values = inputs["pixel_values"].to(self.device)
         features = self.model.get_image_features(pixel_values=pixel_values)
         return F.normalize(features, dim=-1)
