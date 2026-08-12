@@ -20,11 +20,11 @@ plt.rcParams.update({
     # 'savefig.facecolor': dark_page,
     # --- TEXT SIZE SETTINGS ---
     "font.size": 14,                # Base font size for all text
-    "axes.titlesize": 18,           # Specifically for the title
-    "axes.labelsize": 16,           # Specifically for X and Y labels
-    # "xtick.labelsize": 12,          # Size for the tick numbers
-    # "ytick.labelsize": 12,
-    "legend.fontsize": 14,          # Size for the legend text
+    "axes.titlesize": 30,           # Specifically for the title
+    "axes.labelsize": 30,           # Specifically for X and Y labels
+    "xtick.labelsize": 20,          # Size for the tick numbers
+    "ytick.labelsize": 20,
+    "legend.fontsize": 16,          # Size for the legend text
     # ---------------------------
     # 'text.color': 'white',
     # 'axes.labelcolor': 'white',
@@ -52,7 +52,7 @@ def generate_4_points_in_2D():
 
 # visualize the data with scatter plot
 def scatter_xy(x, y):
-    plt.scatter(x[:, 0], x[:, 1], c=y.squeeze(), cmap='coolwarm', edgecolor='k', zorder=3)
+    plt.scatter(x[:, 0], x[:, 1], c=y.squeeze(), cmap='coolwarm', edgecolor='k', zorder=3, s=100)
     plt.xlabel(r'$z_1$')
     plt.ylabel(r'$z_2$')
     plt.xlim(0, 1)
@@ -73,8 +73,17 @@ def countour_plot(outputs, z_test, g_f, g_phi, x_range=(0, 1), y_range=(0, 1), r
     x1 = torch.linspace(x_range[0], x_range[1], resolution)
     x2 = torch.linspace(y_range[0], y_range[1], resolution)
     norm = colors.TwoSlopeNorm(vcenter=0, vmin=outputs.min(), vmax=outputs.max())
-    plt.quiver(z_test[0, 0].item(), z_test[0, 1].item(), g_f[1], g_f[0], color='red', label=r"$\nabla f$", zorder=2)
-    plt.quiver(z_test[0, 0].item(), z_test[0, 1].item(), g_phi[1], g_phi[0], color='black', label=r"$\nabla c$", zorder=2)
+
+    length = 0.15  # desired arrow length in data units
+    normf = torch.sqrt(torch.FloatTensor([g_f[0] ** 2 + g_f[1] ** 2]))
+    uf = (g_f[1] / normf) * length
+    vf = (g_f[0] / normf) * length
+    normphi = torch.sqrt(torch.FloatTensor([g_phi[0] ** 2 + g_phi[1] ** 2]))
+    uphi = (g_phi[1] / normphi) * length
+    vphi = (g_phi[0] / normphi) * length
+
+    plt.quiver(z_test[0, 0].item(), z_test[0, 1].item(), uf, vf, color='red', label=r"$\nabla f$", zorder=2, scale=1, scale_units='xy', angles='xy')
+    plt.quiver(z_test[0, 0].item(), z_test[0, 1].item(), uphi, vphi, color='black', label=r"$\nabla c$", zorder=2, scale=1, scale_units='xy', angles='xy')
     plt.contourf(x1, x2, outputs.numpy(), levels=20, cmap='coolwarm', norm=norm, alpha=0.4, zorder=0)
     plt.colorbar()
     plt.xlabel(r'$z_1$')
@@ -140,9 +149,9 @@ def main():
     os.makedirs('symmetryII', exist_ok=True)
 
     method_ids = ["mlp", "constrained_mlp", "architectural_mlp"]
-    method_names = ["MLP", "MLP+L", "MLP+A"]
+    method_names = ["DNN", "DNN+L", "DNN+A"]
 
-    g_cy_losses = {"MLP": [], "MLP+L": [], "MLP+A": []}
+    g_cy_losses = {"DNN": [], "DNN+L": [], "DNN+A": []}
     for method_id, method_name in zip(method_ids, method_names):
         x, c, y = generate_data()
         x_train, y_train = generate_4_points_in_2D()
@@ -157,7 +166,7 @@ def main():
 
         optimizer = torch.optim.Adam(list(c_model.parameters()) + list(y_model.parameters()), lr=0.001)
         criterion = torch.nn.BCELoss()
-        epochs = 1000
+        epochs = 2000
 
         c_model.train()
         y_model.train()
@@ -226,10 +235,13 @@ def main():
 
 
     # create lineplot of gcy_losses across epochs for each method
-    plt.figure(figsize=(5, 3))
+    plt.figure(figsize=(8, 3))
     sns.lineplot(data=g_cy_losses)
-    plt.xlabel('Epoch', fontsize=14)
-    plt.ylabel('Gradient Alignment Loss', fontsize=14)
+    plt.xlabel('Epoch', fontsize=18)
+    plt.ylabel('Constraint II', fontsize=18)
+    plt.xticks(fontsize=16)
+    plt.yticks(fontsize=16)
+    plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
     plt.tight_layout()
     plt.savefig(f'symmetryII/gradient_alignment_comparison.png')
     plt.savefig(f'symmetryII/gradient_alignment_comparison.pdf')

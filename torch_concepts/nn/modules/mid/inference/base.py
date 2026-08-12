@@ -263,6 +263,8 @@ class BaseInference(nn.Module):
             name: tuple(self._leading_shape(name, t))
             for name, t in all_tensors.items()
         }
+        # TODO: should we move to the standard check used by torch? 
+        # ``torch.broadcast_shapes(*leadings.values())``
         if len(set(leadings.values())) > 1:
             shapes = {name: tuple(t.shape) for name, t in all_tensors.items()}
             raise ValueError(

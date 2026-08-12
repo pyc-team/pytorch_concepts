@@ -19,6 +19,9 @@ Datasets
    CompletenessDataset
    CelebADataset
    PendulumDataset
+   MNISTEvenOddDataset
+   MNISTAdditionDataset
+   ColorMNISTDataset
    MNISTArithmeticDataset
    DSpritesRegressionDataset
    AWA2Dataset
@@ -36,6 +39,7 @@ Data Modules
    CompletenessDataModule
    CelebADataModule
    PendulumDataModule
+   ColorMNISTDataModule
    MNISTArithmeticDataModule
    DSpritesRegressionDataModule
    AWA2DataModule

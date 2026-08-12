@@ -20,34 +20,28 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 import torch
 import pandas as pd
-from torch_concepts.steerling import SteerlingLowLevelModel, top_concepts
+from torch_concepts.nn.modules.high.models.steerling import SteerlingLowLevelModel, top_concepts
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # ── 1. Instantiate the low-level model ────────────────────────────
 # The model builds itself in its native bfloat16 (see the dtype= arg to
 # override), halving the CPU-RAM peak during weight load.
-model = SteerlingLowLevelModel(
-    pretrained_components=['backbone', 'known_head', 'unknown_head', 'lm_head'],
-    freeze_components=['backbone', 'known_head', 'unknown_head', 'lm_head'],
-    use_unknown=True,
-    use_epsilon_correction=False
-)
+model = SteerlingLowLevelModel()
+
 model.to(device=device)
 model.eval()
 print(model)
-model.print_config()
 
 prompt = "As an italian living abroad in the US, I particularly miss"
 n_new_tokens = 20
 
 # ── 2. Sanity check: single forward on the prompt only ────────────
-input_ids, _, _ = model.build_input(prompt, n_new_tokens=0)
-input_ids = input_ids.to(device)
-print(f"\nPrompt: {prompt!r}")
-print(f"Tokens: {input_ids.shape}")
-
 with torch.no_grad():
+    input_ids, _, _ = model.build_input(prompt, n_new_tokens=0)
+    input_ids = input_ids.to(device)
+    print(f"\nPrompt: {prompt!r}")
+    print(f"Tokens: {input_ids.shape}")
     out = model(input_ids)
 
 print(f"Next-token logits:      {out['out_tokens'].shape}")

@@ -194,7 +194,7 @@ class TestBeliefPropagationLeadingDims:
         # reach the factor parametrizations for any number of leading dims.
         eng = BeliefPropagation(chain, iters=5)
         out = eng.query(query=["c1"], evidence={"c2": torch.rand(*leading, 1).round()})
-        out.logits.tensor.pow(2).mean().backward()
+        out.probs.tensor.pow(2).mean().backward()
         assert any(
             p.grad is not None and torch.isfinite(p.grad).all() and p.grad.abs().sum() > 0
             for p in chain.parameters()

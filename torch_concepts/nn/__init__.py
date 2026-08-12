@@ -21,7 +21,7 @@ from .modules.low.lazy import LazyConstructor
 from .modules.low.sequential import Sequential
 
 # Priors (root-CPD parametrizations)
-from .modules.low.priors import LearnablePrior, FixedPrior
+from .modules.low.priors import LearnablePrior, FixedPrior, TiedPrior
 
 # Scale activation (continuous-CPD parametrizations)
 from .modules.low.scales import TrilActivation
@@ -81,6 +81,7 @@ from .modules.mid.inference.torch.forward import ForwardInference
 from .modules.mid.inference.torch.deterministic import DeterministicInference
 from .modules.mid.inference.torch.independent import IndependentInference
 from .modules.mid.inference.torch.ancestral import AncestralSamplingInference
+from .modules.mid.inference.torch.map_forward import MAPForwardInference
 from .modules.mid.inference.torch.rejection import RejectionSampling
 from .modules.mid.inference.torch.importance_sampling.importance_sampling import ImportanceSampling
 from .modules.mid.inference.torch.importance_sampling.base_proposal import BaseProposal
@@ -124,6 +125,7 @@ __all__ = [
     # Priors
     "LearnablePrior",
     "FixedPrior",
+    "TiedPrior",
 
     # Scale activation
     "TrilActivation",
@@ -172,7 +174,6 @@ __all__ = [
     "ConceptEmbeddingModel",
     "GraphConceptBottleneckModel",
     "CausallyReliableConceptBottleneckModel",
-
     # Models (mid-level)
     "ParametricFactor",
     "ParametricCPD",
@@ -191,6 +192,7 @@ __all__ = [
     "ForwardInference",
     "DeterministicInference",
     "AncestralSamplingInference",
+    "MAPForwardInference",
     "RejectionSampling",
     "IndependentInference",
     "ImportanceSampling",

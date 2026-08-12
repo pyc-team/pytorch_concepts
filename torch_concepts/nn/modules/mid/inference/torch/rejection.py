@@ -155,18 +155,21 @@ class RejectionSampling(TorchBaseInference):
                         params = cpd(parent_values=samples,
                                      **layer_kwargs.get(name, {}))
 
+                    # One construction path for every family, so the layout
+                    # rules (Independent wrapping, and the per-member split of
+                    # a plate) are not re-derived here. ``EXACT_FAMILY`` swaps
+                    # a relaxed declaration for its hard counterpart, which is
+                    # what equality matching in _build_mask needs.
+                    from ..utils import EXACT_FAMILY, build_distribution
+
                     D = var.distribution
-                    if issubclass(D, (dist.Bernoulli, dist.RelaxedBernoulli)):
-                        s = dist.Bernoulli(**params).sample()
-                    elif issubclass(D, (dist.OneHotCategorical,
-                                        dist.RelaxedOneHotCategorical)):
-                        s = dist.OneHotCategorical(**params).sample()
-                    elif issubclass(D, dist.Categorical):
+                    if issubclass(D, dist.Categorical):
+                        # Plain Categorical samples *indices*, not a one-hot.
                         s = dist.Categorical(**params).sample()
                     else:
-                        # Continuous: use exact reparameterised draw.
-                        from ..utils import build_distribution
-                        s = build_distribution(var, params).rsample()
+                        s = build_distribution(
+                            var, params, family=EXACT_FAMILY.get(D)
+                        ).sample()
 
                     samples[name] = reshape_value_to_event(var, s)
 

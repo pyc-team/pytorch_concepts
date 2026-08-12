@@ -57,12 +57,11 @@ def main():
         optimizer.zero_grad()
 
         out = engine.query(query=["a", "b"], evidence={"x": x})
-        # BP reports each marginal in the variable's own parametrization, so a
-        # binary concept yields Bernoulli logits (log-odds) of width 1 — the
-        # same loss you would write against a directed engine's output.
+        # BP reports one thing per variable: its marginal probability. A
+        # binary concept yields P(x=1) at width 1, so the loss is plain BCE.
         loss = (
-            nn.functional.binary_cross_entropy_with_logits(out.logits["a"], a_lab)
-            + nn.functional.binary_cross_entropy_with_logits(out.logits["b"], b_lab)
+            nn.functional.binary_cross_entropy(out.probs["a"], a_lab)
+            + nn.functional.binary_cross_entropy(out.probs["b"], b_lab)
         )
 
         loss.backward()
