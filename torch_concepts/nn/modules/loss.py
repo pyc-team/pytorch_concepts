@@ -9,6 +9,7 @@ from torch import nn
 
 from .utils import TYPES, by_type, check_collection
 from .outputs import CONTINUOUS_QUANTITIES, ModelOutput, supervised_subset
+from ..functional import concept_orthogonality
 from ...concept_graph import ConceptGraph
 
 
@@ -132,6 +133,43 @@ def _resolve_quantity(params, configured: Optional[str], candidates: Sequence[st
     return None
 
 
+#: Parameter-name signature -> distribution family, used to build a variable's
+#: distribution from a :class:`ModelOutput` alone. A loss sees annotated tensors
+#: keyed by variable name, never the ``Variable`` objects, so it cannot go
+#: through ``build_distribution``; the reported quantities identify the family
+#: unambiguously for every registered one.
+_FAMILY_BY_PARAMS = {
+    frozenset({"probs"}): dist.Bernoulli,
+    frozenset({"logits"}): dist.Bernoulli,
+    frozenset({"loc", "scale"}): dist.Normal,
+    frozenset({"loc", "scale_tril"}): dist.MultivariateNormal,
+}
+
+
+def _family_from_params(params: Mapping[str, torch.Tensor], context: str) -> type:
+    """Infer a variable's distribution family from the quantities it reports."""
+    family = _FAMILY_BY_PARAMS.get(frozenset(params))
+    if family is None:
+        raise ValueError(
+            f"{context}: cannot infer a distribution family from the reported "
+            f"parameters {sorted(params)}. Pass `distribution=` explicitly."
+        )
+    return family
+
+
+def _variable_params(
+    params: Mapping[str, torch.Tensor], name: str
+) -> Dict[str, torch.Tensor]:
+    """The quantities reported for one variable, as plain tensors.
+
+    ``ModelOutput.params`` is quantity-keyed with every queried variable
+    concatenated on the annotated axis; ``params[name]`` is the variable-first
+    view of the same tensors (see :class:`ParamsDict`). The annotation is
+    dropped here: these go straight into a ``torch.distributions`` constructor.
+    """
+    return {q: _plain(t) for q, t in params[name].items()}
+
+
 class PyCLoss(nn.Module):
     """Base for every loss that is scored on a whole :class:`ModelOutput`.
 
@@ -248,6 +286,276 @@ class CompositeLoss(PyCLoss):
 
     def forward(self, output: ModelOutput, target=None) -> torch.Tensor:
         return sum(self.breakdown(output, target).values())
+
+
+class ReconstructionLoss(PyCLoss):
+    """Negative log-likelihood of an **observed** variable under its own CPD.
+
+    The generative half of an ELBO: the model predicts the parameters of
+    ``variable`` and this scores the value that was actually observed against
+    them. Family-agnostic — a ``Bernoulli`` observation gives the usual
+    binary cross-entropy, a ``Normal`` one a Gaussian NLL — so it works for any
+    observed variable of any registered family, not just an image.
+
+    The observed value is read from ``output.extra['evidence']``, which a
+    learner publishes by overriding
+    :meth:`~torch_concepts.nn.modules.high.base.learner.BaseLearner.default_extra`
+    to return ``{'evidence': evidence}`` — the base learner merges nothing by
+    default, since a purely discriminative model has no observation to score.
+
+    Args:
+        variable (str): Name of the observed variable to score. Default
+            ``'input'``.
+        distribution (type, optional): Distribution family. Inferred from the
+            reported parameter names when omitted.
+        reduction (str): ``'mean'`` (default) averages the per-sample NLL over
+            the batch; ``'sum'`` sums it.
+
+    Example:
+        The usual case — the family is read off the reported parameters:
+
+        >>> from torch_concepts.nn import ReconstructionLoss
+        >>> loss_fn = ReconstructionLoss(variable='input')
+        >>> loss_fn
+        ReconstructionLoss(variable='input')
+
+        Inside an ELBO, with the family pinned and the batch summed rather than
+        averaged (which changes the reconstruction-to-KL ratio):
+
+        >>> from torch.distributions import Normal
+        >>> from torch_concepts.nn import CompositeLoss, KLDivergenceLoss
+        >>> loss_fn = CompositeLoss(
+        ...     terms=[ReconstructionLoss('input', distribution=Normal, reduction='sum'),
+        ...            KLDivergenceLoss(['z'])],
+        ...     weights=[1.0, 1.0],
+        ... )
+        >>> loss_fn
+        CompositeLoss(ReconstructionLoss + KLDivergenceLoss)
+    """
+
+    def __init__(
+        self,
+        variable: str = "input",
+        distribution: Optional[type] = None,
+        reduction: str = "mean",
+    ):
+        super().__init__()
+        self.variable = variable
+        self.distribution = distribution
+        self.reduction = reduction
+
+    def extra_repr(self) -> str:
+        return f"variable={self.variable!r}"
+
+    def forward(self, output: ModelOutput, target=None) -> torch.Tensor:
+        extra = output.extra or {}
+        evidence = extra.get("evidence") or {}
+        observed = evidence.get(self.variable)
+        if observed is None:
+            raise ValueError(
+                f"ReconstructionLoss: no observed value for {self.variable!r}. "
+                "It must be supplied as evidence — the learner forwards its "
+                "evidence dict to the loss under `output.extra['evidence']`."
+            )
+
+        params = _variable_params(output.params, self.variable)
+        family = self.distribution or _family_from_params(
+            params, f"ReconstructionLoss({self.variable!r})"
+        )
+        # Parameters are flat ``(*leading, size)``; the observed value may still
+        # carry its event shape (an image stays ``(B, C, H, W)``), so reshape it
+        # to the parameters' layout before scoring.
+        reference = next(iter(params.values()))
+        flat = observed.reshape(reference.shape).to(reference.dtype)
+        # ``validate_args=False``: a Bernoulli likelihood over grey levels in
+        # [0, 1] is the standard VAE reconstruction term (it is exactly
+        # ``binary_cross_entropy``), but those values are outside Bernoulli's
+        # declared {0, 1} support and strict validation would reject them.
+        d = dist.Independent(family(**params, validate_args=False), 1)
+        nll = -d.log_prob(flat)
+        return nll.sum() if self.reduction == "sum" else nll.mean()
+
+
+class KLDivergenceLoss(PyCLoss):
+    """``KL(q ‖ p)`` between a variational guide and the model, per latent.
+
+    The regularising half of an ELBO. The guide's parameters come from
+    ``output.guide_params`` and the model's prior from ``output.params``, both
+    keyed by variable name, so this works for any model with a registered guide
+    — nothing here is specific to a particular architecture.
+
+    Args:
+        latents (list of str): Latent variable names to score. Default
+            ``['z']``.
+        distribution (type, optional): Distribution family shared by guide and
+            prior. Inferred from the reported parameter names when omitted.
+        free_bits (float): Per-dimension floor, in nats, below which a
+            dimension's KL stops being penalised. Default ``0.0`` (off, the
+            plain ELBO term).
+
+            Raise it when a *generative* model reconstructs well but samples
+            badly. Nothing in the ELBO stops a dimension from collapsing to the
+            prior and carrying no information, and once enough of them have, the
+            aggregate posterior occupies a thin region of a latent space the
+            prior spreads mass over uniformly — so a draw from ``p(z)`` lands
+            where the decoder has never been trained. A floor of ~0.5 nats keeps
+            every dimension in use and the two distributions closer in shape.
+
+    Example:
+        The plain ELBO term, one latent:
+
+        >>> from torch_concepts.nn import KLDivergenceLoss
+        >>> loss_fn = KLDivergenceLoss(latents=['z'])
+        >>> loss_fn
+        KLDivergenceLoss(latents=['z'], free_bits=0.0)
+
+        Several latents, with a floor that stops any single dimension from
+        collapsing onto the prior:
+
+        >>> loss_fn = KLDivergenceLoss(latents=['z', 'style'], free_bits=0.5)
+        >>> loss_fn
+        KLDivergenceLoss(latents=['z', 'style'], free_bits=0.5)
+    """
+
+    def __init__(
+        self,
+        latents: Sequence[str] = ("z",),
+        distribution: Optional[type] = None,
+        free_bits: float = 0.0,
+    ):
+        super().__init__()
+        self.latents = list(latents)
+        self.distribution = distribution
+        self.free_bits = float(free_bits)
+
+    def extra_repr(self) -> str:
+        return f"latents={self.latents}, free_bits={self.free_bits}"
+
+    def forward(self, output: ModelOutput, target=None) -> torch.Tensor:
+        total = None
+        for name in self.latents:
+            q_params = _variable_params(output.guide_params, name)
+            p_params = _variable_params(output.params, name)
+            family = self.distribution or _family_from_params(
+                q_params, f"KLDivergenceLoss({name!r})"
+            )
+            kl = dist.kl_divergence(family(**q_params), family(**p_params))
+            if self.free_bits:
+                # Clamp each dimension's BATCH-AVERAGED KL, then sum: a
+                # dimension already below the floor contributes a constant and
+                # its gradient vanishes, while the rest are still pulled down.
+                # Averaging first (rather than clamping each sample) is the
+                # usual formulation and is the gentler one — it lets an
+                # individual sample sit under the floor as long as the dimension
+                # is carrying information overall. Clamping the summed total
+                # instead would simply switch the whole term off.
+                value = kl.reshape(-1, kl.shape[-1]).mean(0).clamp_min(self.free_bits).sum()
+            else:
+                # One scalar per latent dimension: sum the event, average the batch.
+                value = kl.sum(-1).mean()
+            total = value if total is None else total + value
+        return total
+
+
+class OrthogonalityLoss(PyCLoss):
+    """Push a concept bottleneck's contexts away from the unsupervised one.
+
+    A thin :class:`PyCLoss` wrapper around
+    :func:`~torch_concepts.nn.functional.concept_orthogonality`, which
+    penalises the absolute cosine similarity between each supervised concept
+    context and the unsupervised context that follows them. Applies to any model
+    whose bottleneck ends in an unsupervised slot.
+
+    Args:
+        variables (list of str): Deterministic (``Delta``) variables whose
+            values are concatenated, in order, into the bottleneck, the
+            **unsupervised context last**. Default ``['mixing', 'unknown']``. If
+            that last variable is not in the bottleneck the penalty has nothing
+            to push against, so it warns once and contributes ``0`` rather than
+            failing — see
+            :class:`~torch_concepts.nn.ConceptBottleneckGenerativeModel`'s
+            ``use_unknown``.
+        n_concepts (int, optional): Number of supervised concepts. Inferred from
+            the target's annotation when omitted.
+
+    Example:
+        The bottleneck's variables, unsupervised context last:
+
+        >>> from torch_concepts.nn import OrthogonalityLoss
+        >>> loss_fn = OrthogonalityLoss(variables=['mixing', 'unknown'])
+        >>> loss_fn
+        OrthogonalityLoss(variables=['mixing', 'unknown'], n_concepts=None)
+
+        With the concept count pinned — needed when the loss is called without a
+        target to infer it from — and weighted into an objective:
+
+        >>> from torch_concepts.nn import CompositeLoss, ConceptLoss, NLLProbLoss
+        >>> loss_fn = CompositeLoss(
+        ...     terms=[ConceptLoss(categorical=NLLProbLoss()),
+        ...            OrthogonalityLoss(variables=['mixing', 'unknown'], n_concepts=2)],
+        ...     weights=[5.0, 1.0],
+        ...     names=['concepts', 'orthogonality'],
+        ... )
+        >>> loss_fn
+        CompositeLoss(5.0*concepts + orthogonality)
+    """
+
+    def __init__(
+        self,
+        variables: Sequence[str] = ("mixing", "unknown"),
+        n_concepts: Optional[int] = None,
+    ):
+        super().__init__()
+        self.variables = list(variables)
+        self.n_concepts = n_concepts
+        self._warned_vacuous = False
+
+    def extra_repr(self) -> str:
+        return f"variables={self.variables}, n_concepts={self.n_concepts}"
+
+    def forward(self, output: ModelOutput, target=None) -> torch.Tensor:
+        value = output.params.get("value")
+        if value is None:
+            raise ValueError(
+                "OrthogonalityLoss: the output reports no 'value' quantity; the "
+                f"bottleneck variables {self.variables} must be Delta variables "
+                "included in the query."
+            )
+
+        # The penalty is a similarity *against* the unsupervised context, which
+        # the ``variables`` contract puts last. A model built without one (CBGM's
+        # ``use_unknown=False`` ablation) makes the term vacuous rather than wrong, so
+        # it contributes zero — that is what lets the ablation be a single flag
+        # instead of also needing the loss config swapped.
+        unsupervised = self.variables[-1]
+        annotation = value.annotation
+        if (unsupervised not in annotation.label_to_index
+                and unsupervised not in annotation.label_groups):
+            if not self._warned_vacuous:
+                warnings.warn(
+                    f"OrthogonalityLoss: {unsupervised!r} is not in the bottleneck, "
+                    "so the penalty is vacuous and contributes 0. This is expected "
+                    "when the model was built without an unsupervised context "
+                    "(e.g. ConceptBottleneckGenerativeModel(use_unknown=False)); if you "
+                    "did not intend that, check the model and the `variables` "
+                    "argument.",
+                    stacklevel=2,
+                )
+                self._warned_vacuous = True
+            return torch.zeros((), device=value.device, dtype=value.dtype)
+
+        context = torch.cat([value[name] for name in self.variables], dim=-1)
+
+        n_concepts = self.n_concepts
+        if n_concepts is None:
+            reference = target if target is not None else output.target
+            if reference is None:
+                raise ValueError(
+                    "OrthogonalityLoss: `n_concepts` was not given and there is "
+                    "no target to infer it from. Pass n_concepts=..."
+                )
+            n_concepts = len(reference.annotation.labels)
+        return concept_orthogonality(context, n_concepts)
 
 
 class NLLProbLoss(nn.Module):

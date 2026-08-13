@@ -41,6 +41,7 @@ from .modules.low.predictors.mix import MixConceptEmbeddingToConcept, \
 
 # Dense layers
 from .modules.low.dense_layers import Dense, ResidualMLP, MLP, LinearEmbeddingEncoder, MLPEmbeddingEncoder, SelectorEmbeddingEncoder
+from .modules.low.conv import ConvDecoder
 from .modules.low.sequential import Sequential
 
 # Graph learner
@@ -48,7 +49,11 @@ from .modules.low.graph.wanda import WANDAGraphLearner
 
 # Loss functions
 from .modules.loss import PyCLoss, ConceptLoss, ConceptSubset, WeightedConceptLoss, \
-    DepthWeightedConceptLoss, L1LogitRegularizer, CompositeLoss, NLLProbLoss
+    DepthWeightedConceptLoss, L1LogitRegularizer, CompositeLoss, \
+    ReconstructionLoss, KLDivergenceLoss, OrthogonalityLoss, NLLProbLoss
+
+# Training callbacks
+from .modules.callbacks import LossWeightWarmup
 
 # Metrics
 from .modules.metrics import ConceptMetrics, compute_cace
@@ -60,6 +65,7 @@ from .modules.outputs import ModelOutput, InferenceOutput
 from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
 from .modules.high.models.cbm import ConceptBottleneckModel
 from .modules.high.models.cem import ConceptEmbeddingModel
+from .modules.high.models.cbgm import ConceptBottleneckGenerativeModel
 from .modules.high.models.graph_cbm import GraphConceptBottleneckModel
 from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
 
@@ -155,6 +161,7 @@ __all__ = [
     "LinearEmbeddingEncoder",
     "MLPEmbeddingEncoder",
     "SelectorEmbeddingEncoder",
+    "ConvDecoder",
 
     # COSMO
     "WANDAGraphLearner",
@@ -167,7 +174,13 @@ __all__ = [
     "WeightedConceptLoss",
     "DepthWeightedConceptLoss",
     "L1LogitRegularizer",
+    "ReconstructionLoss",
+    "KLDivergenceLoss",
+    "OrthogonalityLoss",
     "NLLProbLoss",
+
+    # Training callbacks
+    "LossWeightWarmup",
 
     # Metrics
     "ConceptMetrics",
@@ -182,6 +195,7 @@ __all__ = [
     "BlackBoxTaskOnly",
     "ConceptBottleneckModel",
     "ConceptEmbeddingModel",
+    "ConceptBottleneckGenerativeModel",
     "GraphConceptBottleneckModel",
     "CausallyReliableConceptBottleneckModel",
     # Models (mid-level)

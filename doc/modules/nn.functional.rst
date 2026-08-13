@@ -14,6 +14,7 @@ Concept Operations
    :nosignatures:
 
    grouped_concept_exogenous_mixture
+   concept_orthogonality
    selection_eval
    confidence_selection
    soft_select
