@@ -1,23 +1,18 @@
 """
-Comprehensive tests for the Hybrid Concept Bottleneck Model (HybridCBM).
+Set of tests for the Hybrid Concept Bottleneck Model (HybridCBM).
 
-A HybridCBM extends a standard CBM bottleneck with a set of *unsupervised*
-latent dimensions. These tests cover the behaviour that is specific to that
-extension (everything shared with the plain CBM is already covered by
-``test_cbm.py``):
-
+These tests cover:
 - Initialization and validation of ``additional_dims`` / ``additional_dim_types``
 - The unsupervised dimensions entering the PGM as non-interpretable
-  ``EmbeddingVariable`` nodes (never supervised / teacher-forced)
-- Plate grouping of the unsupervised dimensions (a single plate when
-  homogeneous, split per type otherwise, one variable each with ``plate=False``)
+  ``EmbeddingVariable`` nodes
+- Plate grouping of the unsupervised dimensions
 - The per-type distribution policy for the unsupervised dimensions
   (continuous -> Delta, binary -> Bernoulli)
 - Forward pass / output shapes, including querying the unsupervised dimensions
 - Gradient flow into the unsupervised encoders through the task loss
 - Reduction to a plain CBM when ``additional_dims == 0``
 - Collision-free naming of the unsupervised dimensions
-- A regression test that the train/eval inference engines share the model's
+- Check that the train/eval inference engines share the model's
   ``pgm`` (so ``model.parameters()`` actually drives the forward pass)
 """
 import pytest
@@ -42,12 +37,16 @@ from torch_concepts.nn.modules.mid.variable import (
 
 
 def _logits(out, names):
-    """Concatenate the queried concepts' logits into a ``(B, sum(card))`` tensor."""
+    """
+    Concatenate the queried concepts' logits into a ``(B, sum(card))`` tensor.
+    """
     return torch.cat([out.params[n]['logits'] for n in names], dim=1)
 
 
 def _binary_ann(concepts=('c1', 'c2', 'c3'), task='task'):
-    """Homogeneous binary annotation: ``concepts`` + a single binary ``task``."""
+    """
+    Homogeneous binary annotation: ``concepts`` + a single binary ``task``.
+"""
     labels = list(concepts) + [task]
     return Annotations(
         labels=labels,
@@ -57,7 +56,8 @@ def _binary_ann(concepts=('c1', 'c2', 'c3'), task='task'):
 
 
 def _task_head(model, task_name):
-    """The ``LinearConceptToConcept`` producing ``task_name``'s logits.
+    """
+    The ``LinearConceptToConcept`` producing ``task_name``'s logits.
 
     Works for both building layouts: the plate layout stores the task CPD under
     the plate name ``"tasks"``, the individual layout under the task's own name.
@@ -68,7 +68,9 @@ def _task_head(model, task_name):
 
 
 class TestHybridCBMInitialization(unittest.TestCase):
-    """Construction and the derived unsupervised-dimension bookkeeping."""
+    """
+    Construction and the derived unsupervised-dimension bookkeeping.
+    """
 
     def setUp(self):
         self.ann = _binary_ann()
@@ -87,27 +89,34 @@ class TestHybridCBMInitialization(unittest.TestCase):
 
     def test_default_is_pure_pytorch(self):
         model = HybridConceptBottleneckModel(
-            input_size=6, annotations=self.ann, additional_dims=2,
+            input_size=6,
+            annotations=self.ann,
+            additional_dims=2,
             task_names=['task'],
         )
         self.assertFalse(isinstance(model, BaseLearner))
 
     def test_lightning_mode(self):
         model = HybridConceptBottleneckModel(
-            lightning=True, input_size=6, annotations=self.ann,
-            additional_dims=2, task_names=['task'],
+            lightning=True,
+            input_size=6,
+            annotations=self.ann,
+            additional_dims=2,
+            task_names=['task'],
         )
         self.assertIsInstance(model, BaseLearner)
 
     def test_unsup_names_are_unique_and_extra(self):
         model = HybridConceptBottleneckModel(
-            input_size=6, annotations=self.ann, additional_dims=3,
+            input_size=6,
+            annotations=self.ann,
+            additional_dims=3,
             task_names=['task'],
         )
         # Unsupervised names are distinct from the annotated concepts...
         self.assertEqual(len(set(model.unsup_names)), 3)
         self.assertFalse(set(model.unsup_names) & set(self.ann.labels))
-        # ...and the supervised set is exactly the annotated (non-task) concepts.
+        # ...and the supervised set is exactly the annotated (non-task) concepts
         self.assertEqual(model.supervised_concept_names, ['c1', 'c2', 'c3'])
 
     def test_backbone_and_latent_size(self):
@@ -128,11 +137,16 @@ class TestHybridCBMInitialization(unittest.TestCase):
         )
         # A single string is broadcast to every additional dimension.
         for name in model.unsup_names:
-            self.assertEqual(model.concept_annotations.concept(name).type, 'binary')
+            self.assertEqual(
+                model.concept_annotations.concept(name).type,
+                'binary',
+            )
 
 
 class TestHybridCBMStructure(unittest.TestCase):
-    """The assembled PGM: variable kinds, plate grouping, task head width."""
+    """
+    The assembled PGM: variable kinds, plate grouping, task head width.
+    """
 
     def setUp(self):
         self.ann = _binary_ann()
@@ -150,29 +164,46 @@ class TestHybridCBMStructure(unittest.TestCase):
         )
 
     def test_unsup_dims_are_embedding_variables(self):
-        """Unsupervised dims must be non-interpretable (embedding) variables."""
+        """
+        Unsupervised dims must be non-interpretable (embedding) variables.
+        """
         model = HybridConceptBottleneckModel(
-            input_size=6, annotations=self.ann, additional_dims=4,
+            input_size=6,
+            annotations=self.ann,
+            additional_dims=4,
             task_names=['task'],
         )
         variables = model.pgm.variables
-        self.assertIsInstance(variables[model.unsup_plate_name], EmbeddingVariable)
-        self.assertEqual(variables[model.unsup_plate_name].variable_type, 'embedding')
-        # The supervised concepts and tasks stay interpretable concept variables.
+        self.assertIsInstance(
+            variables[model.unsup_plate_name],
+            EmbeddingVariable,
+        )
+        self.assertEqual(
+            variables[model.unsup_plate_name].variable_type,
+            'embedding',
+        )
+        # The supervised concepts and tasks stay interpretable concept variables
         self.assertIsInstance(variables['concepts'], ConceptVariable)
         self.assertIsInstance(variables['tasks'], ConceptVariable)
 
     def test_mixed_unsup_types_split_into_per_type_plates(self):
-        """A heterogeneous unsup group splits into one plate per type."""
+        """
+        A heterogeneous unsup group splits into one plate per type.
+        """
         model = HybridConceptBottleneckModel(
-            input_size=6, annotations=self.ann, additional_dims=2,
+            input_size=6,
+            annotations=self.ann,
+            additional_dims=2,
             task_names=['task'],
             additional_dim_types=['continuous', 'binary'],
         )
-        # Two homogeneous unsup plates (continuous + binary), each an embedding.
+        # Two homogeneous unsup plates (continuous + binary), each an embedding
         unsup_vars = [
             v for v in model.pgm.variables.values()
-            if v.variable_type == 'embedding' and v.name not in ('input', 'latent')
+            if (
+                (v.variable_type == 'embedding') and
+                (v.name not in ('input', 'latent'))
+            )
         ]
         self.assertEqual(len(unsup_vars), 2)
         self.assertEqual(
@@ -180,26 +211,41 @@ class TestHybridCBMStructure(unittest.TestCase):
         )
 
     def test_plate_false_gives_individual_variables(self):
-        """``plate=False`` builds one variable per concept and per unsup dim."""
+        """
+        ``plate=False`` builds one variable per concept and per unsup dim.
+        """
         model = HybridConceptBottleneckModel(
-            input_size=6, annotations=self.ann, additional_dims=2,
-            task_names=['task'], plate=False,
+            input_size=6,
+            annotations=self.ann,
+            additional_dims=2,
+            task_names=['task'],
+            plate=False,
         )
         # One variable per unsupervised dimension, each an EmbeddingVariable.
         for name in model.unsup_names:
             self.assertIn(name, model.pgm.variables)
-            self.assertEqual(model.pgm.variables[name].variable_type, 'embedding')
+            self.assertEqual(
+                model.pgm.variables[name].variable_type,
+                'embedding',
+            )
         # And one variable per supervised concept.
         for name in model.supervised_concept_names:
             self.assertIn(name, model.pgm.variables)
 
     def test_task_head_consumes_concepts_and_unsup_dims(self):
-        """The task predictor's input width == supervised concepts + unsup dims."""
-        for dim_types in ('continuous',
-                          ['continuous', 'binary', 'continuous']):
+        """
+        The task predictor's input width == supervised concepts + unsup dims
+        """
+        for dim_types in (
+            'continuous',
+            ['continuous', 'binary', 'continuous']
+        ):
             model = HybridConceptBottleneckModel(
-                input_size=6, annotations=self.ann, additional_dims=3,
-                task_names=['task'], additional_dim_types=dim_types,
+                input_size=6,
+                annotations=self.ann,
+                additional_dims=3,
+                task_names=['task'],
+                additional_dim_types=dim_types,
             )
             head = _task_head(model, 'task')
             # 3 supervised binary concepts + 3 unsupervised dims.
@@ -210,33 +256,51 @@ class TestHybridCBMStructure(unittest.TestCase):
 
 
 class TestHybridCBMUnsupervisedDistributions(unittest.TestCase):
-    """Per-type distribution policy for the unsupervised dimensions."""
+    """
+    Per-type distribution policy for the unsupervised dimensions.
+    """
 
     def setUp(self):
         self.ann = _binary_ann()
 
     def test_continuous_dims_use_delta(self):
         model = HybridConceptBottleneckModel(
-            input_size=6, annotations=self.ann, additional_dims=2,
-            task_names=['task'], additional_dim_types='continuous',
+            input_size=6,
+            annotations=self.ann,
+            additional_dims=2,
+            task_names=['task'],
+            additional_dim_types='continuous',
         )
-        self.assertIs(model.pgm.variables[model.unsup_plate_name].distribution, Delta)
+        self.assertIs(
+            model.pgm.variables[model.unsup_plate_name].distribution,
+            Delta,
+        )
 
     def test_binary_dims_use_bernoulli(self):
         model = HybridConceptBottleneckModel(
-            input_size=6, annotations=self.ann, additional_dims=2,
-            task_names=['task'], additional_dim_types='binary',
+            input_size=6,
+            annotations=self.ann,
+            additional_dims=2,
+            task_names=['task'],
+            additional_dim_types='binary',
         )
-        self.assertIs(model.pgm.variables[model.unsup_plate_name].distribution, Bernoulli)
+        self.assertIs(
+            model.pgm.variables[model.unsup_plate_name].distribution,
+            Bernoulli,
+        )
 
 
 class TestHybridCBMForward(unittest.TestCase):
-    """Forward pass and output shapes."""
+    """
+    Forward pass and output shapes.
+    """
 
     def setUp(self):
         self.ann = _binary_ann()
         self.model = HybridConceptBottleneckModel(
-            input_size=6, annotations=self.ann, additional_dims=4,
+            input_size=6,
+            annotations=self.ann,
+            additional_dims=4,
             task_names=['task'],
         )
 
@@ -248,7 +312,9 @@ class TestHybridCBMForward(unittest.TestCase):
         self.assertEqual(logits.shape, (8, 4))
 
     def test_forward_query_continuous_unsup_dims(self):
-        """Continuous unsupervised dims are deterministic -> a ``value`` param."""
+        """
+        Continuous unsupervised dims are deterministic -> a ``value`` param.
+        """
         x = torch.randn(8, 6)
         out = self.model(query=self.model.unsup_names, input=x)
         for name in self.model.unsup_names:
@@ -256,9 +322,15 @@ class TestHybridCBMForward(unittest.TestCase):
             self.assertEqual(out.params[name]['value'].shape, (8, 1))
 
     def test_forward_query_binary_unsup_dims(self):
+        """
+        Binary unsupervised dims are stochastic -> a ``logits`` param.
+        """
         model = HybridConceptBottleneckModel(
-            input_size=6, annotations=self.ann, additional_dims=2,
-            task_names=['task'], additional_dim_types='binary',
+            input_size=6,
+            annotations=self.ann,
+            additional_dims=2,
+            task_names=['task'],
+            additional_dim_types='binary',
         )
         x = torch.randn(5, 6)
         out = model(query=model.unsup_names, input=x)
@@ -267,7 +339,9 @@ class TestHybridCBMForward(unittest.TestCase):
             self.assertEqual(out.params[name]['logits'].shape, (5, 1))
 
     def test_fully_observed_query_excludes_unsup_dims(self):
-        """Teacher-forcing targets cover only the supervised concept variables."""
+        """
+        Teacher-forcing targets cover only the supervised concept variables.
+        """
         gt = torch.randint(0, 2, (8, 4))  # c1, c2, c3, task
         query = self.model.fully_observed_query(gt)
         # Plate layout: one entry per concept variable, none for the unsup plate.
@@ -277,13 +351,16 @@ class TestHybridCBMForward(unittest.TestCase):
 
 
 class TestHybridCBMTraining(unittest.TestCase):
-    """Gradient flow, parameter updates, and inference-engine wiring."""
+    """
+    Gradient flow, parameter updates, and inference-engine wiring.
+    """
 
     def setUp(self):
         self.ann = _binary_ann()
 
     def test_gradients_flow_into_unsup_encoder(self):
-        """The task loss backpropagates into the unsupervised encoders.
+        """
+        The task loss backpropagates into the unsupervised encoders.
 
         The unsupervised dimensions are never in the loss directly, but they
         feed the task predictor, so a task loss must still reach their encoder.
@@ -305,9 +382,13 @@ class TestHybridCBMTraining(unittest.TestCase):
         self.assertGreater(grad.abs().sum().item(), 0.0)
 
     def test_parameters_update(self):
-        """A few (SGD) optimizer steps actually move the model's parameters."""
+        """
+        A few (SGD) optimizer steps actually move the model's parameters.
+        """
         model = HybridConceptBottleneckModel(
-            input_size=6, annotations=self.ann, additional_dims=4,
+            input_size=6,
+            annotations=self.ann,
+            additional_dims=4,
             task_names=['task'],
         )
         model.train()
@@ -338,14 +419,17 @@ class TestHybridCBMTraining(unittest.TestCase):
         self.assertTrue(changed, "no parameters changed during training")
 
     def test_inference_engines_share_pgm(self):
-        """Regression: train/eval engines wrap the *same* pgm as the module.
+        """
+        Regression: train/eval engines wrap the *same* pgm as the module.
 
         If the engines wrapped a stale pgm, ``model.parameters()`` would not
         include the parameters actually used in the forward pass, so training
         would silently optimise nothing.
         """
         model = HybridConceptBottleneckModel(
-            input_size=6, annotations=self.ann, additional_dims=4,
+            input_size=6,
+            annotations=self.ann,
+            additional_dims=4,
             task_names=['task'],
         )
         self.assertIs(model.eval_inference.pgm, model.pgm)
@@ -357,29 +441,73 @@ class TestHybridCBMTraining(unittest.TestCase):
         self.assertTrue(pgm_param_ids <= model_param_ids)
 
 
+class TestHybridCBMBottleneck(unittest.TestCase):
+    """
+    The task head sees exactly ``[c_hat, u_hat]``, in that order."""
+
+    def test_task_logits_are_the_head_applied_to_the_whole_bottleneck(self):
+        """
+        The supervised concepts contribute their probabilities (a ``Bernoulli``
+        propagates ``probs``) and the continuous unsupervised dimensions their
+        deterministic values; the head is a single linear map over the
+        concatenation, concepts first.
+        """
+        model = HybridConceptBottleneckModel(
+            input_size=6,
+            annotations=_binary_ann(),
+            additional_dims=4,
+            task_names=['task'],
+        )
+        model.eval()
+        x = torch.randn(5, 6)
+        with torch.no_grad():
+            out = model(
+                query=['c1', 'c2', 'c3'] + model.unsup_names + ['task'],
+                input=x,
+            )
+            supervised = torch.sigmoid(out.logits[['c1', 'c2', 'c3']])
+            unsupervised = torch.cat(
+                [out.params[n]['value'] for n in model.unsup_names], dim=1,
+            )
+            bottleneck = torch.cat([supervised, unsupervised], dim=1)
+            expected = _task_head(model, 'task')(bottleneck)
+        self.assertTrue(torch.allclose(
+            out.params['task']['logits'], expected, atol=1e-6,
+        ))
+
+
 class TestHybridCBMReducesToCBM(unittest.TestCase):
-    """With no additional dimensions the model is a plain CBM."""
+    """
+    With no additional dimensions the model is a plain CBM.
+    """
 
     def setUp(self):
         self.ann = _binary_ann(concepts=('c1', 'c2'))
 
     def test_zero_additional_dims_structure(self):
         model = HybridConceptBottleneckModel(
-            input_size=6, annotations=self.ann, additional_dims=0,
+            input_size=6,
+            annotations=self.ann,
+            additional_dims=0,
             task_names=['task'],
         )
         self.assertEqual(model.unsup_names, [])
         self.assertEqual(
-            set(model.pgm.variables), {'input', 'latent', 'concepts', 'tasks'},
+            set(model.pgm.variables),
+            {'input', 'latent', 'concepts', 'tasks'},
         )
 
     def test_zero_additional_dims_matches_cbm_shapes(self):
         hybrid = HybridConceptBottleneckModel(
-            input_size=6, annotations=self.ann, additional_dims=0,
+            input_size=6,
+            annotations=self.ann,
+            additional_dims=0,
             task_names=['task'],
         )
         cbm = ConceptBottleneckModel(
-            input_size=6, annotations=self.ann, task_names=['task'],
+            input_size=6,
+            annotations=self.ann,
+            task_names=['task'],
         )
         x = torch.randn(4, 6)
         query = ['c1', 'c2', 'task']
@@ -390,7 +518,9 @@ class TestHybridCBMReducesToCBM(unittest.TestCase):
 
     def test_negative_additional_dims_clamped_to_zero(self):
         model = HybridConceptBottleneckModel(
-            input_size=6, annotations=self.ann, additional_dims=-3,
+            input_size=6,
+            annotations=self.ann,
+            additional_dims=-3,
             task_names=['task'],
         )
         self.assertEqual(model.additional_dims, 0)
@@ -398,7 +528,9 @@ class TestHybridCBMReducesToCBM(unittest.TestCase):
 
 
 class TestHybridCBMNaming(unittest.TestCase):
-    """Collision-free naming of the unsupervised dimensions."""
+    """
+    Collision-free naming of the unsupervised dimensions.
+    """
 
     def test_name_clash_escalates_prefix(self):
         # An annotation that already uses the default unsupervised prefix.
@@ -408,7 +540,10 @@ class TestHybridCBMNaming(unittest.TestCase):
             types=['binary', 'binary', 'binary'],
         )
         model = HybridConceptBottleneckModel(
-            input_size=6, annotations=ann, additional_dims=1, task_names=['task'],
+            input_size=6,
+            annotations=ann,
+            additional_dims=1,
+            task_names=['task'],
         )
         # The prefix gains an underscore to avoid clashing with '__unsup_0'.
         self.assertEqual(model.unsup_names, ['___unsup_0'])
@@ -418,7 +553,9 @@ class TestHybridCBMNaming(unittest.TestCase):
 
 
 class TestHybridCBMValidation(unittest.TestCase):
-    """Validation of the additional-dimension arguments."""
+    """
+    Validation of the additional-dimension arguments.
+    """
 
     def setUp(self):
         self.ann = _binary_ann()
@@ -426,27 +563,38 @@ class TestHybridCBMValidation(unittest.TestCase):
     def test_length_mismatch_raises(self):
         with pytest.raises(ValueError):
             HybridConceptBottleneckModel(
-                input_size=6, annotations=self.ann, additional_dims=3,
-                task_names=['task'], additional_dim_types=['continuous', 'binary'],
+                input_size=6,
+                annotations=self.ann,
+                additional_dims=3,
+                task_names=['task'],
+                additional_dim_types=['continuous', 'binary'],
             )
 
     def test_categorical_unsup_dims_rejected(self):
         with pytest.raises(ValueError):
             HybridConceptBottleneckModel(
-                input_size=6, annotations=self.ann, additional_dims=2,
-                task_names=['task'], additional_dim_types='categorical',
+                input_size=6,
+                annotations=self.ann,
+                additional_dims=2,
+                task_names=['task'],
+                additional_dim_types='categorical',
             )
 
     def test_invalid_additional_dim_types_type_raises(self):
         with pytest.raises(ValueError):
             HybridConceptBottleneckModel(
-                input_size=6, annotations=self.ann, additional_dims=2,
-                task_names=['task'], additional_dim_types=5,
+                input_size=6,
+                annotations=self.ann,
+                additional_dims=2,
+                task_names=['task'],
+                additional_dim_types=5,
             )
 
     def test_repr(self):
         model = HybridConceptBottleneckModel(
-            input_size=6, annotations=self.ann, additional_dims=2,
+            input_size=6,
+            annotations=self.ann,
+            additional_dims=2,
             task_names=['task'],
         )
         self.assertIsInstance(repr(model), str)

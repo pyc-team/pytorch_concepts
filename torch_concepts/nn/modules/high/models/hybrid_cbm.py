@@ -1,14 +1,28 @@
 """Hybrid Concept Bottleneck Model (Hybrid CBM).
 
 A Concept Bottleneck Model (CBM) whose bottleneck is extended with an
-unsupervised set of neurons (which will not be aligned with any known concepts).
-This allows for a more flexible representation of the latent space, where some
-dimensions can be dedicated to concept prediction and others to task prediction.
+unsupervised set of neurons (not necessarily aligned with any known concepts).
+This allows for a more flexible representation of the latent space, where the
+bottleneck may more easily encode task-relevant information that is not already
+in the training concept (with the obvious caveat that these extra unsupervised
+dimensions are not necessarily interepretable and may be prone to leakage).
 
-This architecture is a standard baseline, particularly for evaluating the
-performance of concept bottleneck models when the concept set is incomplete or
-noisy (Mahinpei et al., "Promises and Pitfalls of Black-Box Concept Learning
-Models", 2021; the ``hybrid``/``joint`` bottleneck of Koh et al., ICML 2020).
+This architecture is a standard baseline in works exploring datasets with
+potentially incomplete or noisy concept sets.
+
+To the best of our knowledge, Mahinpei et al. (2021) first used them as part of
+their experiments on exploring alignment of unsupervised dimensions. Then,
+Espinosa Zarlenga et al. (2022) named it the *Hybrid CBM* and formalise the
+bottleneck as ``c_hat in R^(k + gamma)``, the concatenation of ``k`` supervised
+concept dimensions and ``gamma`` unsupervised ones.
+
+References
+----------
+Mahinpei et al. "Promises and Pitfalls of Black-Box Concept Learning Models",
+ICML 2021 Workshop. https://arxiv.org/abs/2106.13314
+
+Espinosa Zarlenga et al. "Concept Embedding Models: Beyond the
+Accuracy-Explainability Trade-Off", NeurIPS 2022. https://arxiv.org/abs/2209.09056
 """
 from typing import Dict, List, Optional, Union
 
@@ -18,43 +32,51 @@ from torch.distributions import Bernoulli, OneHotCategorical, Normal
 
 from .....annotations import Annotations
 from .....distributions import Delta
-from ...low.lazy import LazyConstructor
+
 from ...low.encoders.linear import LinearEmbeddingToConcept
+from ...low.lazy import LazyConstructor
 from ...low.predictors.linear import LinearConceptToConcept
+from ...mid.distributions import DEFAULT_DIST_KWARGS
+from ...mid.factors.cpd import ParametricCPD
+from ...mid.graph.bayesian_network import BayesianNetwork
 from ...mid.inference.base import BaseInference
 from ...mid.inference.torch.deterministic import DeterministicInference
-from ...mid.graph.bayesian_network import BayesianNetwork
-from ...mid.factors.cpd import ParametricCPD
 from ...mid.variable import EmbeddingVariable
-from ...mid.distributions import DEFAULT_DIST_KWARGS
+
 from .cbm import ConceptBottleneckModel
 
 
-def _merge_bottleneck_parents(
-    concepts: Dict,
-    embeddings: Dict,
-) -> Dict[str, torch.Tensor]:
-    """Aggregate for the task CPDs: fuse the whole bottleneck into one input.
-
-    The task predictors take both the supervised concepts (``ConceptVariable``
-    parents) and the unsupervised dimensions (``EmbeddingVariable`` parents);
-    this concatenates them (concepts first, then unsupervised dimensions,
-    each group in parent order) into the single ``concepts`` input of a
-    :class:`~torch_concepts.nn.LinearConceptToConcept`.
+def _merge_parents(nodes: List[Dict]) -> Dict[str, torch.Tensor]:
     """
+    This method concatenates the values of the set of nodes into a single
+    tensor. Used to merge, for example, the supervised concepts of a task node
+    and the unsupervised dimensions of the bottleneck into a single tensor to
+    be used as the input of the task head.
+    """
+    all_vals = []
+    for node in nodes:
+        all_vals.extend(node.values())
     values = [
+        # A binary unsupervised dimension propagates a Bernoulli sample, which
+        # may arrive as a non-float tensor under the sampling engines.
         v.float() if not v.is_floating_point() else v
-        for v in [*concepts.values(), *embeddings.values()]
+        for v in all_vals
     ]
     return {"concepts": torch.cat(values, dim=-1)}
 
 
 class HybridConceptBottleneckModel(ConceptBottleneckModel):
-    """Hybrid Concept Bottleneck Model.
+    """
+    A Hybrid Concept Bottleneck Model as described in Mahinpei et al. (2021) and
+    Espinosa Zarlenga et al. (2022).
 
-    Linear ``latent → concepts + unsupervised dimensions → tasks`` bottleneck
-    with unsupervised latent dimensions in the bottleneck (which can be thought
-    of as a form of a shared embedding across concepts).
+    This is a model that follows the following structure:
+    ``input -> latent -> (concepts + unsupervised dimensions) -> tasks``, where,
+    contrary to a standard CBM where the bottleneck contains only neurons
+    aligned with known concepts, the bottleneck in this model (i.e., the layer
+    between `latent` and the `tasks`) is extended with unsupervised latent
+    dimensions. This unsupervised bottleneck representation can be
+    thought of as a form of a shared embedding across concepts.
 
     The unsupervised dimensions enter the probabilistic model as
     *non-interpretable* :class:`~torch_concepts.nn.EmbeddingVariable` nodes (of
@@ -78,13 +100,11 @@ class HybridConceptBottleneckModel(ConceptBottleneckModel):
     task_names : Union[List[str], str]
         Names of the task variables (a subset of the annotation labels).
     additional_dim_types: Union[List[str], str], optional
-        Types of the additional latent dimensions. If a list is provided, each
-        element corresponds to the type of the respective dimension. If a string
-        is provided, it is used for all additional dimensions. Must be one of
-        ``"binary"`` or ``"continuous"`` (``"categorical"`` is not supported,
-        as each unsupervised dimension occupies a single bottleneck neuron).
-        Defaults to ``"continuous"`` for all dimensions. If ``additional_dims``
-        is 0, this argument is ignored.
+        Type of each additional latent dimension, either one per dimension or a
+        single string used for all of them. Must be ``"binary"`` or
+        ``"continuous"``. Notice that ``"categorical"`` is not supported, since
+        each unsupervised dimension occupies a single bottleneck neuron.
+        Defaults to ``"continuous"``; ignored when ``additional_dims`` is 0.
     inference : BaseInference, optional
         Evaluation inference engine class. Defaults to ``DeterministicInference``.
     inference_kwargs : dict, optional
@@ -97,9 +117,9 @@ class HybridConceptBottleneckModel(ConceptBottleneckModel):
         If True, adds Lightning training capabilities.
     plate : bool or None, default None
         Per-level plate preference (forwarded to :class:`BaseModel`). ``None``
-        (default) / ``True`` group homogeneous concepts (and, separately, the
-        homogeneous unsupervised dimensions) into the minimum number of plates;
-        ``False`` uses one individual variable per concept / dimension.
+        or ``True`` groups homogeneous concepts and, separately, the
+        unsupervised dimensions into the minimum number of plates; ``False``
+        uses one variable per concept / dimension (less efficient).
     **kwargs
         Forwarded to :class:`BaseModel` (e.g. ``backbone``, ``latent_size``, and
         the Lightning training arguments).
@@ -130,7 +150,7 @@ class HybridConceptBottleneckModel(ConceptBottleneckModel):
         annotations: Annotations,
         additional_dims: int,
         task_names: Union[List[str], str],
-        additional_dim_types: Optional[Union[List[str], str]] = "continuous",
+        additional_dim_types: Optional[Union[List[str], str]]="continuous",
         inference: Optional[BaseInference] = DeterministicInference,
         inference_kwargs: Optional[dict] = None,
         train_inference: Optional[BaseInference] = None,
@@ -138,6 +158,8 @@ class HybridConceptBottleneckModel(ConceptBottleneckModel):
         lightning: bool = False,
         **kwargs,
     ):
+        # If these are negative, we will just ignore them and build a standard
+        # CBM.
         additional_dims = max(0, additional_dims)
 
         # First determine the types of the additional latent dimensions. If a
@@ -151,12 +173,13 @@ class HybridConceptBottleneckModel(ConceptBottleneckModel):
                 f"additional_dim_types must be a string or a list of strings, "
                 f"got {type(additional_dim_types)}."
             )
-        if additional_dims and (len(additional_dim_types) != additional_dims):
-            raise ValueError(
-                f"Length of additional_dim_types ({len(additional_dim_types)}) "
-                f"must match additional_dims ({additional_dims})."
-            )
         if additional_dims:
+            if len(additional_dim_types) != additional_dims:
+                raise ValueError(
+                    f"Length of additional_dim_types "
+                    f"({len(additional_dim_types)}) must match additional_dims "
+                    f"({additional_dims})."
+                )
             unsupported_types = sorted(
                 set(additional_dim_types) - set(self.unsupervised_distributions)
             )
@@ -170,12 +193,13 @@ class HybridConceptBottleneckModel(ConceptBottleneckModel):
                     f"neuron."
                 )
 
-        # Extend the annotations with a set of dummy concepts for the additional
-        # latent dimensions. These will be treated as unsupervised latent
-        # variables in the bottleneck. To avoid name conflicts, we first figure
-        # out how many underscores to prepend to "unsup_".
+        # The unsupervised dimensions will be included in the annotations as
+        # dummy cardinality-1 concepts. For this, we have to name them and,
+        # therefore, we need to find a prefix which does not collide with
+        # concepts the caller already has in the list of supervised concepts (
+        # unlikely but one never knows).
         self.additional_dims = additional_dims
-        self.unsup_names = []
+        self.unsup_names = []  # We will save these names to easily identify them
         self.unsup_plate_name = None
         if additional_dims > 0:
             used_names = set(annotations.labels)
@@ -183,8 +207,9 @@ class HybridConceptBottleneckModel(ConceptBottleneckModel):
             while any(name.startswith(prefix) for name in used_names):
                 prefix = "_" + prefix
             self.unsup_names = [f"{prefix}{i}" for i in range(additional_dims)]
-            # Name used for the (single) unsupervised plate variable (collision-free
-            # by construction of ``prefix``).
+
+            # Name used for the (single) unsupervised plate variable
+            # (collision-free by construction).
             self.unsup_plate_name = f"{prefix}plate"
             used_annotations = Annotations(
                 labels=(list(annotations.labels) + self.unsup_names),
@@ -216,83 +241,86 @@ class HybridConceptBottleneckModel(ConceptBottleneckModel):
     # ------------------------------------------------------------------
     # Shared helpers
     # ------------------------------------------------------------------
+
     @property
     def supervised_concept_names(self) -> List[str]:
-        """Intermediate concept labels excluding the unsupervised dimensions."""
+        """
+        Intermediate concept labels excluding the unsupervised dimensions.
+        """
         unsup = set(self.unsup_names)
         return [n for n in self.intermediate_concept_names if n not in unsup]
 
-    def _unsup_distribution_of(self, name: str) -> type:
-        """Distribution class used for unsupervised dimension ``name`` (by type)."""
-        return self.unsupervised_distributions[
-            self.concept_annotations.concept(name).type
-        ]
-
-    def _unsup_dist_kwargs_of(self, name: str) -> dict:
-        """Distribution keyword arguments for unsupervised dimension ``name``."""
-        return dict(
-            self.variable_dist_kwargs.get(self._unsup_distribution_of(name), {})
-        )
-
     def _build_unsupervised_variables(self) -> List[EmbeddingVariable]:
-        """Build the unsupervised bottleneck dimensions as embedding variable(s).
-
-        Reuses the shared plate layout (:meth:`_plate_layout`) — so the ``plate``
-        preference is honoured exactly as for the supervised concepts — but emits
-        non-interpretable :class:`EmbeddingVariable` nodes whose distribution comes
-        from :attr:`unsupervised_distributions` (continuous → ``Delta``, binary →
-        ``Bernoulli``). Homogeneous dimensions collapse to a single plate; mixing
-        types (or ``plate=False``) splits them into one variable per group /
-        dimension.
         """
-        out: List[EmbeddingVariable] = []
+        Build the unsupervised bottleneck dimensions as embedding variable(s).
+
+        Reuses the shared plate layout but emits non-interpretable
+        :class:`EmbeddingVariable` nodes whose distribution comes from
+        :attr:`unsupervised_distributions`. Homogeneous dimensions collapse to
+        a single plate; mixing types (or ``plate=False``) splits them one per
+        group / dimension (as in the standard CBM class).
+        """
+        result = []
         for kind, name, members in self._plate_layout(
-            self.unsup_names, self.unsup_plate_name
+            self.unsup_names,
+            self.unsup_plate_name,
         ):
-            u0 = self.concept_annotations.concept(members[0])
-            dist = self._unsup_distribution_of(u0.name)
-            dkw = self._unsup_dist_kwargs_of(u0.name)
-            if kind == "plate":
-                out.append(EmbeddingVariable(
-                    names=name, members=members,
-                    distribution=dist, dist_kwargs=dkw, size=u0.cardinality,
-                ))
-            else:
-                out.append(EmbeddingVariable(
-                    names=name,
-                    distribution=dist, dist_kwargs=dkw, size=u0.cardinality,
-                ))
-        return out
+            # Note for self: variables are group by type, so we can just look at
+            # the first member to determine the distribution.
+            first = self.concept_annotations.concept(members[0])
+            distribution = self.unsupervised_distributions[first.type]
+            result.append(EmbeddingVariable(
+                names=name,
+                members=members if kind == "plate" else None,
+                distribution=distribution,
+                dist_kwargs=dict(
+                    self.variable_dist_kwargs.get(distribution, {})
+                ),
+                size=first.cardinality,
+            ))
+        return result
 
     # ------------------------------------------------------------------
     # Model assembly (written once for both layouts)
     # ------------------------------------------------------------------
     def _build_model(self) -> BayesianNetwork:
-        """Assemble ``input → latent → {concepts, unsupervised dims} → tasks``.
-
-        The supervised concepts and the tasks are grouped into the minimum
-        number of plates by :meth:`build_concept_variables`; the unsupervised
-        dimensions are grouped the same way but as embedding variables (see
-        :meth:`_build_unsupervised_variables`). Each concept/dimension is
-        encoded from the latent with a linear layer; every task consumes the
-        *whole* bottleneck (supervised concepts + unsupervised dimensions) via a
-        single linear head sized over the concatenation.
         """
-        # With no additional dimensions the model is a plain CBM.
+        The key method for building the graph for the Hybrid CBM. This method is
+        called by the parent constructor and returns a :class:`BayesianNetwork`
+        object that describes the structure of the model.
+        The graph is built  to satisfy the following structure:
+        ``input -> latent -> {concepts, unsupervised dims} -> tasks``.
+
+        Each concept/dimension is encoded from the latent with a linear layer;
+        every task consumes the *whole* bottleneck (supervised concepts +
+        unsupervised dimensions) via a single linear head sized over the
+        concatenation.
+        """
+        # With no additional dimensions the model is a plain CBM so let's just
+        # reuise the parent's building method
         if not self.additional_dims:
             return super()._build_model()
 
-        input_var, latent_var, input_cpd, latent_cpd = self._input_latent_block()
+        # Otherwise, let's first build the input and latent variables and CDPs
+        input_var, latent_var, input_cpd, latent_cpd = \
+            self._input_latent_block()
 
+        # Let's get the supervised concepts and the unsupervised dimensions
+        # variables.
         concepts = self.build_concept_variables(
-            self.supervised_concept_names, plate_name="concepts"
+            self.supervised_concept_names,
+            plate_name="concepts",
         )
         unsup = self._build_unsupervised_variables()
+
+        # And the downstream end tasks
         tasks = self.build_concept_variables(
-            self.task_names, plate_name="tasks"
+            self.task_names,
+            plate_name="tasks",
         )
 
-        # latent → supervised concepts: one linear encoder per concept group.
+        # We now build the latent to bottleneck maps (we use linear maps)
+        # latent -> supervised concepts
         encoders = ParametricCPD(
             variable=concepts,
             parents=[latent_var],
@@ -305,8 +333,8 @@ class HybridConceptBottleneckModel(ConceptBottleneckModel):
                 for c in concepts
             ],
         )
-        # latent → unsupervised dimensions: kept as a separate encoder group for
-        # clarity (they are never supervised).
+
+        # latent -> unsupervised dimensions
         unsup_encoders = ParametricCPD(
             variable=unsup,
             parents=[latent_var],
@@ -319,10 +347,10 @@ class HybridConceptBottleneckModel(ConceptBottleneckModel):
                 for u in unsup
             ],
         )
-        # concepts + unsupervised dimensions → tasks. The unsupervised dimensions
-        # are embedding parents, so a lazily-sized head would miss them; size the
-        # head explicitly over the whole bottleneck and fuse the parents with
-        # ``_merge_bottleneck_parents``.
+
+        # Now time to build the label predictor: concepts + unsupervised -> tasks
+        # For this, we will first aggregate both the supervised and unsupervised
+        # nodes into a single set of parents for the task nodes.
         bottleneck_size = (
             sum(c.size for c in concepts) + sum(u.size for u in unsup)
         )
@@ -340,12 +368,17 @@ class HybridConceptBottleneckModel(ConceptBottleneckModel):
                 )
                 for t in tasks
             ],
-            aggregate=_merge_bottleneck_parents,
+            aggregate=lambda x, y: _merge_parents([x, y]),
         )
 
+        # Aaaaand that's it
         return BayesianNetwork(
             variables=[input_var, latent_var, *concepts, *unsup, *tasks],
             factors=[
-                input_cpd, latent_cpd, *encoders, *unsup_encoders, *predictors,
+                input_cpd,
+                latent_cpd,
+                *encoders,
+                *unsup_encoders,
+                *predictors,
             ],
         )
