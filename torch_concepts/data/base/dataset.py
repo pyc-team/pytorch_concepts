@@ -13,7 +13,6 @@ import torch
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset, default_collate
 from tqdm import tqdm
-from copy import deepcopy
 from typing import Any, Dict, List, Mapping, Optional, Union
 import warnings
 
@@ -30,6 +29,7 @@ from ..generation.base.pipeline import ConceptSupervisionPipeline
 
 logger = logging.getLogger(__name__)
 
+# TODO: generated_concepts becomes generated_annotations, and generated_annotations becomes generated_concepts. Also, modify the __getitem__ to use AnnotatedTensor.
 
 class ConceptDataset(Dataset):
     """

@@ -21,6 +21,8 @@ For another LiteLLM provider, set the API key expected by that provider, e.g.
 ``OPENAI_API_KEY`` for ``--llm-model openai/gpt-4o``.
 """
 
+# TODO: Crea nuovi esempi per testare la pipeline con varie combinazioni di split e non split.
+
 import argparse
 import base64
 from io import BytesIO
@@ -32,7 +34,7 @@ from tqdm import tqdm
 
 from torch_concepts.data.annotators import CLIPAnnotator
 from torch_concepts.data.base import ConceptSupervisionPipeline
-from torch_concepts.data.generation.lf_postprocessing import (
+from torch_concepts.data.generation.filters import (
     SigmoidCalibrator,
     ThresholdAnnotationFilter,
 )
@@ -138,6 +140,7 @@ def main():
         routing="merged",
     )
 
+    # TODO: Use the datamodule to generate and annnotate the datasets (you have the concatenated dataset in the datamodule, so you can use that to generate concepts and annotate both train and validation splits). This implies modifiyng the generate_concepts method in dataset.
     train_name = "train_CLIPAnnotator"
     val_name = "val_CLIPAnnotator"
 
@@ -166,7 +169,7 @@ def main():
         :, val_dataset.concept_names.index("parity")
     ].long()
 
-    train_dataset.generate_concepts(
+    train_dataset.generate_concepts( # TODO: use the datamodule method to call the generate_concepts() on dataset
         pipeline,
         class_names=["even", "odd"],
         self_annotation_name="train",

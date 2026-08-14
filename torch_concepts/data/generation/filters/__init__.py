@@ -1,5 +1,5 @@
 from .annotation_filters import ThresholdAnnotationFilter
-from .calibrators import SigmoidCalibrator
+from ..calibrators.sigmoid import SigmoidCalibrator
 from .generator_filters import DeduplicateConcepts
 
 __all__ = [

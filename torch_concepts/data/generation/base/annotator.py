@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from torch import Tensor
+# TODO: Use AnnotatedTensor instead of Tensor.
 from torch.utils.data import Dataset
 
 from torch_concepts import Annotations
@@ -20,5 +20,5 @@ class Annotator(ABC):
         dataset: Dataset,
         concepts: Annotations,
         **kwargs: Any,
-    ) -> Tensor:
+    ) -> AnnotatedTensor:
         pass

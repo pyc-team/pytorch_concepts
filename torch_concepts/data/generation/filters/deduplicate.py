@@ -1,5 +1,5 @@
 from torch_concepts import Annotations
-from torch_concepts.data.generation.base.filter_generator import GeneratorFilter
+from torch_concepts.data.generation.base.filter_annotator import GeneratorFilter
 
 
 class DeduplicateConcepts(GeneratorFilter):
@@ -23,4 +23,3 @@ class DeduplicateConcepts(GeneratorFilter):
                 )
             definitions[label] = definition
         return super().filter_annotations(concepts)
-

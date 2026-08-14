@@ -12,7 +12,10 @@ from torch_concepts.data.generation.base.annotator import Annotator
 from torch_concepts.data.generation.base.calibrator import Calibrator
 from torch_concepts.data.generation.base.generator import ConceptGenerator
 from torch_concepts.data.generation.base.filter_generator import GeneratorFilter
-from torch_concepts.data.generation.lf_postprocessing import DeduplicateConcepts
+from torch_concepts.data.generation.filters import DeduplicateConcepts
+
+# TODO: Use AnnotatedTensor instead of Tensor.
+# TODO: La pipeline deve poter essere utilizzabile su dataset splittati o non. Gestire coi kwargs gli indici degli split. In questo modo si può usare la pipeline sia per generare concetti su un dataset concatenato, sia per generare concetti su un dataset splittato (train/val/test). In entrambi i casi, la pipeline deve essere in grado di gestire i dataset e gli indici degli split in modo flessibile.
 
 
 # merged: merge all generated concepts, then send them to all annotators.
