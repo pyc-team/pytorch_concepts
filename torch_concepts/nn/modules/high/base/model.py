@@ -585,6 +585,18 @@ class BaseModel(nn.Module, ABC):
     #     """
     #     return self._encoder
 
+    def default_extra(
+        self,
+        evidence: Optional[Dict[str, torch.Tensor]] = None,
+        query: Optional[Union[List[str], Dict[str, Optional[torch.Tensor]]]] = None,
+    ) -> Optional[Dict[str, torch.Tensor]]:
+        """Extra context merged into ``out.extra`` for loss terms that need more
+        than params/target. ``None`` by default (nothing merged); override in a
+        model whose loss needs it, e.g. ``{'evidence': evidence}`` for
+        :class:`~torch_concepts.nn.ReconstructionLoss`.
+        """
+        return None
+
     def forward(
         self,
         query: Union[List[str], Dict[str, Optional[torch.Tensor]]],
@@ -632,6 +644,7 @@ class BaseModel(nn.Module, ABC):
             guide_params=result.guide_params,
             samples=result.samples,
             probabilities=result.probabilities,
+            extra=self.default_extra(evidence, query),
         )
 
     @functools.cached_property

@@ -296,13 +296,6 @@ class BaseLearner(pl.LightningModule):
         """
         return {"input": inputs["x"]}
 
-    def default_extra(self, evidence):
-        """Extra context merged into ``out.extra`` for loss terms that need more
-        than params/target. ``None`` by default (nothing merged); override in a
-        learner whose loss needs it, e.g. ``{'evidence': evidence}``.
-        """
-        return None
-
     def shared_step(self, batch, step):
         """Shared logic for train/val/test steps.
 
@@ -338,10 +331,6 @@ class BaseLearner(pl.LightningModule):
         query = self.default_query(c_loss)
         evidence = self.default_evidence(inputs)
         out = self.forward(query=query, evidence=evidence)
-
-        extra = self.default_extra(evidence)
-        if extra:
-            out.extra = {**(out.extra or {}), **extra}
 
         target = self.prepare_target(c_loss)
 
