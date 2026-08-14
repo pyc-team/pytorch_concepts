@@ -7,11 +7,11 @@ from torch import Tensor
 from torch.utils.data import Dataset
 
 from torch_concepts import Annotations
-from torch_concepts.data.generation.base.filter_annotator import AnnotationFilter
+from torch_concepts.data.generation.base.filter_annotator import FilterAnnotator
 from torch_concepts.data.generation.base.annotator import Annotator
 from torch_concepts.data.generation.base.calibrator import Calibrator
-from torch_concepts.data.generation.base.generator import ConceptGenerator
-from torch_concepts.data.generation.base.filter_generator import GeneratorFilter
+from torch_concepts.data.generation.base.generator import Generator
+from torch_concepts.data.generation.base.filter_generator import FilterGenerator
 from torch_concepts.data.generation.filters import DeduplicateConcepts
 
 # TODO: Use AnnotatedTensor instead of Tensor.
@@ -56,21 +56,21 @@ class ConceptSupervisionPipeline:
 
     Parameters
     ----------
-    generators : ConceptGenerator or sequence of ConceptGenerator
+    generators : Generator or sequence of Generator
         Concept generators to produce concept annotations from the dataset.
     annotators : Annotator or sequence of Annotator
         Annotators that produce raw concept scores.
-    generator_filter : GeneratorFilter, optional
+    generator_filter : FilterGenerator, optional
         Filter applied to generated concept names before annotation. Defaults
         to :class:`DeduplicateConcepts`. For merged routing it is applied after
         merging; for cartesian and zip routing it is applied independently to
         each generator output. Pass ``None`` to disable generator filtering.
-    raw_annotation_filter : AnnotationFilter, optional
+    raw_annotation_filter : FilterAnnotator, optional
         Sample-level filter applied to each raw annotation tensor. Filtered
         entries are represented by ``NaN``.
     calibrator : Calibrator, optional
         Transformation applied after raw annotation filtering.
-    calibrated_annotation_filter : AnnotationFilter, optional
+    calibrated_annotation_filter : FilterAnnotator, optional
         Sample-level filter applied after optional calibration. If no
         calibrator is configured, it receives the raw-filtered scores.
     aggregator : callable, optional
@@ -87,12 +87,12 @@ class ConceptSupervisionPipeline:
 
     def __init__(
         self,
-        generators: ConceptGenerator | Sequence[ConceptGenerator],
+        generators: Generator | Sequence[Generator],
         annotators: Annotator | Sequence[Annotator],
-        generator_filter: GeneratorFilter | None = DEFAULT_GENERATOR_FILTER,
-        raw_annotation_filter: AnnotationFilter | None = None,
+        generator_filter: FilterGenerator | None = DEFAULT_GENERATOR_FILTER,
+        raw_annotation_filter: FilterAnnotator | None = None,
         calibrator: Calibrator | None = None,
-        calibrated_annotation_filter: AnnotationFilter | None = None,
+        calibrated_annotation_filter: FilterAnnotator | None = None,
         aggregator: Callable[[dict[str, Tensor]], Tensor] | None = None,
         routing: RoutingMode = "merged",
         name: str | None = None,
@@ -102,7 +102,7 @@ class ConceptSupervisionPipeline:
                 "routing must be one of: 'merged', 'cartesian', or 'zip'."
             )
 
-        self.generators = self._as_list(generators, ConceptGenerator, "generators")
+        self.generators = self._as_list(generators, Generator, "generators")
         self.annotators = self._as_list(annotators, Annotator, "annotators")
         if not self.generators:
             raise ValueError("At least one concept generator is required.")
@@ -118,26 +118,26 @@ class ConceptSupervisionPipeline:
             )
         if generator_filter is not None and not isinstance(
             generator_filter,
-            GeneratorFilter,
+            FilterGenerator,
         ):
             raise TypeError(
-                "generator_filter must be a GeneratorFilter or None."
+                "generator_filter must be a FilterGenerator or None."
             )
         if raw_annotation_filter is not None and not isinstance(
             raw_annotation_filter,
-            AnnotationFilter,
+            FilterAnnotator,
         ):
             raise TypeError(
-                "raw_annotation_filter must be an AnnotationFilter or None."
+                "raw_annotation_filter must be a FilterAnnotator or None."
             )
         if calibrator is not None and not isinstance(calibrator, Calibrator):
             raise TypeError("calibrator must be a Calibrator or None.")
         if calibrated_annotation_filter is not None and not isinstance(
             calibrated_annotation_filter,
-            AnnotationFilter,
+            FilterAnnotator,
         ):
             raise TypeError(
-                "calibrated_annotation_filter must be an AnnotationFilter "
+                "calibrated_annotation_filter must be a FilterAnnotator "
                 "or None."
             )
 

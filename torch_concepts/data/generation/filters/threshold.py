@@ -1,10 +1,10 @@
 from torch import Tensor
 
 from torch_concepts import Annotations
-from torch_concepts.data.generation.base.filter_annotator import AnnotationFilter
+from torch_concepts.data.generation.base.filter_annotator import FilterAnnotator
 
 
-class ThresholdAnnotationFilter(AnnotationFilter):
+class ThresholdAnnotationFilter(FilterAnnotator):
     """Filter sample-concept scores below a fixed threshold."""
 
     def __init__(self, threshold: float):

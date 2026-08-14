@@ -3,7 +3,7 @@
 This example uses:
 - LLMConceptGenerator with LiteLLMBackend to produce a concept vocabulary.
 - CLIPAnnotator to produce raw image-concept similarity scores.
-- Calibrator and AnnotationFilter stages to turn similarities into
+- Calibrator and FilterAnnotator stages to turn similarities into
   probabilities and filter uncertain sample-level annotations.
 - ConceptSupervisionPipeline to generate concepts from train and annotate
   both train and validation partitions.
@@ -32,10 +32,10 @@ from torch import nn
 from PIL import Image
 from tqdm import tqdm
 
-from torch_concepts.data.annotators import CLIPAnnotator
-from torch_concepts.data.base import ConceptSupervisionPipeline
+from torch_concepts.data.generation import ConceptSupervisionPipeline
+from torch_concepts.data.generation.annotators import CLIPAnnotator
+from torch_concepts.data.generation.calibrators import SigmoidCalibrator
 from torch_concepts.data.generation.filters import (
-    SigmoidCalibrator,
     ThresholdAnnotationFilter,
 )
 from torch_concepts.data.generation.generators import LiteLLMBackend, LLMConceptGenerator

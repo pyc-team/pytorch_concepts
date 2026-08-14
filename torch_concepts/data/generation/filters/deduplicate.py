@@ -1,8 +1,8 @@
 from torch_concepts import Annotations
-from torch_concepts.data.generation.base.filter_annotator import GeneratorFilter
+from torch_concepts.data.generation.base.filter_generator import FilterGenerator
 
 
-class DeduplicateConcepts(GeneratorFilter):
+class DeduplicateConcepts(FilterGenerator):
     """Remove duplicate generated concept names while preserving order."""
 
     def filter(self, concepts: list[str]) -> list[str]:

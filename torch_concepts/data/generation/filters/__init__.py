@@ -1,10 +1,7 @@
-from .annotation_filters import ThresholdAnnotationFilter
-from ..calibrators.sigmoid import SigmoidCalibrator
-from .generator_filters import DeduplicateConcepts
+from .deduplicate import DeduplicateConcepts
+from .threshold import ThresholdAnnotationFilter
 
 __all__ = [
     "DeduplicateConcepts",
-    "SigmoidCalibrator",
     "ThresholdAnnotationFilter",
 ]
-

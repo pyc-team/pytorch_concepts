@@ -7,7 +7,7 @@ from torch.utils.data import Dataset
 from torch_concepts import Annotations
 from torch_concepts.data.generation.base.generator import (
     LLM,
-    ConceptGenerator,
+    Generator,
     Parser,
     Postprocessor,
     Prompt,
@@ -17,7 +17,7 @@ from torch_concepts.data.generation.base.generator import (
 ConceptSpec = dict[str, Any]
 
 
-class LLMConceptGenerator(ConceptGenerator):
+class LLMConceptGenerator(Generator):
     """Generate concept-axis annotations using an arbitrary LLM or VLM.
 
     Parameters

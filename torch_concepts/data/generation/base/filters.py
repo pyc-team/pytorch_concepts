@@ -19,7 +19,7 @@ class FilterGenerator(ABC):
             isinstance(label, str) for label in filtered_labels
         ):
             raise TypeError(
-                "GeneratorFilter.filter must return a list of strings."
+                "FilterGenerator.filter must return a list of strings."
             )
 
         if Counter(filtered_labels) - Counter(concepts.labels):
