@@ -39,7 +39,7 @@ from torch_concepts.data.generation.filters import (
     ThresholdAnnotationFilter,
 )
 from torch_concepts.data.generation.generators import LiteLLMBackend, LLMConceptGenerator
-from torch_concepts.data import ColorMNISTDataset
+from torch_concepts.data import ColorMNISTDataModule
 
 
 def _image_data_url(image: torch.Tensor) -> str:
@@ -114,14 +114,14 @@ def main():
         temperature=args.llm_temperature,
         timeout=args.llm_timeout,
     )
-    # The generator sees only the training dataset and proposes a shared
-    # concept vocabulary for the downstream annotator.
+    # The generator sees the datamodule's concatenated dataset and proposes a
+    # shared concept vocabulary for the downstream annotator.
     generator = LLMConceptGenerator(
         llm=llm,
         prompt=dataset_aware_prompt,
     )
-    # The annotator scores each image against the generated concept vocabulary.
-    # In this example we ask it to annotate both train and validation splits.
+    # The annotator scores the concatenated dataset once; train and validation
+    # rows are selected from that shared output below.
     annotator = CLIPAnnotator(
         model_name="openai/clip-vit-base-patch32",
         prompt_template="a photo of a {}",
@@ -140,50 +140,43 @@ def main():
         routing="merged",
     )
 
-    # TODO: Use the datamodule to generate and annnotate the datasets (you have the concatenated dataset in the datamodule, so you can use that to generate concepts and annotate both train and validation splits). This implies modifiyng the generate_concepts method in dataset.
-    train_name = "train_CLIPAnnotator"
-    val_name = "val_CLIPAnnotator"
-
-    # Build validation first so the training dataset can ask the pipeline to
-    # annotate it in the same call that generates concepts from train.
-    val_dataset = ColorMNISTDataset(
+    datamodule = ColorMNISTDataModule(
         root="./data",
-        train=False,
         coloring={"red": range(6), "green": range(6, 10)},
-        indices=range(10000),
+        batch_size=128,
+        max_samples=20000,
+        seed=0,
     )
-    train_dataset = ColorMNISTDataset(
-        root="./data",
-        train=True,
-        coloring={"red": range(6), "green": range(6, 10)},
-        indices=range(10000),
-    )
+    datamodule.setup("fit")
+    dataset = datamodule.dataset
+    train_indices = datamodule.trainset.indices
+    val_indices = datamodule.valset.indices
 
     # Save the native task labels before generated concepts are selected as
     # ground truth below. That selection changes ``concept_names`` to the
     # generated vocabulary.
-    train_labels = train_dataset.concepts[
-        :, train_dataset.concept_names.index("parity")
+    parity_index = dataset.concept_names.index("parity")
+    train_labels = dataset.concepts[
+        train_indices,
+        parity_index,
     ].long()
-    val_labels = val_dataset.concepts[
-        :, val_dataset.concept_names.index("parity")
+    val_labels = dataset.concepts[
+        val_indices,
+        parity_index,
     ].long()
 
-    train_dataset.generate_concepts( # TODO: use the datamodule method to call the generate_concepts() on dataset
+    generated_name = "CLIPAnnotator"
+    datamodule.generate_concepts(
         pipeline,
         class_names=["even", "odd"],
-        self_annotation_name="train",
-        datasets_to_annotate={"val": val_dataset},
         use_as_gt=True,
-        generated_gt_name=train_name,
+        generated_gt_name=generated_name,
     )
 
-    train_generated = train_dataset.generated_concepts[train_name]
-    concept_axis = train_generated.annotation
-    train_concepts = train_generated.float()
-    # Validation was annotated in the same pipeline call, but it is not this
-    # dataset's ground truth, so read it from the other generated concept output.
-    val_concepts = train_dataset.generated_concepts[val_name].float()
+    generated = dataset.generated_concepts[generated_name]
+    concept_axis = generated.annotation
+    train_concepts = generated[train_indices].float()
+    val_concepts = generated[val_indices].float()
 
     # These calibrated values are probabilities, so a filtered annotation
     # means that the concept is absent from that sample.
