@@ -4,3 +4,4 @@ dependencies:
   - scipy
   - scikit-learn
   - pandas
+  - pyro-ppl

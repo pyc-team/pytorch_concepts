@@ -43,12 +43,13 @@ TASK = "Attractive"
 N_RUNS = 10  # CAV fits per concept for the significance test
 
 
-def load_embeddings(n_samples=10000):
+def load_embeddings(n_samples=4000):
     """Frozen ResNet18 embeddings + binary attributes for a CelebA subset."""
     dm = CelebADataModule(
         root="./data/celeba",
         concept_subset=CONCEPTS + [TASK],
         max_samples=n_samples,
+        seed=7,
         splitter=None,   # required alongside max_samples (see CelebADataModule docs)
     )
     dm.precompute_embeddings(ImageBackbone("resnet18"), cache=True)

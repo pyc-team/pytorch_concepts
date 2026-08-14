@@ -43,6 +43,8 @@ Evaluation Metrics
    tcav_score
    cace_score
    residual_concept_causal_effect
+   number_of_effective_concepts
+   number_of_contributing_concepts
 
 Calibration and Selection
 -------------------------

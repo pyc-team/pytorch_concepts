@@ -88,7 +88,10 @@ class TestCEMInitialization(unittest.TestCase):
 
         self.assertIsInstance(model.pgm, nn.Module)
         # The exogenous size should be passed to the encoder
-        self.assertTrue(hasattr(model, 'pgm'))
+        emb_vars = [v for name, v in model.pgm.variables.items()
+                    if v.variable_type == 'embedding' and name not in ('input', 'latent')]
+        self.assertTrue(emb_vars)
+        self.assertTrue(all(v.shape[-1] == 32 for v in emb_vars))
 
     def test_init_with_defaults(self):
         """Test initialization without explicit distributions (defaults used)."""
@@ -145,7 +148,8 @@ class TestCEMInitialization(unittest.TestCase):
         self.assertIsInstance(model.inference, DeterministicInference)
 
     def test_init_with_ancestral_sampling_inference(self):
-        """Test initialization with ancestral sampling inference (init-only)."""
+        """Test that a forward pass actually runs under ancestral sampling, not
+        just that the engine is wired in at construction."""
         model = ConceptEmbeddingModel(
             input_size=8,
             annotations=self.ann,
@@ -155,6 +159,13 @@ class TestCEMInitialization(unittest.TestCase):
         model.eval()  # Switch to eval mode to check eval_inference
 
         self.assertIsInstance(model.inference, AncestralSamplingInference)
+
+        x = torch.randn(2, 8)
+        query = ['color', 'shape', 'size', 'task1']
+        out = model(query=query, input=x)
+        for name in query:
+            card = self.ann.cardinalities[self.ann.labels.index(name)]
+            self.assertEqual(_logits(out, query)[name].shape, (2, card))
 
     def test_factory_default_is_pytorch(self):
         """Test that default lightning=False creates pure PyTorch model."""
@@ -319,6 +330,13 @@ class TestCEMExogenousVariables(unittest.TestCase):
                 embedding_size=exogenous_size
             )
 
+            # embedding_size must actually resize every concept-embedding variable.
+            emb_vars = [v for name, v in model.pgm.variables.items()
+                        if v.variable_type == 'embedding' and name not in ('input', 'latent')]
+            self.assertTrue(emb_vars)
+            for v in emb_vars:
+                self.assertEqual(v.shape[-1], exogenous_size)
+
             x = torch.randn(2, 8)
             query = ['c1', 'c2', 'c3']
             out = model(query=query, input=x)
@@ -336,8 +354,14 @@ class TestCEMExogenousVariables(unittest.TestCase):
             embedding_size=16
         )
 
-        # Model should have bipartite structure with exogenous
-        self.assertTrue(model.pgm is not None)
+        # Model should have bipartite structure with exogenous: one embedding
+        # variable per concept plate, each holding (cardinality, embedding_size)
+        # rows, on top of the shared input/latent embeddings.
+        emb_vars = {name: v for name, v in model.pgm.variables.items()
+                    if v.variable_type == 'embedding' and name not in ('input', 'latent')}
+        self.assertEqual(len(emb_vars), 3)  # c1, c2, c3 differ in cardinality -> 3 plates
+        self.assertEqual(sum(v.shape[0] for v in emb_vars.values()), 2 + 3 + 1)
+        self.assertTrue(all(v.shape[-1] == 16 for v in emb_vars.values()))
 
 
 class TestCEMPrepareTarget(unittest.TestCase):
@@ -768,7 +792,8 @@ class TestCEMCardinalities(unittest.TestCase):
         )
 
         # Concept cardinalities should be [2, 3, 1] (excluding tasks)
-        self.assertTrue(model.pgm is not None)
+        self.assertEqual(model.axis_concepts.cardinalities, [2, 3, 1])
+        self.assertEqual(model.axis_concepts.labels, ['c1', 'c2', 'c3'])
 
 
 class TestCEMComparison(unittest.TestCase):
@@ -782,7 +807,9 @@ class TestCEMComparison(unittest.TestCase):
             )
 
     def test_cem_has_exogenous(self):
-        """Test that CEM and CBM produce comparable outputs."""
+        """CEM's graph carries a per-concept embedding variable that CBM's does
+        not, even though both produce same-shaped outputs from the same
+        annotations."""
         from torch_concepts.nn.modules.high.models.cbm import ConceptBottleneckModel
 
         cem = ConceptEmbeddingModel(
@@ -796,6 +823,13 @@ class TestCEMComparison(unittest.TestCase):
             annotations=self.ann,
             task_names=['task']
         )
+
+        # CEM's graph has an "embeddings" variable beyond input/latent; CBM's doesn't.
+        cem_vars = set(cem.pgm.variables)
+        cbm_vars = set(cbm.pgm.variables)
+        self.assertIn('embeddings', cem_vars)
+        self.assertNotIn('embeddings', cbm_vars)
+        self.assertFalse(hasattr(cbm, 'embedding_size'))
 
         # Both should work but have different architectures
         x = torch.randn(2, 8)

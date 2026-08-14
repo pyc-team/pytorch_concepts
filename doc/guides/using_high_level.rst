@@ -102,36 +102,9 @@ Expand each block below for an explanation and an example.
            continuous=torch.nn.MSELoss(),
        )
 
-    **Composing losses.** Pass a list of terms per type and optional per-term weights.
-    Terms are summed with those weights. Here binary concepts are supervised with BCE
-    and additionally regularised with an L1 penalty at weight 0.01:
-
-    .. code-block:: python
-
-       from torch_concepts.nn import ConceptLoss, L1LogitRegularizer
-
-       loss = ConceptLoss(
-           binary=[torch.nn.BCEWithLogitsLoss(), L1LogitRegularizer(scale=1.0)],
-           binary_weights=[1.0, 0.01],
-           categorical=torch.nn.CrossEntropyLoss(),
-           continuous=torch.nn.MSELoss(),
-       )
-
-    **Weighting concepts vs tasks differently.** :class:`~torch_concepts.nn.WeightedConceptLoss`
-    splits the loss into a concept term and a task term, each with its own scalar weight:
-
-    .. code-block:: python
-
-       from torch_concepts.nn import WeightedConceptLoss
-
-       loss = WeightedConceptLoss(
-           concept_weight=0.5,
-           task_weight=1.0,
-           task_names=['cancer'],
-           binary=torch.nn.BCEWithLogitsLoss(),
-           categorical=torch.nn.CrossEntropyLoss(),
-           continuous=torch.nn.MSELoss(),
-       )
+    Terms can also be stacked and weighted per type, extra terms added on top of
+    concept supervision, and custom terms written against the output — see
+    :doc:`Losses <using_loss>` for the full contract.
 
     **Metrics.** :class:`~torch_concepts.nn.ConceptMetrics` follows the same type-aware pattern.
     Each type accepts a ``dict`` of ``name → torchmetrics.Metric`` — any

@@ -347,7 +347,8 @@ class TestWeightedConceptLoss(unittest.TestCase):
         )
         r = repr(loss_fn)
         self.assertIn('WeightedConceptLoss', r)
-        self.assertIn('fn_collection', r)
+        self.assertIn('concepts', r)
+        self.assertIn('tasks', r)
 
     def test_weight_range(self):
         """Test various weight values in valid range [0, 1]."""
@@ -421,7 +422,7 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
             source_weight=1.0, depth_decay=0.5,
             binary=nn.BCEWithLogitsLoss()
         )
-        self.assertEqual(loss_fn._depth_levels, [0, 1, 2])
+        self.assertEqual(loss_fn.depths, [0, 1, 2])
 
     def test_depth_weights(self):
         """Weights follow source_weight * depth_decay ** d."""
@@ -431,7 +432,7 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
             binary=nn.BCEWithLogitsLoss()
         )
         expected = [2.0, 1.0, 0.5]  # 2*0.5^0, 2*0.5^1, 2*0.5^2
-        for actual, exp in zip(loss_fn._depth_weights_list, expected):
+        for actual, exp in zip(loss_fn.weights, expected):
             self.assertAlmostEqual(actual, exp)
 
     # ------------------------------------------------------------------
@@ -595,9 +596,9 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
             binary=nn.BCEWithLogitsLoss()
         )
         # Two depth levels: 0 and 1
-        self.assertEqual(loss_fn._depth_levels, [0, 1])
-        self.assertAlmostEqual(loss_fn._depth_weights_list[0], 1.0)
-        self.assertAlmostEqual(loss_fn._depth_weights_list[1], 0.5)
+        self.assertEqual(loss_fn.depths, [0, 1])
+        self.assertAlmostEqual(loss_fn.weights[0], 1.0)
+        self.assertAlmostEqual(loss_fn.weights[1], 0.5)
 
         preds = torch.randn(8, 3)
         targets = torch.randint(0, 2, (8, 3)).float()
@@ -628,7 +629,7 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
         )
         # C not in graph → depth 0; A depth 0; B depth 1
         # So depth 0 has [A, C], depth 1 has [B]
-        self.assertEqual(loss_fn._depth_levels, [0, 1])
+        self.assertEqual(loss_fn.depths, [0, 1])
 
     # ------------------------------------------------------------------
     # repr
@@ -656,9 +657,10 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
             binary=nn.BCEWithLogitsLoss()
         )
         names = [name for name, _ in loss_fn.named_modules()]
-        self.assertTrue(any('loss_depth_0' in n for n in names))
-        self.assertTrue(any('loss_depth_1' in n for n in names))
-        self.assertTrue(any('loss_depth_2' in n for n in names))
+        self.assertTrue(any('terms.0' in n for n in names))
+        self.assertTrue(any('terms.1' in n for n in names))
+        self.assertTrue(any('terms.2' in n for n in names))
+        self.assertEqual(loss_fn.term_names, ['depth_0', 'depth_1', 'depth_2'])
 
     def test_missing_concepts_creates_new_depth_zero(self):
         """When no graph node overlaps with annotations, missing branch creates depth_0."""
@@ -684,8 +686,8 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
             binary=nn.BCEWithLogitsLoss()
         )
         # Both A, B are missing from graph → assigned to depth 0
-        self.assertIn(0, loss_fn._depth_levels)
-        self.assertTrue(hasattr(loss_fn, 'loss_depth_0'))
+        self.assertIn(0, loss_fn.depths)
+        self.assertEqual(loss_fn.term_names[0], 'depth_0')
         # Forward should work
         preds = torch.randn(4, 2)
         targets = torch.randint(0, 2, (4, 2)).float()
@@ -1025,6 +1027,27 @@ class TestConceptLossKwargsForwarding(unittest.TestCase):
         ))
         self.assertEqual(loss.shape, ())
 
+    def test_terms_receive_plain_tensors(self):
+        """Annotations are stripped before dispatch: they have already aligned
+        predictions to the target, and every torch.* call inside a term would
+        otherwise re-enter AnnotatedTensor.__torch_function__."""
+        seen = {}
+
+        class _Recorder(nn.Module):
+            def forward(self, input, target):
+                seen['input'] = type(input)
+                seen['target'] = type(target)
+                return input.sum() * 0.0
+
+        loss_fn = ConceptLoss(binary=_Recorder())
+        loss_fn(ModelOutput(
+            logits=AnnotatedTensor(torch.randn(4, 2), self.ann, axis=-1),
+            target=AnnotatedTensor(torch.randint(0, 2, (4, 2)).float(),
+                                   self.ann.to_concept_space(), axis=-1),
+        ))
+        self.assertIs(seen['input'], torch.Tensor)
+        self.assertIs(seen['target'], torch.Tensor)
+
     def test_var_kwargs_term_receives_everything(self):
         loss_fn = ConceptLoss(binary=_VarKwargsLoss())
         preds = torch.randn(4, 2)
@@ -1262,7 +1285,9 @@ class TestPrepareCategorical(unittest.TestCase):
             cardinalities=(3, 5),
         )
         ann = axis
-        loss_fn = ConceptLoss(categorical=nn.CrossEntropyLoss())
+        # L1LogitRegularizer declares `padding_mask`, so the mask is built.
+        loss_fn = ConceptLoss(
+            categorical=[nn.CrossEntropyLoss(), L1LogitRegularizer()])
 
         preds = AnnotatedTensor(torch.randn(4, 8), axis, axis=-1)  # 3 + 5
         targets = torch.cat([
@@ -1283,12 +1308,16 @@ class TestPrepareCategorical(unittest.TestCase):
         self.assertTrue((cat_mask[4:, :]).all())  # cat2 has max card, no padding
 
     def test_single_categorical_no_padding(self):
+        """Equal cardinalities mean no padding, so there is no mask to build —
+        even for a term that declares `padding_mask` (it defaults to None and
+        every position is real)."""
         axis = Annotations(
             labels=('cat1',),
             cardinalities=(4,),
         )
         ann = axis
-        loss_fn = ConceptLoss(categorical=nn.CrossEntropyLoss())
+        loss_fn = ConceptLoss(
+            categorical=[nn.CrossEntropyLoss(), L1LogitRegularizer()])
 
         preds = AnnotatedTensor(torch.randn(6, 4), axis, axis=-1)
         targets = torch.randint(0, 4, (6, 1))
@@ -1296,9 +1325,19 @@ class TestPrepareCategorical(unittest.TestCase):
         cat_logits, cat_targets, cat_mask = loss_fn._prepare_categorical(preds, targets)
         self.assertEqual(cat_logits.shape, (6, 4))
         self.assertEqual(cat_targets.shape, (6,))
-        self.assertEqual(cat_mask.shape, (6, 4))
-        # Single concept at max card — no padding, mask all True
-        self.assertTrue(cat_mask.all())
+        self.assertIsNone(cat_mask)
+
+    def test_mask_skipped_when_no_term_declares_it(self):
+        """CrossEntropyLoss has no `padding_mask`, so it is not built — the mask
+        costs an allocation the size of the padded logits on every step."""
+        axis = Annotations(labels=('cat1', 'cat2'), cardinalities=(3, 5))
+        loss_fn = ConceptLoss(categorical=nn.CrossEntropyLoss())
+
+        preds = AnnotatedTensor(torch.randn(4, 8), axis, axis=-1)
+        targets = torch.randint(0, 3, (4, 2))
+
+        _, _, cat_mask = loss_fn._prepare_categorical(preds, targets)
+        self.assertIsNone(cat_mask)
 
 
 if __name__ == '__main__':
@@ -1306,10 +1345,8 @@ if __name__ == '__main__':
 
 
 class TestContinuousQuantityResolution:
-    """`continuous_param` names a single output quantity, exactly like
-    `binary_param` / `categorical_param` — no automatic fallback across
-    quantities. A concept modelled as a `Delta` reports `value`, not the
-    default `loc`, so scoring it requires `continuous_param='value'`."""
+    """With no `continuous_param`, the quantity is taken from what the model
+    reports: `loc` for a Normal, `value` for a Delta. Setting it forces one."""
 
     @staticmethod
     def _output(quantity):
@@ -1324,13 +1361,18 @@ class TestContinuousQuantityResolution:
         loss = ConceptLoss(continuous=torch.nn.MSELoss())(self._output("loc"))
         assert float(loss) == pytest.approx(1.0)
 
-    def test_mismatched_param_silently_contributes_nothing(self):
-        """Matches binary_param/categorical_param: a quantity name that isn't
-        present is skipped, not an error — the loss is 0, not scored."""
+    def test_default_param_scores_value_for_a_delta_modelled_concept(self):
+        """`value` needs no configuration: a Delta's quantity is inferred."""
         loss = ConceptLoss(continuous=torch.nn.MSELoss())(self._output("value"))
-        assert float(loss) == 0.0
+        assert float(loss) == pytest.approx(1.0)
 
-    def test_continuous_param_must_be_set_for_a_delta_modelled_concept(self):
+    def test_configured_param_absent_from_the_output_raises(self):
+        """Scoring nothing is an error, not a silent zero-with-no-gradient."""
+        with pytest.raises(ValueError, match="scored nothing"):
+            ConceptLoss(continuous=torch.nn.MSELoss(),
+                        continuous_param="loc")(self._output("value"))
+
+    def test_continuous_param_can_still_be_set_explicitly(self):
         loss = ConceptLoss(continuous=torch.nn.MSELoss(),
                            continuous_param="value")(self._output("value"))
         assert float(loss) == pytest.approx(1.0)

@@ -81,18 +81,16 @@ class KitchenSinkReg(nn.Module):
 # ======================================================================
 
 class CBMWithExtraOutputs(ConceptBottleneckModel):
-    """Adds ``embeddings`` and ``latent`` to the model output extras."""
+    """Adds ``embeddings`` and ``latent`` to the model output extras via the
+    standard ``default_extra`` hook"""
 
-    def forward(self, *args, **kwargs):
-        out = super().forward(*args, **kwargs)
-        batch_size = out.logits.shape[0]
-        device = out.logits.device
+    def default_extra(self, evidence, query=None):
         # Synthetic extra outputs (in practice these come from the model)
-        out.extra = {
-            'embeddings': torch.randn(batch_size, 16, device=device),
-            'latent': torch.randn(batch_size, 8, device=device),
+        x = evidence['input']
+        return {
+            'embeddings': torch.randn(x.shape[0], 16, device=x.device),
+            'latent': torch.randn(x.shape[0], 8, device=x.device),
         }
-        return out
 
 
 # ======================================================================

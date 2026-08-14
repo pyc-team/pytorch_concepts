@@ -81,6 +81,17 @@ increasing amounts of abstraction, and they build on top of one another.
     :gutter: 2
     :padding: 0
 
+    .. grid-item-card::  :octicon:`flame;1em;sd-text-primary` Losses
+        :link: using_loss
+        :link-type: doc
+        :shadow: lg
+        :class-card: sd-border-primary
+
+        How a model's output reaches a loss term, how to route one objective per
+        concept type, and how to stack and weight extra terms.
+
+        **Best for:** implementing a new model, or designing its objective.
+
     .. grid-item-card::  |conceptarium_logo| Benchmarking at scale
         :link: using_conceptarium
         :link-type: doc
@@ -100,4 +111,5 @@ increasing amounts of abstraction, and they build on top of one another.
    using_low_level
    using_mid_level
    using_high_level
+   using_loss
    using_conceptarium

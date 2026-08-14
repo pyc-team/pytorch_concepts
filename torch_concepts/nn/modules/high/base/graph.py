@@ -30,10 +30,8 @@ import torch.nn as nn
 
 from .....annotations import Annotations
 from .....concept_graph import ConceptGraph
-from ...low.lazy import LazyConstructor
-from ...low.scales import TrilActivation
 from ...low.sequential import Sequential
-from ...mid.distributions import spec_for
+from ...mid.activations import DefaultActivation
 from .model import BaseModel
 
 
@@ -145,21 +143,8 @@ class DirectedGraphModel(GraphModel, ABC):
     #: layer output is fed raw and activated by the distribution downstream.
     param_for_discrete_var: str = "logits"
 
-    def _flexible_parametrization(self, variable, first, second=None):
+    def _flexible_parametrization(self, variable, first, second=None, activate=True):
         """Build a ``ParametricCPD`` parametrization dict from ``variable``'s distribution.
-
-        The dict's keys are the distribution's parameter names — taken from
-        :class:`~torch_concepts.nn.modules.mid.distributions.DistributionSpec` and exposed
-        per-variable as ``variable.param_sizes``:
-
-        * **Discrete** families (Bernoulli / Categorical and their relaxed variants)
-          use a single parameter, ``"probs"`` or ``"logits"`` as set by
-          :attr:`param_for_discrete_var`, parametrized by ``first``.
-        * **Delta** uses the single ``"value"`` parameter, parametrized by ``first``.
-        * **Continuous** families (Normal, MultivariateNormal) need two parameters:
-          the location (``"loc"``) from ``first`` and a scale parameter (``"scale"``
-          or ``"scale_tril"``) built by :meth:`_scale_parametrization` from
-          ``second``, or from a copy of ``first`` when ``second`` is omitted.
 
         Parameters
         ----------
@@ -167,97 +152,73 @@ class DirectedGraphModel(GraphModel, ABC):
             The child variable whose CPD parametrization is being built.
         first : nn.Module
             Layer producing the primary parameter (logits / probs / value / loc).
-        second : nn.Module or ``'auto'``, optional
-            The continuous variable's raw scale head: a layer (including an unbuilt
-            :class:`~torch_concepts.nn.LazyConstructor`, sized by the CPD from the
-            parents just like ``first``), or ``'auto'`` to use an independent copy
-            of ``first``. Unused for discrete / Delta variables, so a caller whose
-            variables may be of any type can pass ``'auto'`` unconditionally.
+        second : nn.Module or ``'copy'``, optional
+            The continuous variable's scale head: a layer, an unbuilt
+            :class:`~torch_concepts.nn.LazyConstructor` sized by the CPD from the
+            parents just like ``first``, or ``'copy'`` for a deep copy of
+            ``first``. Ignored for discrete / Delta variables.
+        activate : bool, default True
+            Compose each head with the activation landing its output in its own
+            parameter's domain (:meth:`_activate`) — so the heads are passed
+            **raw**. Set ``False`` when a head already emits a valid parameter,
+            which would otherwise be activated twice (``sigmoid(sigmoid(x))``).
 
         Raises
         ------
         ValueError
             If the variable's distribution is unsupported, or a continuous
-            variable's scale head cannot be derived from ``first`` and no
-            ``second`` was given.
+            variable is given no ``second``.
         """
         param_sizes = variable.param_sizes  # {param_name: output_size}, from the DistributionSpec
         names = set(param_sizes)
 
         if names == {"value"}:
-            return {"value": first}
+            return {"value": self._activate(variable, "value", first, activate)}
         if names == {"probs", "logits"}:
-            return {self.param_for_discrete_var: first}
+            param = self.param_for_discrete_var
+            return {param: self._activate(variable, param, first, activate)}
         if "loc" in names:
             # Normal, MultivariateNormal, etc., with a location and a scale parameter
             scale_param = (names - {"loc"}).pop() # either ``scale`` or ``scale_tril``
+            if second == "copy":
+                # Same width as `loc` for every family a model declares, so a copy
+                # fits. A MultivariateNormal's wider `scale_tril` needs its own head.
+                second = copy.deepcopy(first)
+            if second is None:
+                raise ValueError(
+                    f"_flexible_parametrization: {variable.name!r} "
+                    f"({variable.distribution.__name__}) needs a {scale_param!r} head "
+                    f"of {param_sizes[scale_param]} outputs. Pass `second` — a raw "
+                    "layer, a LazyConstructor for it, or 'copy' to copy `first`. "
+                    "Anything it shares with `first` belongs in the CPD's `trunk`, "
+                    "which runs once for both."
+                )
             return {
-                "loc": first,
-                scale_param: self._scale_parametrization(
-                    variable, scale_param, first, second
-                ),
+                "loc": self._activate(variable, "loc", first, activate),
+                scale_param: self._activate(variable, scale_param, second, activate),
             }
         raise ValueError(
             f"_flexible_parametrization: unsupported distribution "
             f"{variable.distribution.__name__} for variable {variable.name!r}."
         )
 
-    def _scale_parametrization(self, variable, scale_param, first, second):
-        """Build the module producing a continuous variable's scale parameter.
+    def _activate(self, variable, param, head, activate=True) -> nn.Module:
+        """Compose ``head`` with :class:`~torch_concepts.nn.DefaultActivation` for ``param``.
 
-        A CPD applies no activation, so the result is a raw head followed by the
-        activation that makes its output valid (see :meth:`_scale_activation`).
+        A no-op when ``activate`` is False, or when ``param`` is unconstrained
+        (``logits``, ``loc``, a Delta's ``value``) — ``head`` is then returned
+        untouched rather than wrapped in a ``Sequential`` that computes nothing.
 
-        The raw head comes from ``second``, one of:
-
-        * a :class:`~torch_concepts.nn.LazyConstructor` — sized from this CPD's
-          parents and this parameter's width when the CPD builds it, exactly like
-          ``first`` (see :meth:`ParametricCPD._instantiate_lazy`);
-        * a concrete layer — used as is;
-        * ``'auto'`` — a copy of ``first``. Copying needs ``first`` to already emit
-          the right number of values, so ``'auto'`` is rejected for a deferred
-          ``first`` (no fixed width yet) and for a family that is not
-          one-scalar-per-element (``scale_tril`` needs ``size * (size + 1) // 2``
-          outputs, not ``size``); pass a ``LazyConstructor`` in those cases.
+        ``head`` may be an unbuilt :class:`~torch_concepts.nn.LazyConstructor`,
+        sized by the CPD once the parents are known (see
+        :meth:`ParametricCPD._instantiate_lazy`).
         """
-        spec = spec_for(variable.distribution)
-        scale_size = variable.param_sizes[scale_param]
-
-        if second == "auto":
-            deferred = isinstance(first, LazyConstructor) and first.module is None
-            if deferred or not spec.is_per_element:
-                why = ("is a LazyConstructor with no fixed output size until the "
-                       "CPD builds it" if deferred else f"emits {variable.size}")
-                raise ValueError(
-                    f"_flexible_parametrization: {variable.name!r} "
-                    f"({variable.distribution.__name__}) cannot copy `first` into a "
-                    f"{scale_param!r} head of {scale_size} outputs: it {why}. Pass "
-                    "`second` — that layer, or a LazyConstructor for it."
-                )
-            head = copy.deepcopy(first)
-        elif second is None:
-            raise ValueError(
-                f"_flexible_parametrization: {variable.name!r} "
-                f"({variable.distribution.__name__}) needs a {scale_param!r} head of "
-                f"{scale_size} outputs. Pass `second` — a layer, a LazyConstructor "
-                "for it, or 'auto' to copy `first`."
-            )
-        else:
-            # A LazyConstructor (built later, from the parents) or a concrete layer.
-            head = second
-
-        return Sequential(head, self._scale_activation(variable))
-
-    def _scale_activation(self, variable) -> nn.Module:
-        """The activation mapping a raw head's output into the scale's domain.
-
-        ``softplus`` for a per-element ``scale`` (a ``Normal``), the Cholesky
-        assembly for a matrix-valued ``scale_tril`` (a ``MultivariateNormal``).
-        Override to use a different one, e.g. an exponential.
-        """
-        if spec_for(variable.distribution).is_per_element:
-            return nn.Softplus()
-        return TrilActivation(variable.size)
+        if not activate:
+            return head
+        activation = DefaultActivation(variable, param)
+        if isinstance(activation.activation, nn.Identity):
+            return head
+        return Sequential(head, activation)
 
     @staticmethod
     def plate_compatible_levels(

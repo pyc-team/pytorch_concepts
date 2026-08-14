@@ -23,8 +23,9 @@ from .modules.low.sequential import Sequential
 # Priors (root-CPD parametrizations)
 from .modules.low.priors import LearnablePrior, FixedPrior, TiedPrior
 
-# Scale activation (continuous-CPD parametrizations)
-from .modules.low.scales import TrilActivation
+# Activations (raw layer output -> distribution-parameter domain)
+from .modules.low.scales import TrilActivation, GlobalScale
+from .modules.mid.activations import DefaultActivation
 
 # Encoders
 from .modules.low.encoders.linear import LinearEmbeddingToConcept
@@ -35,18 +36,19 @@ from .modules.low.encoders.cav import CAVEmbeddingToConcept
 from .modules.low.predictors.call import CallableConceptToConcept
 from .modules.low.predictors.hypernet import HyperlinearConceptEmbeddingToConcept
 from .modules.low.predictors.linear import LinearConceptToConcept
-from .modules.low.predictors.mix import MixConceptEmbeddingToConcept
+from .modules.low.predictors.mix import MixConceptEmbeddingToConcept, \
+    MixConceptEmbeddings
 
 # Dense layers
-from .modules.low.dense_layers import Dense, ResidualMLP, MLP, LinearEmbeddingEncoder, SelectorEmbeddingEncoder
+from .modules.low.dense_layers import Dense, ResidualMLP, MLP, LinearEmbeddingEncoder, MLPEmbeddingEncoder, SelectorEmbeddingEncoder
 from .modules.low.sequential import Sequential
 
 # Graph learner
 from .modules.low.graph.wanda import WANDAGraphLearner
 
 # Loss functions
-from .modules.loss import ConceptLoss, WeightedConceptLoss, DepthWeightedConceptLoss, \
-    L1LogitRegularizer
+from .modules.loss import PyCLoss, ConceptLoss, ConceptSubset, WeightedConceptLoss, \
+    DepthWeightedConceptLoss, L1LogitRegularizer, CompositeLoss, NLLProbLoss
 
 # Metrics
 from .modules.metrics import ConceptMetrics, compute_cace
@@ -127,8 +129,10 @@ __all__ = [
     "FixedPrior",
     "TiedPrior",
 
-    # Scale activation
+    # Activations
     "TrilActivation",
+    "GlobalScale",
+    "DefaultActivation",
 
     # Encoder classes
     "LinearEmbeddingToConcept",
@@ -141,6 +145,7 @@ __all__ = [
     "CallableConceptToConcept",
     "HyperlinearConceptEmbeddingToConcept",
     "MixConceptEmbeddingToConcept",
+    "MixConceptEmbeddings",
 
     # Dense layers
     "Dense",
@@ -148,16 +153,21 @@ __all__ = [
     "MLP",
     "Sequential",
     "LinearEmbeddingEncoder",
+    "MLPEmbeddingEncoder",
     "SelectorEmbeddingEncoder",
 
     # COSMO
     "WANDAGraphLearner",
 
     # Loss functions
+    "PyCLoss",
+    "CompositeLoss",
     "ConceptLoss",
+    "ConceptSubset",
     "WeightedConceptLoss",
     "DepthWeightedConceptLoss",
     "L1LogitRegularizer",
+    "NLLProbLoss",
 
     # Metrics
     "ConceptMetrics",

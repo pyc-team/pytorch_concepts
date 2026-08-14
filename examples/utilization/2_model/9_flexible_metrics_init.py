@@ -16,7 +16,6 @@ import torch
 from torch_concepts import Annotations
 from torch_concepts.tensor import AnnotatedTensor
 from torch_concepts.nn.modules.metrics import ConceptMetrics
-from torch_concepts.nn.modules.utils import GroupConfig
 from torch.distributions import Bernoulli, Categorical
 import torchmetrics
 

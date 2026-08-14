@@ -6,8 +6,8 @@ from torchmetrics import Metric, MetricCollection
 from copy import deepcopy
 
 from ...annotations import Annotations
-from .outputs import CONTINUOUS_QUANTITIES, ModelOutput
-from .utils import GroupConfig, check_collection
+from .outputs import CONTINUOUS_QUANTITIES, ModelOutput, supervised_subset
+from .utils import by_type, check_collection
 
 
 def clone_metric(metric):
@@ -84,7 +84,7 @@ class ConceptMetrics(nn.Module):
         self.groups = annotations.type_groups
 
         # Validate and filter metrics configuration
-        fn_collection = GroupConfig(binary=binary, categorical=categorical, continuous=continuous)
+        fn_collection = by_type(binary, categorical, continuous)
         self.fn_collection = check_collection(annotations, fn_collection, 'metrics')
 
         # Pre-compute max cardinality for categorical concepts
@@ -308,7 +308,12 @@ class ConceptMetrics(nn.Module):
         # served its purpose (concept ordering), and every torch.* op below on an
         # AnnotatedTensor would otherwise re-enter its __torch_function__ hook.
         cards = list(cat_logits.annotation.cardinalities)
-        split_tuple = torch.split(cat_logits.tensor, cards, dim=1)
+        # Unwrap to plain tensors and fold any leading (batch-like) dimensions
+        # into one batch axis, so the layout below is always (batch, width).
+        # Both are flattened the same way, so their rows stay aligned.
+        cat_logits = getattr(cat_logits, "tensor", cat_logits).reshape(-1, cat_logits.shape[-1])
+        cat_target = getattr(cat_target, "tensor", cat_target).reshape(-1, cat_target.shape[-1])
+        split_tuple = torch.split(cat_logits, cards, dim=1)
         padded_logits = [
             nn.functional.pad(
                 logits,
@@ -317,7 +322,7 @@ class ConceptMetrics(nn.Module):
             ) for logits in split_tuple
         ]
         cat_pred = torch.cat(padded_logits, dim=0)
-        cat_target = cat_target.tensor.T.reshape(-1).long()
+        cat_target = cat_target.T.reshape(-1).long()
         return cat_pred, cat_target
 
     def update(self, preds, target: torch.Tensor = None):
@@ -351,8 +356,13 @@ class ConceptMetrics(nn.Module):
         any_pred = discrete if discrete is not None else continuous
         if any_pred is None or any_pred.shape[0] == 0:
             return
-        binary = discrete.binary() if discrete is not None else None
-        categorical = discrete.categorical() if discrete is not None else None
+        # Variables the target provides no truth for (a generative model's
+        # reconstructed observation, say) are dropped rather than looked up.
+        binary = supervised_subset(
+            discrete.binary() if discrete is not None else None, target)
+        categorical = supervised_subset(
+            discrete.categorical() if discrete is not None else None, target)
+        continuous = supervised_subset(continuous, target)
 
         # Summary metrics — one MetricCollection.update() per type, each scored on
         # the quantity it reports and aligned to the target by concept name.
@@ -380,7 +390,11 @@ class ConceptMetrics(nn.Module):
             if c_type == 'binary':
                 collection.update(c_pred, c_target.float())
             elif c_type == 'categorical':
-                collection.update(c_pred, c_target.reshape(-1).long())
+                # torchmetrics wants (N, C); fold any leading dims into N.
+                collection.update(
+                    c_pred.reshape(-1, c_pred.shape[-1]),
+                    c_target.reshape(-1).long(),
+                )
             else:  # continuous
                 collection.update(c_pred, c_target)
 
@@ -448,54 +462,8 @@ def compute_cace(
         ...     source_concept="c1",
         ...     target_concept="task",
         ... )
+
+    Raises:
+        NotImplementedError: Always — this function is not implemented yet.
     """
-    from ..modules.low.inference.intervention import DoIntervention, intervention
-    from ..modules.low.policy.uniform import UniformPolicy
-    from ...nn.functional import cace_score
-
-    cpds = model.model.probabilistic_model.parametric_cpds
-    was_training = model.training
-    model.eval()
-
-    if not any(True for _ in dataloader):
-        if was_training:
-            model.train()
-        raise ValueError("Dataloader yielded no batches.")
-
-    # Convert probabilities → logits (the intervention operates in logit space)
-    eps = 1e-6
-    if not torch.is_tensor(prob_high):
-        prob_high = torch.tensor(prob_high)
-    if not torch.is_tensor(prob_low):
-        prob_low = torch.tensor(prob_low)
-    logit_high = torch.logit(prob_high.float(), eps=eps)
-    logit_low = torch.logit(prob_low.float(), eps=eps)
-
-    strategy_high = DoIntervention(model=cpds, constants=logit_high)
-    strategy_low = DoIntervention(model=cpds, constants=logit_low)
-
-    all_high, all_low = [], []
-    for batch in dataloader:
-        x = batch["inputs"]["x"]
-
-        with intervention(
-            policies=UniformPolicy(out_concepts=1),
-            strategies=strategy_high,
-            target_concepts=[source_concept],
-        ):
-            out_high = model(x=x, query=[target_concept])
-
-        with intervention(
-            policies=UniformPolicy(out_concepts=1),
-            strategies=strategy_low,
-            target_concepts=[source_concept],
-        ):
-            out_low = model(x=x, query=[target_concept])
-
-        all_high.append(out_high.probs)
-        all_low.append(out_low.probs)
-
-    if was_training:
-        model.train()
-
-    return cace_score(torch.cat(all_low), torch.cat(all_high)).squeeze()
+    raise NotImplementedError("compute_cace is not implemented.")

@@ -21,6 +21,12 @@ _PYC_PARAM_SETS = [
     {'concepts', 'embeddings'},
 ]
 
+#: Key the shared trunk is registered under in the signature/aggregator maps, so
+#: it reuses the same PyC-vs-standard resolution as the parameter modules. Not a
+#: distribution parameter name — the leading underscores keep it out of any
+#: family's namespace.
+_TRUNK_KEY = "__trunk__"
+
 
 def _cat_parents(inputs: Dict[str, torch.Tensor]) -> torch.Tensor:
     """Concatenate parent values along the last dim, preserving their shape.
@@ -108,13 +114,24 @@ class ParametricFactor(nn.Module, ABC):
         'embeddings': ...}`` dict the module expects; for a **standard** module
         it receives the single ``agg(inputs)`` dict and returns one concatenated
         tensor. See :meth:`_resolve_aggregator`.
+    trunk : nn.Module, optional
+        A feature extractor **shared by every parameter module**. When given,
+        the inputs are aggregated once and passed through ``trunk``, and each
+        entry of ``parametrization`` maps the trunk's output to its parameter.
+
+        The trunk's own aggregation is resolved from its ``forward`` signature
+        by the same PyC-vs-standard rule as a parameter module. A single
+        callable ``aggregate`` applies to it as usual; a **dict** ``aggregate``
+        must key it under ``'__trunk__'``, since the parameter modules no longer
+        aggregate anything themselves.
 
     Raises
     ------
     TypeError
         If a subclass reaches ``super().__init__`` without having set
-        ``self.inputs``, or if ``aggregate`` is neither ``None``, a callable,
-        nor a dict whose values are all callables.
+        ``self.inputs``, if ``aggregate`` is neither ``None``, a callable,
+        nor a dict whose values are all callables, or if ``trunk`` is not an
+        ``nn.Module``.
     """
 
     # Ordered aggregation inputs, set by every concrete subclass before
@@ -130,6 +147,7 @@ class ParametricFactor(nn.Module, ABC):
                 Dict[str, Callable],
             ]
         ] = None,
+        trunk: Optional[nn.Module] = None,
     ):
         super().__init__()
 
@@ -139,21 +157,34 @@ class ParametricFactor(nn.Module, ABC):
                 "ordered aggregation inputs) before calling super().__init__()."
             )
 
+        if trunk is not None and not isinstance(trunk, nn.Module):
+            raise TypeError(
+                f"{type(self).__name__}: `trunk` must be an nn.Module, "
+                f"got {type(trunk).__name__}."
+            )
+
         parametrization = self._initialize_parametrization(parametrization)
 
         # Cache each module's forward parameter names once at construction time.
+        # The trunk joins the same map under ``_TRUNK_KEY`` so it reuses the
+        # PyC-vs-standard aggregation resolution unchanged.
         self._module_signatures: Dict[str, Set[str]] = {
             pname: _module_input_names(mod)
             for pname, mod in parametrization.items()
         }
+        if trunk is not None:
+            self._module_signatures[_TRUNK_KEY] = _module_input_names(trunk)
 
         # Normalise the user input to one entry per parameter (``None`` = use
         # the auto-selected default), then adapt each to the uniform
         # ``inputs -> result`` call site used by the CPD's forward.
+        # With a trunk, aggregation happens once (for the trunk) instead of once
+        # per parameter, so only the trunk's key needs an aggregator.
+        keys = [_TRUNK_KEY] if trunk is not None else list(parametrization)
         if aggregate is None:
-            per_param: Dict[str, Optional[Callable]] = {pname: None for pname in parametrization}
+            per_param: Dict[str, Optional[Callable]] = {k: None for k in keys}
         elif callable(aggregate):
-            per_param = {pname: aggregate for pname in parametrization}
+            per_param = {k: aggregate for k in keys}
         elif isinstance(aggregate, dict):
             bad = [k for k, v in aggregate.items() if not callable(v)]
             if bad:
@@ -161,7 +192,7 @@ class ParametricFactor(nn.Module, ABC):
                     f"ParametricFactor: aggregate dict contains non-callable "
                     f"values for keys {bad}."
                 )
-            per_param = {pname: aggregate.get(pname) for pname in parametrization}
+            per_param = {k: aggregate.get(k) for k in keys}
         else:
             raise TypeError(
                 "ParametricFactor: `aggregate` must be None, a callable, or a "
@@ -172,6 +203,7 @@ class ParametricFactor(nn.Module, ABC):
         }
 
         self.parametrization = parametrization
+        self.trunk = trunk
 
     def _initialize_parametrization(
         self,

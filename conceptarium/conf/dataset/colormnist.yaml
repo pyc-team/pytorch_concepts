@@ -1,0 +1,21 @@
+# =============================================================
+# Colored MNIST: 3x28x28 RGB digits, concepts {parity, color, digit}.
+# =============================================================
+defaults:
+  - _commons
+  - _self_
+
+name: colormnist
+
+datamodule:
+  _target_: torch_concepts.data.datamodules.colormnist.ColorMNISTDataModule
+  colors: ['red', 'green']
+  coloring: 'random'
+  concept_subset: [color, digit]
+
+default_task_names: [digit]
+
+backbone:
+  _target_: torch_concepts.backbone.ImageBackbone
+  name: resnet18
+  freeze: False

@@ -106,7 +106,7 @@ def main():
         factors=[input_cpd, backbone_cpd, *emb_cpd, c1_encoder, c2_encoder, y_predictor],
     )
 
-    inference_engine = DeterministicInference(concept_model, activate_before_propagation=True)
+    inference_engine = DeterministicInference(concept_model)
     evidence = {'input': x_train}
     query_concepts = {"c1": c_train[:, 0], "c2": c_train[:, 1], "xor": y_train}
 

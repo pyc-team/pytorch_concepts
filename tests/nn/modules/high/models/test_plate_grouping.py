@@ -124,7 +124,10 @@ def test_concept_grouping_counts(case, plate):
 @pytest.mark.parametrize('plate', [None, True, False])
 def test_embeddings_align_with_concepts(case, plate):
     """CEM concept embeddings are grouped identically to the concepts and sized
-    (n_states, embedding_size) per group."""
+    (n_states, embedding_size) per group, with one state-embedding row per
+    member regardless of cardinality: MixConceptEmbeddingToConcept derives a
+    binary concept's negative context w- from its single row's w+ (see
+    BaseModel.build_concept_embedding_variables)."""
     ann_fn, task_names = CASES[case]
     ann = ann_fn()
     m = _make('cem', ann, task_names, plate)
@@ -135,7 +138,7 @@ def test_embeddings_align_with_concepts(case, plate):
 
     assert len(evars) == len(cvars)              # aligned 1:1
     for c, e in zip(cvars, evars):
-        assert tuple(e.shape) == (c.size, EMB)   # rows == concept states, width == emb
+        assert tuple(e.shape) == (len(c.members) * c.member_size, EMB)
 
 
 # ===========================================================================

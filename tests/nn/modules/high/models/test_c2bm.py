@@ -145,16 +145,41 @@ class TestC2BMInitialization:
             embedding_size=32,
             hypernet_hidden_size=32,
         )
-        assert model is not None
+        assert model.embedding_size == 32
+        assert model.hypernet_hidden_size == 32
+        # 'B' is an internal node: its predictor is a hypernetwork sized by both.
+        predictor = model.pgm.factors['B'].parametrization['logits']
+        assert predictor.hidden_size == 32
+        assert predictor.hypernet.mlp[0].affinity.in_features == 32  # in_embeddings
+        assert predictor.hypernet.mlp[0].affinity.out_features == 32  # hidden_size
 
     def test_hypernet_use_bias(self, chain_graph, binary_chain_ann):
+        """`hypernet_use_bias=True` samples a fresh stochastic bias every
+        forward call, so identical inputs yield different internal-node
+        logits; `False` (the default) must stay perfectly deterministic."""
+        x = torch.randn(4, 8)
+
         model = CausallyReliableConceptBottleneckModel(
             input_size=8,
             annotations=binary_chain_ann,
             graph=chain_graph,
             hypernet_use_bias=True,
         )
-        assert model is not None
+        model.eval()
+        out1 = model(query=['B', 'C'], input=x)
+        out2 = model(query=['B', 'C'], input=x)
+        assert not torch.allclose(out1.logits['B'], out2.logits['B'])
+
+        model_no_bias = CausallyReliableConceptBottleneckModel(
+            input_size=8,
+            annotations=binary_chain_ann,
+            graph=chain_graph,
+            hypernet_use_bias=False,
+        )
+        model_no_bias.eval()
+        out3 = model_no_bias(query=['B', 'C'], input=x)
+        out4 = model_no_bias(query=['B', 'C'], input=x)
+        assert torch.allclose(out3.logits['B'], out4.logits['B'])
 
     def test_with_mlp_backbone(self, chain_graph, binary_chain_ann):
         """Custom backbone needs an explicit latent_size."""
@@ -168,6 +193,8 @@ class TestC2BMInitialization:
         assert model.latent_size == 16
 
     def test_with_backbone(self, chain_graph, binary_chain_ann):
+        """The custom backbone must be the one actually stored and run, not
+        silently replaced by the default `nn.Identity`."""
         backbone = DummyBackbone(out_features=8)
         model = CausallyReliableConceptBottleneckModel(
             input_size=8,
@@ -176,7 +203,13 @@ class TestC2BMInitialization:
             backbone=backbone,
             latent_size=8,
         )
-        assert model.backbone is not None
+        assert model.backbone is backbone
+
+        calls = []
+        backbone.linear.register_forward_hook(lambda mod, inp, out: calls.append(out))
+        model.eval()
+        model(query=['A'], input=torch.randn(2, 8))
+        assert len(calls) == 1
 
     def test_with_defaults(self, chain_graph):
         """Annotations without distributions — base-family defaults should be used."""
@@ -194,12 +227,21 @@ class TestC2BMInitialization:
         assert model.variable_distributions['binary'] == Bernoulli
 
     def test_diamond_graph_init(self, diamond_graph, binary_diamond_ann):
+        """D has two parents (B, C): its hypernetwork predictor must be sized
+        for both parents' concatenated cardinality, and a forward pass must
+        reach every node at the right shape."""
         model = CausallyReliableConceptBottleneckModel(
             input_size=8,
             annotations=binary_diamond_ann,
             graph=diamond_graph,
         )
-        assert model is not None
+        d_predictor = model.pgm.factors['D'].parametrization['logits']
+        assert d_predictor.in_concepts == 2  # cardinality(B) + cardinality(C)
+
+        model.eval()
+        out = model(query=['A', 'B', 'C', 'D'], input=torch.randn(3, 8))
+        for name in ('A', 'B', 'C', 'D'):
+            assert out.logits[name].shape == (3, 1)
 
     def test_independent_train_inference(self, chain_graph, binary_chain_ann):
         """IndependentInference is a subclass of DeterministicInference — allowed as train_inference."""
@@ -429,20 +471,38 @@ class TestC2BMGradients:
         assert (x.grad != 0).any()
 
     def test_detach_blocks_cross_level_gradients(self, chain_graph, binary_chain_ann):
-        """Teacher-forcing (p_int) still lets gradients reach the input."""
-        model = CausallyReliableConceptBottleneckModel(
-            input_size=8,
-            annotations=binary_chain_ann,
-            graph=chain_graph,
-            inference_kwargs={'p_int': 1.0},
-            train_inference_kwargs={'p_int': 1.0},
-        )
-        x = torch.randn(4, 8, requires_grad=True)
-        query = ['A', 'B', 'C']
-        out = model(query=query, input=x)
-        _logits(out, query).sum().backward()
-        # Gradients should still flow to x (through at least root A)
-        assert x.grad is not None
+        """At ``p_int=1.0`` the chain A->B->C feeds C's predictor B's *forced*
+        ground truth, not B's own prediction — so C's loss must NOT backprop
+        into B's predictor (cross-level gradient is detached). At
+        ``p_int=0.0`` nothing is forced, so that same gradient path is
+        live. A bare-list query (no ground truth) can't distinguish these:
+        forcing needs an actual value to force to, from
+        ``model.fully_observed_query``.
+        """
+        def b_predictor_grad_norm(p_int):
+            torch.manual_seed(0)
+            model = CausallyReliableConceptBottleneckModel(
+                input_size=8,
+                annotations=binary_chain_ann,
+                graph=chain_graph,
+                inference_kwargs={'p_int': p_int},
+                train_inference_kwargs={'p_int': p_int},
+            )
+            model.train()
+            x = torch.randn(4, 8, requires_grad=True)
+            ground_truth = torch.randint(0, 2, (4, 3)).float()
+            query = model.fully_observed_query(ground_truth)
+            out = model(query=query, input=x)
+            out.logits['C'].sum().backward()
+            assert x.grad is not None and (x.grad != 0).any()
+
+            b_predictor = model.pgm.factors['B'].parametrization['logits']
+            grads = [p.grad for p in b_predictor.parameters()]
+            assert all(g is not None for g in grads)
+            return sum(g.abs().sum().item() for g in grads)
+
+        assert b_predictor_grad_norm(p_int=1.0) == 0.0
+        assert b_predictor_grad_norm(p_int=0.0) > 0.0
 
 
 # ===========================================================================
@@ -534,11 +594,13 @@ class TestC2BMAncestralSamplingInference:
         )
         assert isinstance(model.eval_inference, DeterministicInference)
         assert isinstance(model.train_inference, AncestralSamplingInference)
+        model.train()  # dispatches to train_inference (ancestral sampling)
         x = torch.randn(4, 8)
         names = binary_chain_ann.labels
         out = model(query=list(names), input=x)
-        assert out.params
         assert 'logits' in out.params
+        for name in names:
+            assert out.logits[name].shape == (4, 1)
 
 
 # ===========================================================================

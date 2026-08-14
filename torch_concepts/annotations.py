@@ -839,6 +839,7 @@ class Annotations:
         result = Annotations(
             labels=labels, states=new_states, cardinalities=None,
             types=new_types,
+            concept_space=self.concept_space,
         )
         # Left wins on a clash.
         result._carry_groups(other.groups)
