@@ -129,10 +129,9 @@ def main():
         for batch in loader:
             x = batch["inputs"]["x"].flatten(1)
             c = batch["concepts"]["c"]
+            # ReconstructionLoss scores the observed image; the model's
+            # `default_extra` publishes it to `out.extra` on every forward call.
             out = model(query=query, input=x)
-            # ReconstructionLoss scores the observed image, which the learner
-            # normally publishes here; outside Lightning we pass it ourselves.
-            out.extra = {"evidence": {"input": x}}
 
             # `breakdown` is `loss_fn(out, c)` with the addends kept apart, so the
             # per-term values can be tracked — an ELBO whose KL has collapsed

@@ -310,7 +310,7 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
             **self.fully_observed_query(c),
         }
 
-    def default_extra(self, evidence):
+    def default_extra(self, evidence, query=None):
         """Publish the evidence so :class:`~torch_concepts.nn.ReconstructionLoss`
         can score the observed variable (e.g. ``input``) against it."""
         return {"evidence": evidence}
