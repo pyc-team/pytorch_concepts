@@ -1,8 +1,8 @@
 from abc import ABC, abstractmethod
 from collections import Counter
-from torch import Tensor
 
 from torch_concepts import Annotations
+from torch_concepts.tensor import AnnotatedTensor
 
 
 class FilterGenerator(ABC):
@@ -39,5 +39,5 @@ class FilterAnnotator(ABC):
     """
 
     @abstractmethod
-    def filter(self, scores: Tensor, concepts: Annotations) -> Tensor:
-        """Return scores with selected sample-concept entries filtered out."""
+    def filter(self, scores: AnnotatedTensor) -> AnnotatedTensor:
+        """Return scores with selected entries filtered out, preserving metadata."""

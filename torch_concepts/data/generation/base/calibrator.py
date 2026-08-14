@@ -1,13 +1,11 @@
 from abc import ABC, abstractmethod
 
-from torch import Tensor
-
-from torch_concepts import Annotations
+from torch_concepts.tensor import AnnotatedTensor
 
 
 class Calibrator(ABC):
     """Change the semantics of raw annotation scores."""
 
     @abstractmethod
-    def calibrate(self, scores: Tensor, concepts: Annotations) -> Tensor:
-        """Return calibrated scores with the same shape as the input."""
+    def calibrate(self, scores: AnnotatedTensor) -> AnnotatedTensor:
+        """Return calibrated scores with the same shape and annotation."""

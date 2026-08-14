@@ -1,8 +1,5 @@
-import torch
-from torch import Tensor
-
-from torch_concepts import Annotations
 from torch_concepts.data.generation.base.calibrator import Calibrator
+from torch_concepts.tensor import AnnotatedTensor
 
 
 class SigmoidCalibrator(Calibrator):
@@ -12,7 +9,5 @@ class SigmoidCalibrator(Calibrator):
         self.scale = scale
         self.bias = bias
 
-    def calibrate(self, scores: Tensor, concepts: Annotations) -> Tensor:
-        del concepts
-        return torch.sigmoid(scores * self.scale + self.bias)
-
+    def calibrate(self, scores: AnnotatedTensor) -> AnnotatedTensor:
+        return (scores * self.scale + self.bias).sigmoid()

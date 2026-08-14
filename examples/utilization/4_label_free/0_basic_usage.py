@@ -178,11 +178,12 @@ def main():
         generated_gt_name=train_name,
     )
 
-    concept_axis = train_dataset.generated_concepts[train_name]
-    train_concepts = train_dataset.generated_annotations[train_name].float()
+    train_generated = train_dataset.generated_concepts[train_name]
+    concept_axis = train_generated.annotation
+    train_concepts = train_generated.float()
     # Validation was annotated in the same pipeline call, but it is not this
-    # dataset's ground truth, so read it from the generated annotation outputs.
-    val_concepts = train_dataset.generated_annotations[val_name].float()
+    # dataset's ground truth, so read it from the other generated concept output.
+    val_concepts = train_dataset.generated_concepts[val_name].float()
 
     # These calibrated values are probabilities, so a filtered annotation
     # means that the concept is absent from that sample.

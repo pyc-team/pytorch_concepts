@@ -29,8 +29,6 @@ from ..generation.base.pipeline import ConceptSupervisionPipeline
 
 logger = logging.getLogger(__name__)
 
-# TODO: generated_concepts becomes generated_annotations, and generated_annotations becomes generated_concepts. Also, modify the __getitem__ to use AnnotatedTensor.
-
 class ConceptDataset(Dataset):
     """
     Base class for concept-annotated datasets.
@@ -43,14 +41,12 @@ class ConceptDataset(Dataset):
         name (str): Name of the dataset.
         precision (int or str): Numerical precision for tensors (16, 32, or 64).
         input_data (Tensor): Input features/images.
-        concepts (Tensor, optional): Native concept annotations originally
-            provided by the dataset.
-        generated_concepts (dict[str, Annotations]): Generated concept
-            vocabularies keyed by pipeline output name.
-        generated_annotations (dict[str, Tensor]): Sample-level annotations
-            binding dataset samples to generated concept values.
-        ground_truth (Tensor, optional): Concept supervision selected for model
-            training.
+        concepts (AnnotatedTensor, optional): Native concept values and their
+            metadata.
+        generated_concepts (dict[str, AnnotatedTensor]): Generated sample-level
+            concept values and metadata keyed by pipeline output name.
+        ground_truth (AnnotatedTensor, optional): Concept supervision selected
+            for model training.
 
     Args:
         input_data: Input features as numpy array, pandas DataFrame, or Tensor.
@@ -104,12 +100,11 @@ class ConceptDataset(Dataset):
         self.precision = precision
         self.embs_precomputed = False  # whether input_data 
                                        # contains precomputed embeddings
-        self.concepts: Optional[Tensor] = None
+        self.concepts: Optional[AnnotatedTensor] = None
         self.use_as_gt = False
         self.generated_gt_name: Optional[str] = None
-        self.generated_concepts: Dict[str, Annotations] = {}
-        self.generated_annotations: Dict[str, Tensor] = {}
-        self.ground_truth: Optional[Tensor] = None
+        self.generated_concepts: Dict[str, AnnotatedTensor] = {}
+        self.ground_truth: Optional[AnnotatedTensor] = None
         self._ground_truth_annotation: Optional[Annotations] = None
         self._ground_truth_source: Optional[str] = None
 
@@ -189,19 +184,14 @@ class ConceptDataset(Dataset):
         native = self.concepts[item] if self.concepts is not None else None
         generated = {
             name: values[item]
-            for name, values in getattr(
-                self,
-                "generated_annotations",
-                {},
-            ).items()
+            for name, values in self.generated_concepts.items()
         }
-        ground_truth_source = getattr(self, "_ground_truth_source", "native")
-        if ground_truth_source == "native":
+        if self._ground_truth_source == "native":
             selected = native
-        elif ground_truth_source is not None:
-            selected = generated[ground_truth_source]
+        elif self._ground_truth_source is not None:
+            selected = generated[self._ground_truth_source]
         else:
-            selected = native
+            selected = None
 
         return {
             "inputs": {"x": x},
@@ -282,14 +272,18 @@ class ConceptDataset(Dataset):
         Returns:
             List[str]: Names of all concepts.
         """
-        if self._ground_truth_annotation is None:
+        if self.ground_truth is None:
             return []
-        return self._ground_truth_annotation.labels
+        return self.ground_truth.annotation.labels
 
     @property
     def annotations(self) -> Optional[Annotations]:
         """Annotations for the concepts in the dataset."""
-        return self._ground_truth_annotation
+        return (
+            self.ground_truth.annotation
+            if self.ground_truth is not None
+            else None
+        )
 
     @property
     def shape(self) -> tuple:
@@ -514,7 +508,7 @@ class ConceptDataset(Dataset):
         use_as_gt: bool = False,
         generated_gt_name: Optional[str] = None,
         **kwargs,
-    ) -> tuple[Dict[str, Tensor], Dict[str, Annotations]]:
+    ) -> Dict[str, AnnotatedTensor]:
         """Run a concept-supervision pipeline explicitly on this dataset.
 
         Concepts are generated from ``self``. ``datasets_to_annotate`` only
@@ -536,15 +530,14 @@ class ConceptDataset(Dataset):
                 ``self_annotation_name`` is provided.
             self_annotation_name: Optional output name used to include ``self``
                 in the annotation outputs when annotating multiple partitions.
-            use_as_gt: Select generated annotations as learner supervision.
+            use_as_gt: Select generated concepts as learner supervision.
             generated_gt_name: Generated output name selected when
                 ``use_as_gt=True``.
             **kwargs: Additional keyword arguments forwarded to
                 ``concept_pipeline``.
 
         Returns:
-            A pair ``(annotation_values, concepts)`` with dictionaries keyed by
-            pipeline output name.
+            Generated annotated concept tensors keyed by pipeline output name.
         """
         if not callable(concept_pipeline):
             raise TypeError("concept_pipeline must be callable.")
@@ -555,52 +548,55 @@ class ConceptDataset(Dataset):
             datasets.update(dict(datasets_to_annotate or {}))
             kwargs["annotation_datasets"] = datasets
 
-        annotation_values, concepts = concept_pipeline(
+        generated_concepts = concept_pipeline(
             self,
             class_names=class_names,
             **kwargs,
         )
         self.set_generated_concepts(
-            concepts,
-            annotation_values,
+            generated_concepts,
             use_as_gt=use_as_gt,
             generated_gt_name=generated_gt_name,
         )
-        return annotation_values, concepts
+        return generated_concepts
 
     def set_generated_concepts(
         self,
-        concepts: Dict[str, Annotations],
-        annotations: Dict[str, Tensor],
+        concepts: Dict[str, AnnotatedTensor],
         use_as_gt: bool = False,
         generated_gt_name: Optional[str] = None,
     ) -> None:
-        """Store generated vocabularies and their sample annotations."""
+        """Store generated concept values together with their metadata."""
+        invalid = {
+            name: type(values).__name__
+            for name, values in concepts.items()
+            if not isinstance(values, AnnotatedTensor)
+        }
+        if invalid:
+            raise TypeError(
+                "Generated concepts must be AnnotatedTensor instances; "
+                f"got {invalid}."
+            )
         self.use_as_gt = use_as_gt
         self.generated_gt_name = generated_gt_name
         self.generated_concepts = dict(concepts)
-        self.generated_annotations = dict(annotations)
-        if set(self.generated_concepts) != set(self.generated_annotations):
-            raise ValueError(
-                "Generated concepts and annotations must use the same keys."
-            )
         self._resolve_ground_truth()
 
     def _resolve_ground_truth(self) -> None:
         """Resolve the tensor and annotation used as training supervision."""
         if self.use_as_gt and self.generated_concepts:
             name = self._resolve_generated_gt_name()
-            self.ground_truth = self.generated_annotations[name]
-            self._ground_truth_annotation = self.generated_concepts[name]
+            self.ground_truth = self.generated_concepts[name]
+            self._ground_truth_annotation = self.ground_truth.annotation
             self._ground_truth_source = name
         elif getattr(self, "concepts", None) is not None:
             self.ground_truth = self.concepts
-            self._ground_truth_annotation = self._annotations
+            self._ground_truth_annotation = self.ground_truth.annotation
             self._ground_truth_source = "native"
         elif self.generated_concepts:
             name = self._resolve_generated_gt_name()
-            self.ground_truth = self.generated_annotations[name]
-            self._ground_truth_annotation = self.generated_concepts[name]
+            self.ground_truth = self.generated_concepts[name]
+            self._ground_truth_annotation = self.ground_truth.annotation
             self._ground_truth_source = name
         else:
             self.ground_truth = None

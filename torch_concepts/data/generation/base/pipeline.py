@@ -3,10 +3,10 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Callable, Literal, Sequence
 
-from torch import Tensor
 from torch.utils.data import Dataset
 
 from torch_concepts import Annotations
+from torch_concepts.tensor import AnnotatedTensor
 from torch_concepts.data.generation.base.filter_annotator import FilterAnnotator
 from torch_concepts.data.generation.base.annotator import Annotator
 from torch_concepts.data.generation.base.calibrator import Calibrator
@@ -14,7 +14,6 @@ from torch_concepts.data.generation.base.generator import Generator
 from torch_concepts.data.generation.base.filter_generator import FilterGenerator
 from torch_concepts.data.generation.filters import DeduplicateConcepts
 
-# TODO: Use AnnotatedTensor instead of Tensor.
 # TODO: La pipeline deve poter essere utilizzabile su dataset splittati o non. Gestire coi kwargs gli indici degli split. In questo modo si può usare la pipeline sia per generare concetti su un dataset concatenato, sia per generare concetti su un dataset splittato (train/val/test). In entrambi i casi, la pipeline deve essere in grado di gestire i dataset e gli indici degli split in modo flessibile.
 
 
@@ -93,7 +92,10 @@ class ConceptSupervisionPipeline:
         raw_annotation_filter: FilterAnnotator | None = None,
         calibrator: Calibrator | None = None,
         calibrated_annotation_filter: FilterAnnotator | None = None,
-        aggregator: Callable[[dict[str, Tensor]], Tensor] | None = None,
+        aggregator: Callable[
+            [dict[str, AnnotatedTensor]],
+            AnnotatedTensor,
+        ] | None = None,
         routing: RoutingMode = "merged",
         name: str | None = None,
     ):
@@ -155,7 +157,7 @@ class ConceptSupervisionPipeline:
         class_names: list[str] | None = None,
         annotation_datasets: Mapping[str, Dataset] | None = None,
         **kwargs: Any,
-    ) -> tuple[dict[str, Tensor], dict[str, Annotations]]:
+    ) -> dict[str, AnnotatedTensor]:
         """Generate concepts from ``dataset`` and annotate datasets.
 
         Parameters
@@ -174,9 +176,9 @@ class ConceptSupervisionPipeline:
 
         Returns
         -------
-        values, annotations : tuple[dict[str, Tensor], dict[str, Annotations]]
-            Sample-level concept values and their concept axes. With named
-            annotation datasets, both dictionaries use split-prefixed keys.
+        dict[str, AnnotatedTensor]
+            Sample-level concept values carrying their concept-axis metadata.
+            With named annotation datasets, keys are split-prefixed.
         """
         generator_names = self._component_names(self.generators)
         annotator_names = self._component_names(self.annotators)
@@ -189,14 +191,13 @@ class ConceptSupervisionPipeline:
             for generator_name, generator in zip(generator_names, self.generators)
         }
 
-        values: dict[str, Tensor] = {}
-        annotations: dict[str, Annotations] = {}
+        values: dict[str, AnnotatedTensor] = {}
         datasets_to_annotate, prefix_outputs = self._annotation_dataset_map(
             dataset,
             annotation_datasets,
         )
         for dataset_name, annotation_dataset in datasets_to_annotate.items():
-            dataset_values, dataset_annotations = self._annotate_dataset(
+            dataset_values = self._annotate_dataset(
                 concepts=concepts,
                 generator_names=generator_names,
                 annotator_names=annotator_names,
@@ -209,14 +210,12 @@ class ConceptSupervisionPipeline:
                 )
                 self._insert_result(
                     values,
-                    annotations,
                     output_name,
                     concept_values,
-                    dataset_annotations[name],
                     annotation_dataset,
                 )
 
-        return values, annotations
+        return values
 
     def _annotate_dataset(
         self,
@@ -225,7 +224,7 @@ class ConceptSupervisionPipeline:
         annotator_names: list[str],
         dataset: Dataset,
         kwargs: dict[str, Any],
-    ) -> tuple[dict[str, Tensor], dict[str, Annotations]]:
+    ) -> dict[str, AnnotatedTensor]:
         """Annotate one dataset using the configured routing strategy.
 
         The method constructs each route selected by ``self.routing``, invokes
@@ -249,12 +248,11 @@ class ConceptSupervisionPipeline:
 
         Returns
         -------
-        values, annotations : tuple[dict[str, Tensor], dict[str, Annotations]]
-            Processed annotation tensors and their corresponding concept axes,
-            keyed by route name.
+        dict[str, AnnotatedTensor]
+            Processed annotation tensors keyed by route name. Each tensor
+            carries its corresponding concept axis.
         """
-        values: dict[str, Tensor] = {}
-        annotations: dict[str, Annotations] = {}
+        values: dict[str, AnnotatedTensor] = {}
         if self.routing == "merged":
             merged = self._merge_concept_axes(concepts)
             merged = self._filter_concepts(merged)
@@ -268,10 +266,8 @@ class ConceptSupervisionPipeline:
                 )
                 self._insert_result(
                     values,
-                    annotations,
                     annotator_name,
                     concept_values,
-                    merged,
                     dataset,
                 )
         elif self.routing == "cartesian":
@@ -292,10 +288,8 @@ class ConceptSupervisionPipeline:
                     )
                     self._insert_result(
                         values,
-                        annotations,
                         route_name,
                         concept_values,
-                        annotation,
                         dataset,
                     )
         else:
@@ -318,28 +312,25 @@ class ConceptSupervisionPipeline:
                 )
                 self._insert_result(
                     values,
-                    annotations,
                     route_name,
                     concept_values,
-                    annotation,
                     dataset,
                 )
 
         if self.aggregator is not None:
-            aggregate_annotation = self._common_annotation(annotations)
+            aggregate_annotation = self._common_annotation(values)
             aggregate_values = self.aggregator(values)
             aggregate_name = self._unique_name("aggregated", values)
             self._insert_result(
                 values,
-                annotations,
                 aggregate_name,
                 aggregate_values,
-                aggregate_annotation,
                 dataset,
                 unique=False,
+                expected_annotation=aggregate_annotation,
             )
 
-        return values, annotations
+        return values
 
     @staticmethod
     def _merge_concept_axes(concepts: dict[str, Annotations]) -> Annotations:
@@ -400,22 +391,21 @@ class ConceptSupervisionPipeline:
 
     def _process_annotation_values(
         self,
-        values: Tensor,
+        values: AnnotatedTensor,
         concepts: Annotations,
         dataset: Dataset,
         route_name: str,
-    ) -> Tensor:
+    ) -> AnnotatedTensor:
         """Validate and post-process one annotator output tensor.
 
         The raw tensor is first checked against the dataset and concept axis.
         Enabled stages then run in this order: raw annotation filter,
         calibrator, and calibrated annotation filter. Every stage receives the
-        current tensor and the unchanged concept metadata, and must return a
-        tensor with the same shape.
+        current annotated tensor and must preserve its shape and metadata.
 
         Parameters
         ----------
-        values : Tensor
+        values : AnnotatedTensor
             Raw annotation scores with shape ``(samples, concept_outputs)``.
         concepts : Annotations
             Concept axis describing the tensor's second dimension.
@@ -426,13 +416,13 @@ class ConceptSupervisionPipeline:
 
         Returns
         -------
-        Tensor
+        AnnotatedTensor
             Scores after all configured post-processing stages.
 
         Raises
         ------
         TypeError
-            If the raw values or a stage result is not a tensor.
+            If the raw values or a stage result is not an AnnotatedTensor.
         ValueError
             If the raw values are incompatible with the dataset or concepts,
             or a processing stage changes the tensor shape.
@@ -454,10 +444,10 @@ class ConceptSupervisionPipeline:
         for stage_name, stage, method_name in stages:
             if stage is None:
                 continue
-            processed = getattr(stage, method_name)(values, concepts)
-            if not isinstance(processed, Tensor):
+            processed = getattr(stage, method_name)(values)
+            if not isinstance(processed, AnnotatedTensor):
                 raise TypeError(
-                    f"{stage_name} must return a Tensor; "
+                    f"{stage_name} must return an AnnotatedTensor; "
                     f"got {type(processed).__name__}."
                 )
             if processed.shape != values.shape:
@@ -465,6 +455,13 @@ class ConceptSupervisionPipeline:
                     f"{stage_name} must preserve annotation tensor shape; "
                     f"got {tuple(processed.shape)} instead of "
                     f"{tuple(values.shape)}."
+                )
+            if not self._annotations_match(
+                processed.annotation,
+                values.annotation,
+            ):
+                raise ValueError(
+                    f"{stage_name} must preserve the annotation metadata."
                 )
             values = processed
         return values
@@ -592,7 +589,10 @@ class ConceptSupervisionPipeline:
         return names
 
     @staticmethod
-    def _unique_name(name: str, values: dict[str, Tensor]) -> str:
+    def _unique_name(
+        name: str,
+        values: dict[str, AnnotatedTensor],
+    ) -> str:
         """Return an output name that is absent from an existing result map.
 
         The requested name is returned unchanged when available. On collision,
@@ -602,7 +602,7 @@ class ConceptSupervisionPipeline:
         ----------
         name : str
             Preferred output name.
-        values : dict[str, Tensor]
+        values : dict[str, AnnotatedTensor]
             Existing results whose keys are already occupied.
 
         Returns
@@ -620,41 +620,38 @@ class ConceptSupervisionPipeline:
     @classmethod
     def _insert_result(
         cls,
-        values: dict[str, Tensor],
-        annotations: dict[str, Annotations],
+        values: dict[str, AnnotatedTensor],
         requested_name: str,
-        concept_values: Tensor,
-        annotation: Annotations,
+        concept_values: AnnotatedTensor,
         dataset: Dataset,
         unique: bool = True,
+        expected_annotation: Annotations | None = None,
     ) -> None:
-        """Validate and insert a tensor and its annotation metadata together.
+        """Validate and insert a generated annotated tensor.
 
-        Keeping both mappings in one helper ensures their keys remain aligned.
         By default, collisions are resolved with :meth:`_unique_name`; callers
         may disable this when they have already chosen a unique name.
 
         Parameters
         ----------
-        values : dict[str, Tensor]
+        values : dict[str, AnnotatedTensor]
             Result mapping updated with ``concept_values``.
-        annotations : dict[str, Annotations]
-            Metadata mapping updated with ``annotation`` under the same key.
         requested_name : str
-            Preferred key for both output mappings.
-        concept_values : Tensor
+            Preferred result key.
+        concept_values : AnnotatedTensor
             Sample-level concept tensor to validate and store.
-        annotation : Annotations
-            Concept axis describing ``concept_values``.
         dataset : Dataset
             Dataset used to validate the tensor's sample dimension.
         unique : bool, default=True
             Whether to resolve a name collision automatically.
+        expected_annotation : Annotations, optional
+            Expected concept axis. When omitted, the tensor's own annotation
+            is used.
 
         Raises
         ------
         TypeError
-            If ``concept_values`` is not a tensor.
+            If ``concept_values`` is not an AnnotatedTensor.
         ValueError
             If its dimensions do not match the dataset and annotation.
         """
@@ -662,14 +659,27 @@ class ConceptSupervisionPipeline:
             cls._unique_name(requested_name, values)
             if unique else requested_name
         )
-        cls._validate_value(name, concept_values, annotation, dataset)
+        if not isinstance(concept_values, AnnotatedTensor):
+            raise TypeError(
+                f"Generated concept values {name!r} must be an "
+                "AnnotatedTensor."
+            )
+        cls._validate_value(
+            name,
+            concept_values,
+            (
+                expected_annotation
+                if expected_annotation is not None
+                else concept_values.annotation
+            ),
+            dataset,
+        )
         values[name] = concept_values
-        annotations[name] = annotation
 
     @staticmethod
     def _validate_value(
         name: str,
-        values: Tensor,
+        values: AnnotatedTensor,
         annotation: Annotations,
         dataset: Dataset,
     ) -> None:
@@ -683,8 +693,8 @@ class ConceptSupervisionPipeline:
         ----------
         name : str
             Result name included in validation errors.
-        values : Tensor
-            Tensor to validate.
+        values : AnnotatedTensor
+            Annotated tensor to validate.
         annotation : Annotations
             Definition of the expected output dimension.
         dataset : Dataset
@@ -693,14 +703,20 @@ class ConceptSupervisionPipeline:
         Raises
         ------
         TypeError
-            If ``values`` is not a tensor.
+            If ``values`` is not an AnnotatedTensor.
         ValueError
             If ``values`` is not two-dimensional or either dimension has the
             wrong size.
         """
-        if not isinstance(values, Tensor):
+        if not isinstance(values, AnnotatedTensor):
             raise TypeError(
-                f"Generated concept values {name!r} must be a Tensor."
+                f"Generated concept values {name!r} must be an "
+                "AnnotatedTensor."
+            )
+        if values.axis != 1:
+            raise ValueError(
+                f"Generated concept values {name!r} must annotate axis 1; "
+                f"got axis {values.axis}."
             )
         if values.ndim != 2:
             raise ValueError(
@@ -712,22 +728,31 @@ class ConceptSupervisionPipeline:
                 f"Generated concept values {name!r} have {values.shape[0]} "
                 f"samples, but the dataset has {len(dataset)}."
             )
-        if values.shape[1] != annotation.size:
+        if values.shape[1] != values.annotation.size:
             raise ValueError(
                 f"Generated concept values {name!r} have {values.shape[1]} "
-                f"outputs, but their annotation defines {annotation.size}."
+                "outputs, but their attached annotation defines "
+                f"{values.annotation.size}."
+            )
+        if not ConceptSupervisionPipeline._annotations_match(
+            values.annotation,
+            annotation,
+        ):
+            raise ValueError(
+                f"Generated concept values {name!r} carry annotation metadata "
+                "that does not match the routed concepts."
             )
 
     @staticmethod
     def _common_annotation(
-        annotations: dict[str, Annotations],
+        values: dict[str, AnnotatedTensor],
     ) -> Annotations:
         """Ensure aggregate inputs share one annotation definition.
 
         Parameters
         ----------
-        annotations : dict[str, Annotations]
-            Concept axes associated with tensors passed to the aggregator.
+        values : dict[str, AnnotatedTensor]
+            Annotated tensors passed to the aggregator.
 
         Returns
         -------
@@ -739,14 +764,30 @@ class ConceptSupervisionPipeline:
         ValueError
             If there are no annotations or their serialized definitions differ.
         """
-        if not annotations:
+        if not values:
             raise ValueError("Cannot aggregate an empty set of concept values.")
-        iterator = iter(annotations.values())
-        first = next(iterator)
-        first_definition = first.to_dict()
-        if any(axis.to_dict() != first_definition for axis in iterator):
+        iterator = iter(values.values())
+        first = next(iterator).annotation
+        if any(
+            not ConceptSupervisionPipeline._annotations_match(
+                value.annotation,
+                first,
+            )
+            for value in iterator
+        ):
             raise ValueError(
                 "Aggregation requires all generated concept tensors to share "
                 "the same Annotations."
             )
         return first
+
+    @staticmethod
+    def _annotations_match(
+        left: Annotations,
+        right: Annotations,
+    ) -> bool:
+        """Whether two annotation axes have the same structural definition."""
+        return (
+            left.concept_space == right.concept_space
+            and left.to_dict() == right.to_dict()
+        )

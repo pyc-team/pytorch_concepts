@@ -1,17 +1,17 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-# TODO: Use AnnotatedTensor instead of Tensor.
 from torch.utils.data import Dataset
 
 from torch_concepts import Annotations
+from torch_concepts.tensor import AnnotatedTensor
 
 
 class Annotator(ABC):
     """Base class for assigning concepts to dataset samples.
 
     An annotator maps:
-        dataset + AxisAnnotation -> Tensor
+        dataset + Annotations -> AnnotatedTensor
     """
 
     @abstractmethod

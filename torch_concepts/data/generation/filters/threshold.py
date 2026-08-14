@@ -1,7 +1,5 @@
-from torch import Tensor
-
-from torch_concepts import Annotations
 from torch_concepts.data.generation.base.filter_annotator import FilterAnnotator
+from torch_concepts.tensor import AnnotatedTensor
 
 
 class ThresholdAnnotationFilter(FilterAnnotator):
@@ -10,8 +8,7 @@ class ThresholdAnnotationFilter(FilterAnnotator):
     def __init__(self, threshold: float):
         self.threshold = threshold
 
-    def filter(self, scores: Tensor, concepts: Annotations) -> Tensor:
-        del concepts
+    def filter(self, scores: AnnotatedTensor) -> AnnotatedTensor:
         if not scores.is_floating_point():
             raise TypeError(
                 "ThresholdAnnotationFilter requires floating-point scores."

@@ -9,6 +9,7 @@ from torch.utils.data import DataLoader, Dataset
 
 from torch_concepts import Annotations
 from torch_concepts.data.generation.base.annotator import Annotator
+from torch_concepts.tensor import AnnotatedTensor
 
 
 PromptTemplate = str | Sequence[str] | Callable[[str], str | Sequence[str]]
@@ -124,7 +125,7 @@ class CLIPAnnotator(Annotator):
         dataset: Dataset,
         concepts: Annotations,
         **kwargs: Any,
-    ) -> Tensor:
+    ) -> AnnotatedTensor:
         del kwargs
         if not isinstance(concepts, Annotations):
             raise TypeError("concepts must be an Annotations.")
@@ -161,7 +162,7 @@ class CLIPAnnotator(Annotator):
             if concept_batches
             else torch.empty((0, concepts.size))
         )
-        return concept_data
+        return AnnotatedTensor(concept_data, concepts, axis=1)
 
     def _flatten_concept_prompts(
         self,
