@@ -1,14 +1,14 @@
-from .annotation_filter import AnnotationFilter
-from .annotator import Annotator
-from .calibrator import Calibrator
-from .concept_generator import ConceptGenerator
-from .concept_pipeline import (
+from ..generation.base.filter_annotator import AnnotationFilter
+from ..generation.base.annotator import Annotator
+from ..generation.base.calibrator import Calibrator
+from ..generation.base.generator import ConceptGenerator
+from ..generation.base.pipeline import (
     ConceptSupervisionPipeline,
     RoutingMode,
 )
 from .dataset import ConceptDataset
 from .datamodule import ConceptDataModule
-from .generator_filter import GeneratorFilter
+from ..generation.base.filter_generator import GeneratorFilter
 from .scaler import Scaler
 from .splitter import Splitter
 

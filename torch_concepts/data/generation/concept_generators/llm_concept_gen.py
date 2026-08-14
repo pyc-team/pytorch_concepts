@@ -5,7 +5,7 @@ from typing import Any
 from torch.utils.data import Dataset
 
 from torch_concepts import Annotations
-from torch_concepts.data.base.concept_generator import (
+from torch_concepts.data.generation.base.generator import (
     LLM,
     ConceptGenerator,
     Parser,

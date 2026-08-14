@@ -5,7 +5,7 @@ from torch import Tensor
 from torch_concepts import Annotations
 
 
-class AnnotationFilter(ABC):
+class FilterAnnotator(ABC):
     """Filter out concepts from individual samples.
 
     Implementations must preserve the input tensor shape and represent filtered

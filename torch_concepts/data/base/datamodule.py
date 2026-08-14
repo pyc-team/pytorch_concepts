@@ -29,7 +29,7 @@ from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset, Subset
 
 from .dataset import ConceptDataset
-from .concept_pipeline import ConceptSupervisionPipeline
+from ..generation.base.pipeline import ConceptSupervisionPipeline
 
 logger = logging.getLogger(__name__)
 

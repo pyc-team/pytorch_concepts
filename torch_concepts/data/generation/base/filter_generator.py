@@ -4,7 +4,7 @@ from collections import Counter
 from torch_concepts import Annotations
 
 
-class GeneratorFilter(ABC):
+class FilterGenerator(ABC):
     """Filter generated concept names before they are annotated."""
 
     @abstractmethod

@@ -1,7 +1,7 @@
 from torch import Tensor
 
 from torch_concepts import Annotations
-from torch_concepts.data.base.annotation_filter import AnnotationFilter
+from torch_concepts.data.generation.base.filter_annotator import AnnotationFilter
 
 
 class ThresholdAnnotationFilter(AnnotationFilter):

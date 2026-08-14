@@ -21,7 +21,7 @@ from ...concept_graph import ConceptGraph
 from ...annotations import Annotations
 from ...tensor import AnnotatedTensor
 from ..utils import files_exist, parse_tensor, convert_precision
-from .concept_pipeline import ConceptSupervisionPipeline
+from ..generation.base.pipeline import ConceptSupervisionPipeline
 
 # TODO: implement masks for missing values
 # TODO: add exogenous

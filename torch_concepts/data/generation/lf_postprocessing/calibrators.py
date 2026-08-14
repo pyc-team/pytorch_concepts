@@ -2,7 +2,7 @@ import torch
 from torch import Tensor
 
 from torch_concepts import Annotations
-from torch_concepts.data.base.calibrator import Calibrator
+from torch_concepts.data.generation.base.calibrator import Calibrator
 
 
 class SigmoidCalibrator(Calibrator):

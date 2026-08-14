@@ -8,7 +8,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 
 from torch_concepts import Annotations
-from torch_concepts.data.base.annotator import Annotator
+from torch_concepts.data.generation.base.annotator import Annotator
 
 
 PromptTemplate = str | Sequence[str] | Callable[[str], str | Sequence[str]]

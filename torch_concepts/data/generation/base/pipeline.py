@@ -7,12 +7,12 @@ from torch import Tensor
 from torch.utils.data import Dataset
 
 from torch_concepts import Annotations
-from torch_concepts.data.base.annotation_filter import AnnotationFilter
-from torch_concepts.data.base.annotator import Annotator
-from torch_concepts.data.base.calibrator import Calibrator
-from torch_concepts.data.base.concept_generator import ConceptGenerator
-from torch_concepts.data.base.generator_filter import GeneratorFilter
-from torch_concepts.data.lf_postprocessing import DeduplicateConcepts
+from torch_concepts.data.generation.base.filter_annotator import AnnotationFilter
+from torch_concepts.data.generation.base.annotator import Annotator
+from torch_concepts.data.generation.base.calibrator import Calibrator
+from torch_concepts.data.generation.base.generator import ConceptGenerator
+from torch_concepts.data.generation.base.filter_generator import GeneratorFilter
+from torch_concepts.data.generation.lf_postprocessing import DeduplicateConcepts
 
 
 # merged: merge all generated concepts, then send them to all annotators.

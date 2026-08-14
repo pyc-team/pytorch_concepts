@@ -32,11 +32,11 @@ from tqdm import tqdm
 
 from torch_concepts.data.annotators import CLIPAnnotator
 from torch_concepts.data.base import ConceptSupervisionPipeline
-from torch_concepts.data.lf_postprocessing import (
+from torch_concepts.data.generation.lf_postprocessing import (
     SigmoidCalibrator,
     ThresholdAnnotationFilter,
 )
-from torch_concepts.data.concept_generators import LiteLLMBackend, LLMConceptGenerator
+from torch_concepts.data.generation.generators import LiteLLMBackend, LLMConceptGenerator
 from torch_concepts.data import ColorMNISTDataset
 
 

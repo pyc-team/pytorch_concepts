@@ -19,7 +19,7 @@ from . import utils
 
 # IO utilities
 from . import io
-from . import lf_postprocessing
+from .generation import lf_postprocessing
 
 # Re-export datasets for convenient access
 from .datasets.bnlearn import BnLearnDataset

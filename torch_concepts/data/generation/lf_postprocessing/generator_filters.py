@@ -1,5 +1,5 @@
 from torch_concepts import Annotations
-from torch_concepts.data.base.generator_filter import GeneratorFilter
+from torch_concepts.data.generation.base.filter_generator import GeneratorFilter
 
 
 class DeduplicateConcepts(GeneratorFilter):

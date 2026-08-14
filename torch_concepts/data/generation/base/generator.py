@@ -11,7 +11,7 @@ Parser = Callable[[Any], list[Any]]
 Postprocessor = Callable[[list[Any]], list[Any]]
 
 
-class ConceptGenerator(ABC):
+class Generator(ABC):
     """Base class for automatic concept generators.
 
     Dataset -> concepts
