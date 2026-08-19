@@ -4,7 +4,7 @@ Residual task predictor for hybrid Post-hoc Concept Bottleneck Models
 
 The hybrid variant of the Post-hoc CBM (Yuksekgonul et al., ICLR 2023,
 https://arxiv.org/abs/2205.15480) predicts the task as the sum of an
-*interpretable* linear head over the concept scores and a *residual* linear
+interpretable linear head over the concept scores and a residual linear
 head over the raw backbone embedding::
 
     y = W_c s(x) + b_c  +  r(f(x))
@@ -40,19 +40,6 @@ class ResidualConceptEmbeddingToConcept(BaseConceptLayer):
         in_concepts: Number of input concept scores.
         in_embeddings: Dimensionality of the backbone embedding.
         out_concepts: Number of output task logits.
-
-    Example:
-        >>> import torch
-        >>> from torch_concepts.nn import ResidualConceptEmbeddingToConcept
-        >>>
-        >>> head = ResidualConceptEmbeddingToConcept(
-        ...     in_concepts=4, in_embeddings=16, out_concepts=2,
-        ... )
-        >>> logits = head(
-        ...     concepts=torch.randn(8, 4), embeddings=torch.randn(8, 16),
-        ... )
-        >>> print(logits.shape)
-        torch.Size([8, 2])
 
     References:
         Yuksekgonul et al. "Post-hoc Concept Bottleneck Models", ICLR 2023.
