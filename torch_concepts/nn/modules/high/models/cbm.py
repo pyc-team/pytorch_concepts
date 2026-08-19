@@ -56,7 +56,8 @@ class ConceptBottleneckModel(BipartiteModel):
     task_names : Union[List[str], str]
         Names of the task variables (a subset of the annotation labels).
     inference : BaseInference, optional
-        Evaluation inference engine class. Defaults to ``DeterministicInference``.
+        Evaluation inference engine class. Defaults to
+        ``DeterministicInference``.
     inference_kwargs : dict, optional
         Keyword arguments forwarded to the evaluation inference engine.
     train_inference : BaseInference, optional
@@ -110,7 +111,8 @@ class ConceptBottleneckModel(BipartiteModel):
         # One builder for both layouts (plate / individual, decided per level).
         self.pgm = self._build_model()
 
-        # once self.pgm is built, we can set up the inference engines (train and eval)
+        # once self.pgm is built, we can set up the inference engines
+        # (train and eval)
         self.setup_inference(
             inference,
             inference_kwargs,
@@ -138,7 +140,7 @@ class ConceptBottleneckModel(BipartiteModel):
             parametrization=self.backbone,
         )
         return input_var, latent_var, input_cpd, latent_cpd
-    
+
     def _build_model(self) -> BayesianNetwork:
         """Assemble the CBM Bayesian network: ``input → latent → concepts → tasks``.
 
@@ -167,7 +169,7 @@ class ConceptBottleneckModel(BipartiteModel):
                     variable=c,
                     first=LazyConstructor(LinearEmbeddingToConcept), # parameterization for the first parameter
                     second=LazyConstructor(LinearEmbeddingToConcept), # parameterization for the second parameter
-                    # nn.Softplus() or ScaleTrilActivation will be 
+                    # nn.Softplus() or ScaleTrilActivation will be
                     # attached automatically to the second head for continuous variables.
                 )
                 for c in concepts

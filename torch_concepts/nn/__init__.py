@@ -38,6 +38,11 @@ from .modules.low.predictors.hypernet import HyperlinearConceptEmbeddingToConcep
 from .modules.low.predictors.linear import LinearConceptToConcept
 from .modules.low.predictors.mix import MixConceptEmbeddingToConcept, \
     MixConceptEmbeddings
+from .modules.low.predictors.anchor import (
+    AnchorPredictor,
+    EmbeddingAnchors,
+)
+from .modules.low.predictors.residual import ResidualConceptEmbeddingToConcept
 
 # Dense layers
 from .modules.low.dense_layers import Dense, ResidualMLP, MLP, LinearEmbeddingEncoder, MLPEmbeddingEncoder, SelectorEmbeddingEncoder
@@ -59,6 +64,9 @@ from .modules.outputs import ModelOutput, InferenceOutput
 # Models (high-level)
 from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
 from .modules.high.models.cbm import ConceptBottleneckModel
+from .modules.high.models.hybrid_cbm import HybridConceptBottleneckModel
+from .modules.high.models.prob_cbm import ProbCBM
+from .modules.high.models.post_hoc_cbm import PostHocCBM
 from .modules.high.models.cem import ConceptEmbeddingModel
 from .modules.high.models.graph_cbm import GraphConceptBottleneckModel
 from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
@@ -146,6 +154,9 @@ __all__ = [
     "HyperlinearConceptEmbeddingToConcept",
     "MixConceptEmbeddingToConcept",
     "MixConceptEmbeddings",
+    "AnchorPredictor",
+    "EmbeddingAnchors",
+    "ResidualConceptEmbeddingToConcept",
 
     # Dense layers
     "Dense",
@@ -181,6 +192,9 @@ __all__ = [
     "BlackBox",
     "BlackBoxTaskOnly",
     "ConceptBottleneckModel",
+    "HybridConceptBottleneckModel",
+    "ProbCBM",
+    "PostHocCBM",
     "ConceptEmbeddingModel",
     "GraphConceptBottleneckModel",
     "CausallyReliableConceptBottleneckModel",

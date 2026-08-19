@@ -7,99 +7,105 @@ concept. It is obtained post hoc: activations of concept-positive and
 concept-negative examples are separated with a binary linear classifier, and
 the CAV is the unit normal to its decision boundary.
 
-:class:`CAVEmbeddingToConcept` fits one CAV per concept and then acts as a
-frozen concept encoder: its forward pass returns the signed distance of an
-embedding to each concept boundary (positive means the concept is present).
-
-The TCAV testing machinery (the directional-derivative sensitivity of a
-downstream head along the CAVs, reduced to the TCAV score) is stateless and
-lives in :mod:`torch_concepts.nn.functional` as
-:func:`~torch_concepts.nn.functional.tcav_score`.
+:class:`CAVEmbeddingToConcept` is that bank of CAVs. It can be filled in three
+ways: fitted here with :meth:`fit` (the TCAV recipe), handed pre-fitted vectors
+from elsewhere, or left trainable and learned in place. A Post-hoc CBM
+(Yuksekgonul et al., ICLR 2023) uses the last two.
 """
-from typing import Union
-
 import numpy as np
 import torch
-from sklearn.linear_model import LogisticRegression
+import torch.nn as nn
 
-from torch_concepts import Annotations
 from ..base.layer import BaseConceptLayer
+from sklearn.linear_model import LogisticRegression
+from torch_concepts import Annotations
+from typing import Optional, Union
 
 
 class CAVEmbeddingToConcept(BaseConceptLayer):
     """
     Concept encoder based on Concept Activation Vectors (Kim et al., 2018).
 
-    The layer is constructed unfitted and trained post hoc with :meth:`fit`,
-    which fits one logistic-regression probe per concept on frozen
-    activations and stores the unit-normalized probe weights as CAVs. The
-    CAVs are buffers, not parameters: they are invisible to optimizers and
-    are never updated by the main loss, but they move with ``.to(device)``
-    and survive ``state_dict`` round-trips.
+    The forward pass returns the *geometric margin* of each embedding to each
+    concept's decision boundary, ``(x . v_j + b_j) / ||v_j||`` — what is
+    sometimes called the "concept score" or "activation value". Positive values
+    mean the concept is predicted present.
 
-    The forward pass returns the signed distance of each embedding to each
-    concept's decision boundary, ``x @ cav_j + bias_j``: its sign equals the
-    probe's prediction (positive means concept present) and its gradient
-    w.r.t. the input is exactly the unit CAV, matching the directional
-    derivative used by TCAV.
+    The CAVs can come from three places:
+
+    * :meth:`fit`, which learns one logistic-regression probe per concept on
+      frozen activations and stores its unit-normalized weights (the TCAV
+      recipe);
+    * ``cavs`` / ``bias``, pre-fitted elsewhere — how a Post-hoc CBM supplies
+      its concept bank;
+    * gradient descent, with ``trainable=True``, which makes each CAV a
+      logistic-regression probe learned in place when supervised with
+      BCE-with-logits against concept labels.
+
+    A layer that has been given none of these holds zeros, and its forward pass
+    raises rather than returning meaningless scores.
 
     Attributes:
-        cavs (torch.Tensor): Buffer of shape (out_concepts, in_embeddings)
-            holding the unit-norm CAVs (zeros before :meth:`fit`).
-        bias (torch.Tensor): Buffer of shape (out_concepts,) holding the
-            probe intercepts rescaled by the same normalization.
+        cavs (torch.Tensor): Shape (out_concepts, in_embeddings), the CAVs.
+            Unit-norm as :meth:`fit` leaves them, though training moves
+            them off the unit sphere, so :meth:`forward` re-normalizes.
+        bias (torch.Tensor): Shape (out_concepts,), the probe intercepts.
+        fitted (torch.Tensor): Whether the CAVs are meaningful yet.
 
     Args:
         in_embeddings: Number of input embedding features.
         out_concepts: Number of output concept representations.
+        cavs: Optional pre-fitted CAVs of shape (out_concepts, in_embeddings).
+            Zeros when omitted, pending a call to :meth:`fit`.
+        bias: Optional pre-fitted intercepts of shape (out_concepts,). Zeros
+            when omitted.
+        trainable: If True, the CAVs and intercepts are ``nn.Parameter``s; if
+            False (default) they are buffers, the frozen post-hoc setting.
         **fit_kwargs: Additional keyword arguments for
             :class:`sklearn.linear_model.LogisticRegression`
             (``max_iter`` defaults to 1000).
-
-    Example:
-        >>> import torch
-        >>> from torch_concepts.nn import CAVEmbeddingToConcept
-        >>>
-        >>> _ = torch.manual_seed(0)
-        >>> encoder = CAVEmbeddingToConcept(in_embeddings=16, out_concepts=2)
-        >>> embeddings = torch.randn(64, 16)
-        >>> labels = (embeddings[:, :2] > 0).float()
-        >>> accuracy = encoder.fit(embeddings, labels)
-        >>> concepts = encoder(embeddings)
-        >>> print(concepts.shape)
-        torch.Size([64, 2])
 
     References:
         Kim et al. "Interpretability Beyond Feature Attribution: Quantitative
         Testing with Concept Activation Vectors (TCAV)", ICML 2018.
         https://proceedings.mlr.press/v80/kim18d
+
+        Yuksekgonul et al. "Post-hoc Concept Bottleneck Models", ICLR 2023.
+        https://openreview.net/forum?id=nA5AZ8CEyow
     """
 
     def __init__(
         self,
         in_embeddings: Union[int, Annotations],
         out_concepts: Union[int, Annotations],
+        cavs: Optional[torch.Tensor] = None,
+        bias: Optional[torch.Tensor] = None,
+        trainable: bool = False,
         **fit_kwargs,
     ):
-        """
-        Initialize the encoder.
-
-        Args:
-            in_embeddings: Number of input embedding features.
-            out_concepts: Number of output concept representations.
-            **fit_kwargs: Additional keyword arguments for
-                :class:`sklearn.linear_model.LogisticRegression`
-                (``max_iter`` defaults to 1000).
-        """
         super().__init__(
             in_embeddings=in_embeddings,
             out_concepts=out_concepts,
         )
-        self.fit_kwargs = {"max_iter": 1000, **fit_kwargs}
+        self.fit_kwargs = {"max_iter": 1000}
+        self.fit_kwargs.update(fit_kwargs)
         n, d = self.out_concepts_shape, self.in_embeddings_shape
-        self.register_buffer("cavs", torch.zeros(n, d))
-        self.register_buffer("bias", torch.zeros(n))
-        self.register_buffer("fitted", torch.tensor(False))
+
+        # Note for self: zeros are the "nothing here yet" state, marked by
+        # ``fitted`` so forward refuses rather than divide by a zero norm.
+        given = cavs is not None
+        cavs = torch.zeros(n, d) if not given else \
+            torch.as_tensor(cavs, dtype=torch.float).reshape(n, d)
+        bias = torch.zeros(n) if bias is None else \
+            torch.as_tensor(bias, dtype=torch.float).reshape(n)
+
+        if trainable:
+            self.cavs = nn.Parameter(cavs)
+            self.bias = nn.Parameter(bias)
+        else:
+            self.register_buffer("cavs", cavs)
+            self.register_buffer("bias", bias)
+        self.register_buffer("fitted", torch.tensor(given))
 
     @torch.no_grad()
     def fit(
@@ -114,12 +120,6 @@ class CAVEmbeddingToConcept(BaseConceptLayer):
         probe; the CAV is the probe's weight vector normalized to unit norm
         (pointing towards the concept-positive side), and the bias is the
         intercept rescaled by the same factor.
-
-        Every label column is an independent one-vs-rest probe, so
-        categorical concepts are supported by passing their one-hot state
-        columns (k columns for a k-state concept — e.g. construct the layer
-        with an :class:`~torch_concepts.Annotations` whose cardinalities
-        sum to the label width, and one CAV is fit per state).
 
         Args:
             embeddings: Activations of shape (..., in_embeddings).
@@ -164,12 +164,14 @@ class CAVEmbeddingToConcept(BaseConceptLayer):
                 )
             try:
                 probe = LogisticRegression(**self.fit_kwargs).fit(
-                    x_np, y_np[:, j]
+                    X=x_np,
+                    y=y_np[:, j],
                 )
             except ValueError as err:
                 raise ValueError(
                     f"Fitting the probe for concept column {j} failed: {err}"
                 ) from err
+            # Now store the unit-normalized probe weights and the intercept
             weight = torch.from_numpy(probe.coef_[0])
             intercept = float(probe.intercept_[0])
             norm = weight.norm()
@@ -181,7 +183,7 @@ class CAVEmbeddingToConcept(BaseConceptLayer):
 
     def forward(self, embeddings: torch.Tensor) -> torch.Tensor:
         """
-        Encode embeddings into signed distances to the concept boundaries.
+        Encode embeddings into geometric margins to the concept boundaries.
 
         Args:
             embeddings: Input embeddings of shape (..., in_embeddings).
@@ -193,10 +195,9 @@ class CAVEmbeddingToConcept(BaseConceptLayer):
         if not self.fitted:
             raise RuntimeError(
                 "CAVEmbeddingToConcept has not been fitted; call fit() on "
-                "concept-labeled activations first."
+                "concept-labeled activations, or pass pre-fitted cavs."
             )
+        norm = self.cavs.norm(dim=-1)                       # (out_concepts,)
         # .to(embeddings): buffers are fp32; keeps AMP fp16/bf16 activations
-        return (
-            embeddings @ self.cavs.t().to(embeddings)
-            + self.bias.to(embeddings)
-        )
+        unit = (self.cavs / norm.unsqueeze(-1)).to(embeddings)
+        return embeddings @ unit.t() + (self.bias / norm).to(embeddings)
