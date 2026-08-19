@@ -7,124 +7,28 @@ from ...annotations import Annotations
 
 logger = logging.getLogger(__name__)
 
-class GroupConfig:
-    """Container for storing classes organized by concept type groups.
-    
-    This class acts as a convenient wrapper around a dictionary that maps
-    concept type names to their corresponding classes or configurations.
-    
-    Attributes:
-        _config (Dict[str, Any]): Internal dictionary storing the configuration.
-    
-    Args:
-        binary: Configuration for binary concepts. If provided alone, 
-                applies to all concept types.
-        categorical: Configuration for categorical concepts.
-        continuous: Configuration for continuous concepts.
-        **kwargs: Additional group configurations.
-    
-    Example:
-        >>> from torch_concepts.nn.modules.utils import GroupConfig
-        >>> from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss, MSELoss
-        >>> loss_config = GroupConfig(binary=CrossEntropyLoss())
-        >>> # Equivalent to: {'binary': CrossEntropyLoss()}
-        >>>
-        >>> # Different configurations per type
-        >>> loss_config = GroupConfig(
-        ...     binary=BCEWithLogitsLoss(),
-        ...     categorical=CrossEntropyLoss(),
-        ...     continuous=MSELoss()
-        ... )
-        >>>
-        >>> # Access configurations
-        >>> default_loss = MSELoss()
-        >>> binary_loss = loss_config['binary']
-        >>> loss_config.get('continuous', default_loss)
-        MSELoss()
-        >>>
-        >>> # Check what's configured
-        >>> 'binary' in loss_config
-        True
-        >>> list(loss_config.keys())
-        ['binary', 'categorical', 'continuous']
+#: The concept types a loss or a metric collection routes over.
+TYPES = ("binary", "categorical", "continuous")
+
+
+def by_type(binary=None, categorical=None, continuous=None) -> Dict[str, Any]:
+    """``{concept type: item}`` for the types the caller actually gave.
+
+    The ``binary``/``categorical``/``continuous`` argument triple is the public
+    shape of both :class:`~torch_concepts.nn.ConceptLoss` and
+    :class:`~torch_concepts.nn.ConceptMetrics`; this is the plain dict they route
+    with internally.
     """
-    
-    def __init__(
-        self,
-        binary: Optional[Any] = None,
-        categorical: Optional[Any] = None,
-        continuous: Optional[Any] = None,
-        **kwargs
-    ):
-        self._config: Dict[str, Any] = {}
-        
-        # Build config from all provided arguments
-        if binary is not None:
-            self._config['binary'] = binary
-        if categorical is not None:
-            self._config['categorical'] = categorical
-        if continuous is not None:
-            self._config['continuous'] = continuous
-        
-        # Add any additional groups
-        self._config.update(kwargs)
-    
-    def __getitem__(self, key: str) -> Any:
-        """Get configuration for a specific group."""
-        return self._config[key]
-    
-    def __setitem__(self, key: str, value: Any) -> None:
-        """Set configuration for a specific group."""
-        self._config[key] = value
-    
-    def __contains__(self, key: str) -> bool:
-        """Check if a group is configured."""
-        return key in self._config
-    
-    def __len__(self) -> int:
-        """Return number of configured groups."""
-        return len(self._config)
-    
-    def __repr__(self) -> str:
-        """String representation."""
-        return f"GroupConfig({self._config})"
-    
-    def get(self, key: str, default: Any = None) -> Any:
-        """Get configuration for a group with optional default."""
-        return self._config.get(key, default)
-    
-    def keys(self):
-        """Return configured group names."""
-        return self._config.keys()
-    
-    def values(self):
-        """Return configured values."""
-        return self._config.values()
-    
-    def items(self):
-        """Return (group, config) pairs."""
-        return self._config.items()
-    
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert to plain dictionary."""
-        return self._config.copy()
-    
-    @classmethod
-    def from_dict(cls, config_dict: Dict[str, Any]) -> 'GroupConfig':
-        """Create GroupConfig from dictionary.
-        
-        Args:
-            config_dict: Dictionary mapping group names to configurations.
-            
-        Returns:
-            GroupConfig instance.
-        """
-        return cls(**config_dict)
-    
-    
-def check_collection(annotations: Annotations, 
-                     collection: GroupConfig,
-                     collection_name: str) -> GroupConfig:
+    return {
+        name: item
+        for name, item in zip(TYPES, (binary, categorical, continuous))
+        if item is not None
+    }
+
+
+def check_collection(annotations: Annotations,
+                     collection: Dict[str, Any],
+                     collection_name: str) -> Dict[str, Any]:
     """Validate loss/metric configurations against concept annotations.
     
     Ensures that:
@@ -134,21 +38,21 @@ def check_collection(annotations: Annotations,
     
     Args:
         annotations (Annotations): Concept annotations with metadata.
-        collection (GroupConfig): Configuration object with losses or metrics.
+        collection (dict): ``{concept type: item}``, as built by :func:`by_type`.
         collection_name (str): Either 'loss' or 'metrics' for error messages.
         
     Returns:
-        GroupConfig: Filtered configuration containing only the needed concept types.
+        dict: The configuration, restricted to the concept types that exist.
             
     Raises:
         ValueError: If validation fails (missing required configs, 
             incompatible annotation structure).
             
     Example:
-        >>> from torch_concepts.nn.modules.utils import GroupConfig, check_collection
+        >>> from torch_concepts.nn.modules.utils import by_type, check_collection
         >>> from torch.nn import BCEWithLogitsLoss, CrossEntropyLoss
         >>> from torch_concepts import Annotations
-        >>> loss_config = GroupConfig(
+        >>> loss_config = by_type(
         ...     binary=BCEWithLogitsLoss(),
         ...     categorical=CrossEntropyLoss()
         ... )
@@ -219,8 +123,8 @@ def check_collection(annotations: Annotations,
     # if not has_continuous and continuous is not None:
     #     warnings.warn(f"Continuous {collection_name} will be ignored (no continuous concepts).")
     
-    # Build filtered GroupConfig with only needed items
-    filtered = GroupConfig()
+    # Keep only the types that exist in the data
+    filtered = {}
     if has_binary:
         filtered['binary'] = binary
     if has_categorical:

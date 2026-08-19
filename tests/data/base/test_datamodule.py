@@ -15,6 +15,7 @@ import pytest
 import torch
 import torch.nn as nn
 import tempfile
+import glob
 import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -847,6 +848,10 @@ class TestCacheEmbeddings:
     ``_compute_embeddings`` exercise the caching logic without a real model.
     """
 
+    # The cache file is named after the backbone *and* the dataset's row count,
+    # so subsets of different sizes do not overwrite one another's embeddings.
+    CACHE_NAME = 'bb_n20.pt'
+
     @staticmethod
     def _make_ds(tmp_path):
         ds = ToyDataset('xor', n_gen=20, seed=0, root=str(tmp_path))
@@ -859,7 +864,7 @@ class TestCacheEmbeddings:
 
         ds.precompute_embeddings(bb)
 
-        cache_path = os.path.join(ds.root_dir, 'bb.pt')
+        cache_path = os.path.join(ds.root_dir, self.CACHE_NAME)
         assert os.path.exists(cache_path)              # cached to disk
         ds._compute_embeddings.assert_called_once()
         assert torch.equal(ds.input_data, embs)
@@ -869,7 +874,7 @@ class TestCacheEmbeddings:
         ds, bb = self._make_ds(tmp_path)
         cached = torch.randn(len(ds), 8)
         os.makedirs(ds.root_dir, exist_ok=True)
-        torch.save(cached, os.path.join(ds.root_dir, 'bb.pt'))
+        torch.save(cached, os.path.join(ds.root_dir, self.CACHE_NAME))
 
         ds._compute_embeddings = MagicMock()  # must NOT be called
 
@@ -882,7 +887,8 @@ class TestCacheEmbeddings:
     def test_force_ignores_cache(self, tmp_path):
         ds, bb = self._make_ds(tmp_path)
         os.makedirs(ds.root_dir, exist_ok=True)
-        torch.save(torch.randn(len(ds), 8), os.path.join(ds.root_dir, 'bb.pt'))
+        torch.save(torch.randn(len(ds), 8),
+                   os.path.join(ds.root_dir, self.CACHE_NAME))
 
         fresh = torch.randn(len(ds), 8)
         ds._compute_embeddings = MagicMock(return_value=fresh)
@@ -897,7 +903,8 @@ class TestCacheEmbeddings:
         is ignored and recomputed."""
         ds, bb = self._make_ds(tmp_path)
         os.makedirs(ds.root_dir, exist_ok=True)
-        torch.save(torch.randn(5, 8), os.path.join(ds.root_dir, 'bb.pt'))  # 5 != 20
+        torch.save(torch.randn(5, 8),
+                   os.path.join(ds.root_dir, self.CACHE_NAME))  # 5 != 20
 
         fresh = torch.randn(len(ds), 8)
         ds._compute_embeddings = MagicMock(return_value=fresh)
@@ -912,7 +919,8 @@ class TestCacheEmbeddings:
         ds, bb = self._make_ds(tmp_path)
         os.makedirs(ds.root_dir, exist_ok=True)
         stale = torch.randn(len(ds), 8)
-        torch.save(stale, os.path.join(ds.root_dir, 'bb.pt'))  # must be ignored
+        cache_path = os.path.join(ds.root_dir, self.CACHE_NAME)
+        torch.save(stale, cache_path)  # must be ignored
 
         fresh = torch.randn(len(ds), 8)
         ds._compute_embeddings = MagicMock(return_value=fresh)
@@ -921,9 +929,7 @@ class TestCacheEmbeddings:
 
         ds._compute_embeddings.assert_called_once()          # cache not read
         assert torch.equal(ds.input_data, fresh)
-        assert torch.equal(                                  # cache not overwritten
-            torch.load(os.path.join(ds.root_dir, 'bb.pt')), stale
-        )
+        assert torch.equal(torch.load(cache_path), stale)    # cache not overwritten
         assert ds.embs_precomputed is True
 
     def test_datamodule_delegates_with_own_defaults(self, tmp_path):
@@ -946,8 +952,32 @@ class TestCacheEmbeddings:
 
         ds.precompute_embeddings(bb, cache_dir=other)
 
-        assert os.path.exists(os.path.join(other, 'bb.pt'))
-        assert not os.path.exists(os.path.join(ds.root_dir, 'bb.pt'))
+        assert os.path.exists(os.path.join(other, self.CACHE_NAME))
+        assert not os.path.exists(os.path.join(ds.root_dir, self.CACHE_NAME))
+
+    def test_cache_name_tracks_rows_and_seed(self, tmp_path):
+        """A subset caches under its own name, keyed by size and seed, so it
+        never overwrites the full dataset's embeddings nor another subset's."""
+        ds, bb = self._make_ds(tmp_path)
+        subset = ConceptDataModule(dataset=ds, max_samples=8, seed=3).dataset
+        subset._compute_embeddings = MagicMock(return_value=torch.randn(8, 8))
+
+        subset.precompute_embeddings(bb, cache_dir=str(tmp_path))
+
+        assert os.path.exists(os.path.join(str(tmp_path), 'bb_n8_seed3.pt'))
+        assert not os.path.exists(os.path.join(str(tmp_path), self.CACHE_NAME))
+
+    def test_unseeded_subset_is_not_cached(self, tmp_path):
+        """Its rows are redrawn every run, so no file could be matched to them."""
+        ds, bb = self._make_ds(tmp_path)
+        subset = ConceptDataModule(dataset=ds, max_samples=8).dataset
+        subset._compute_embeddings = MagicMock(return_value=torch.randn(8, 8))
+
+        with pytest.warns(UserWarning, match="unseeded subset"):
+            subset.precompute_embeddings(bb, cache_dir=str(tmp_path))
+
+        assert subset.embs_precomputed is True                # still computed
+        assert not glob.glob(os.path.join(str(tmp_path), 'bb*.pt'))  # nothing written
 
 
 class TestMaxSamplesNativeSplitter:

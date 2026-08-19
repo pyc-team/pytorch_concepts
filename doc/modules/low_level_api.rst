@@ -36,6 +36,7 @@ Encoders
 
    LinearEmbeddingToConcept
    LinearEmbeddingEncoder
+   MLPEmbeddingEncoder
    SelectorEmbeddingEncoder
    ConceptWhitening
    WhitenedEmbeddingToConcept
@@ -52,6 +53,7 @@ Predictors
    CallableConceptToConcept
    HyperlinearConceptEmbeddingToConcept
    MixConceptEmbeddingToConcept
+   MixConceptEmbeddings
 
 Dense Layers
 ------------
@@ -74,6 +76,17 @@ Priors
 
    LearnablePrior
    FixedPrior
+   TiedPrior
+
+Activations
+-----------
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   TrilActivation
+   GlobalScale
 
 Graph Learners
 --------------

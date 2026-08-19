@@ -176,7 +176,7 @@ def build_mid_level(n: int, concept_names: List[str], task_names: List[str]) -> 
         variables=[input_var, latent_var, concepts, tasks],
         factors=[input_cpd, backbone_cpd, encoder_cpd, predictor_cpd],
     )
-    engine = DeterministicInference(pgm, activate_before_propagation=True)
+    engine = DeterministicInference(pgm)
 
     def forward(x):
         out = engine.query(query=["concepts", "tasks"], evidence={"input": x})

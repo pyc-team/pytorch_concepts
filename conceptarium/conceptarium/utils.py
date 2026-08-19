@@ -169,17 +169,12 @@ def attach_latent_encoder(cfg: DictConfig, backbone: nn.Module) -> nn.Module:
 def update_config_from_data(cfg: DictConfig, dm: ConceptDataModule) -> DictConfig:
     """Update model configuration from datamodule properties.
     
-    Automatically configures model input size, backbone, and embedding settings
-    based on the datamodule's dataset properties. This ensures model architecture
-    matches the data dimensions.
-    
     Args:
         cfg: Hydra DictConfig containing model configuration.
         dm: ConceptDataModule instance with dataset information.
         
     Returns:
-        Updated cfg with model.input_size, model.backbone, and 
-        model.embs_precomputed set from datamodule.
+        Updated cfg
     """
     with open_dict(cfg):
         cfg.model.model_cls.update(

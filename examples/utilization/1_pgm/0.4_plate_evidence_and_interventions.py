@@ -22,7 +22,7 @@ from torch.distributions import Bernoulli, OneHotCategorical
 from torch_concepts import seed_everything, EmbeddingVariable, ConceptVariable
 from torch_concepts.distributions import Delta
 from torch_concepts.nn import (
-    ParametricCPD, BayesianNetwork, DeterministicInference,
+    ParametricCPD, BayesianNetwork, DeterministicInference, DefaultActivation,
     LinearEmbeddingToConcept, LinearConceptToConcept, LearnablePrior, Sequential,
 )
 
@@ -43,14 +43,14 @@ def main():
             ParametricCPD(x, parents=[], parametrization=LearnablePrior(X)),
             ParametricCPD(concepts, parents=[x], parametrization=Sequential(
                 LinearEmbeddingToConcept(in_embeddings=X, out_concepts=concepts.size),
-                torch.nn.Sigmoid())),
+                DefaultActivation(concepts, "probs"))),
             ParametricCPD(xor, parents=[concepts], parametrization=Sequential(
                 LinearConceptToConcept(in_concepts=concepts.size, out_concepts=2),
-                torch.nn.Softmax(dim=-1))),
+                DefaultActivation(xor, "probs"))),
             # child wired to a SINGLE member of the plate via concepts.member("c1")
             ParametricCPD(y1, parents=[concepts.member("c1")], parametrization=Sequential(
                 LinearConceptToConcept(in_concepts=1, out_concepts=1),
-                torch.nn.Sigmoid())),
+                DefaultActivation(y1, "probs"))),
         ],
     )
 

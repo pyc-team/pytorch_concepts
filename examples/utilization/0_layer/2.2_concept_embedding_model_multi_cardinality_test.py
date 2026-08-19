@@ -16,7 +16,7 @@ import warnings
 from torch.nn import ModuleDict
 import torch.nn.functional as F
 
-from torch_concepts import seed_everything, Annotations, AnnotatedTensor
+from torch_concepts import seed_everything, AnnotatedTensor
 from torch_concepts.data import BnLearnDataset
 from torch_concepts.nn import LinearEmbeddingToConcept, MixConceptEmbeddingToConcept
 from torch_concepts.nn import MLP
@@ -40,25 +40,19 @@ def main():
     x_train = dataset.input_data    # (n_samples, 32)
     c_raw = dataset.concepts        # (n_samples, 27) integer class indices
 
-    # Concept/task split from the DAG structure
+    # Concept/task split from the DAG structure: every node but the task, keeping
+    # each one's cardinality and type.
     axis = dataset.annotations
-    task_idx = axis.labels.index(task_node)
-    concept_idx = [axis.labels.index(node) for node in axis.labels if node != task_node]
+    concept_names = [node for node in axis.labels if node != task_node]
+    concept_annotations = axis.subset(concept_names)
 
-    concept_cardinalities = [axis.cardinalities[i] for i in concept_idx]
-    n_concepts_expanded = sum(concept_cardinalities)  # one column per cardinality class
+    n_concepts_classes = concept_annotations.size    # one column per cardinality class
+    n_task_classes = axis.concept(task_node).cardinality     # 4
 
-    # Annotation describing concepts' semantics.
-    concept_annotations = Annotations(
-        labels=[axis.labels[i] for i in concept_idx],
-        cardinalities=concept_cardinalities,
-        types=['binary' if c == 1 else 'categorical' for c in concept_cardinalities],
-    )
-
-    n_task_classes = axis.cardinalities[task_idx]     # 4
-
-    c_train = c_raw[:, concept_idx]         # (n_samples, 26) integer class indices
-    y_train = c_raw[:, task_idx].long()     # (n_samples,) integer 0-3
+    # `c_raw` holds one integer class column per node, in `axis.labels` order.
+    c_all = AnnotatedTensor(c_raw, axis.to_concept_space())
+    c_train = c_all[concept_names]          # (n_samples, 26) integer class indices
+    y_train = c_all[task_node].squeeze(-1).long()   # (n_samples,) integer 0-3
 
     n_features = x_train.shape[1]           # 32
 
@@ -73,8 +67,8 @@ def main():
         # one embedding vector per cardinality-class slot
         # (batch, latent_dims) -> (batch, n_concepts_expanded, embedding_size)
         "emb_encoder": torch.nn.Sequential(
-            torch.nn.Linear(latent_dims, n_concepts_expanded * embedding_size),
-            torch.nn.Unflatten(unflattened_size=(n_concepts_expanded, embedding_size), dim=1),
+            torch.nn.Linear(latent_dims, n_concepts_classes * embedding_size),
+            torch.nn.Unflatten(unflattened_size=(n_concepts_classes, embedding_size), dim=1),
         ),
         # score each embedding: (batch, n_concepts_expanded, emb) -> (batch, n_concepts_expanded)
         "concept_encoder": torch.nn.Sequential(
@@ -100,21 +94,19 @@ def main():
         c_pred = model["concept_encoder"](embeddings)   # (batch, n_concepts_expanded)
         y_pred = model["task_predictor"](concepts=c_pred, embeddings=embeddings)  # (batch, n_task_classes)
 
-        # per-group concept loss + task cross-entropy
-        c_pred = AnnotatedTensor(c_pred, annotation=concept_annotations)
-        binary, categorical = c_pred.binary(), c_pred.categorical()
-        bin_g = concept_annotations.type_groups['binary']
-        cat_g = concept_annotations.type_groups['categorical']
-        cat_ann = categorical.annotation
-        cum = cat_ann.cumulative_cardinalities
+        # per-group concept loss + task cross-entropy. Both tensors are annotated,
+        # so every concept is addressed by name: `c_pred[name]` is its score
+        # column(s), `c_train[name]` its integer class column.
+        c_pred = AnnotatedTensor(c_pred, concept_annotations)
+        binary_names = c_pred.binary().annotation.labels
+        categorical_names = c_pred.categorical().annotation.labels
 
         binary_loss = F.binary_cross_entropy_with_logits(
-            binary.tensor,
-            c_train[:, bin_g['concept_idx']].float()
+            c_pred[binary_names], c_train[binary_names].float()
         )
         categorical_loss = sum(
-            F.cross_entropy(categorical.tensor[:, cum[i]:cum[i+1]], c_train[:, cat_g['concept_idx'][i]].long())
-            for i in range(len(cat_ann.labels))
+            F.cross_entropy(c_pred[name], c_train[name].squeeze(-1).long())
+            for name in categorical_names
         )
         task_loss = F.cross_entropy(y_pred, y_train)
         loss = binary_loss + categorical_loss + concept_reg * task_loss
@@ -125,11 +117,13 @@ def main():
 
         if epoch % 100 == 0:
             task_acc = (y_pred.detach().argmax(dim=1) == y_train).float().mean().item()
-            bin_acc = ((binary.tensor.detach().sigmoid() > 0.5).float() == c_train[:, bin_g['concept_idx']].float()).float().mean().item()
+            bin_acc = ((c_pred[binary_names].detach() > 0).float()
+                       == c_train[binary_names].float()).float().mean().item()
             cat_acc = sum(
-                (categorical.tensor.detach()[:, cum[i]:cum[i+1]].argmax(dim=1) == c_train[:, cat_g['concept_idx'][i]].long()).float().mean().item()
-                for i in range(len(cat_ann.labels))
-            ) / len(cat_ann.labels)
+                (c_pred[name].detach().argmax(dim=1) == c_train[name].squeeze(-1).long())
+                .float().mean().item()
+                for name in categorical_names
+            ) / len(categorical_names)
             print(f"Epoch {epoch}: Loss {loss.item():.4f} | Task Acc: {task_acc:.4f} | Binary C. Acc: {bin_acc:.4f} | Categorical C. Acc: {cat_acc:.4f}")
 
     return

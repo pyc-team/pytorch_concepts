@@ -1,6 +1,5 @@
 """Tests for PyroImportanceSampling (Pyro backend).
 
-All tests are skipped if pyro is not installed.
 Covers: construction, _build_proposal validation, _require_discrete,
 _validate, query() output (out.probabilities), evidence handling,
 and low-ESS warning.
@@ -10,8 +9,6 @@ import warnings
 import torch
 import torch.nn as nn
 import torch.distributions as dist
-
-pyro = pytest.importorskip("pyro", reason="pyro not installed")
 
 from torch_concepts.nn.modules.mid.variable import ConceptVariable
 from torch_concepts.nn.modules.mid.factors.cpd import ParametricCPD

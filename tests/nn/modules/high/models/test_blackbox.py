@@ -18,6 +18,7 @@ import pytest
 import unittest
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributions import Bernoulli, Categorical
 
 from torch_concepts.nn.modules.high.models.blackbox import (
@@ -172,11 +173,18 @@ class TestBlackBoxInitialization(unittest.TestCase):
     def test_no_inference_engine(self):
         """Test that BlackBox does not set up inference engines."""
         model = BlackBox(input_size=8, annotations=self.ann)
-        
+
         # BlackBox doesn't create model/inference, so accessing the
         # inference property should raise AttributeError (caught by hasattr)
         self.assertFalse(hasattr(model, 'eval_inference'))
         self.assertFalse(hasattr(model, 'train_inference'))
+
+    def test_on_train_batch_end_without_inference_engines(self):
+        """`pl.Trainer` calls `on_train_batch_end` after every training step
+        regardless of the model; it must not assume `train_inference`/
+        `eval_inference` exist just because most models have them."""
+        model = BlackBox(lightning=True, input_size=8, annotations=self.ann)
+        model.on_train_batch_end(outputs=None, batch=None, batch_idx=0)
 
 
 class TestBlackBoxForward(unittest.TestCase):
@@ -282,6 +290,40 @@ class TestBlackBoxForward(unittest.TestCase):
         self.assertEqual(
             _logits(out1, self.ALL).shape, _logits(out2, self.ALL).shape
         )
+
+    def test_forward_reads_x_from_evidence_dict(self):
+        """`BaseLearner.shared_step` calls `forward(query=..., evidence=...)`
+        with no positional `x` — the real Lightning training/eval path. The
+        input must be extracted from `evidence['input']` in that case."""
+        model = self._make_model()
+        model.eval()
+
+        x = torch.randn(2, 8)
+        out_positional = model(x, query=self.ALL)
+        out_via_evidence = model(query=self.ALL, evidence={'input': x})
+
+        self.assertTrue(torch.allclose(
+            _logits(out_positional, self.ALL), _logits(out_via_evidence, self.ALL)
+        ))
+
+    def test_fully_observed_query_shapes(self):
+        """`fully_observed_query` must return one column per binary/continuous
+        concept and a one-hot block per categorical concept, keyed by name."""
+        model = self._make_model()
+        ground_truth = torch.stack([
+            torch.tensor([0., 1.]),        # c1: binary
+            torch.tensor([2., 0.]),        # c2: categorical (3 classes)
+            torch.tensor([1., 0.]),        # task: categorical (2 classes)
+        ], dim=1)
+
+        query = model.fully_observed_query(ground_truth)
+
+        self.assertEqual(set(query), set(self.ALL))
+        self.assertEqual(tuple(query['c1'].shape), (2, 1))
+        self.assertEqual(tuple(query['c2'].shape), (2, 3))
+        self.assertEqual(tuple(query['task'].shape), (2, 2))
+        self.assertTrue(torch.equal(query['c2'], F.one_hot(torch.tensor([2, 0]), 3).float()))
+        self.assertTrue(torch.equal(query['c1'], torch.tensor([[0.], [1.]])))
 
     def test_forward_deterministic(self):
         """Test that forward pass is deterministic with same input."""
@@ -565,9 +607,21 @@ class TestBlackBoxTaskOnlyInitialization(unittest.TestCase):
             annotations=self.ann,
             task_names='task1'
         )
-        
+
         self.assertFalse(hasattr(model, 'eval_inference'))
         self.assertFalse(hasattr(model, 'train_inference'))
+
+    def test_on_train_batch_end_without_inference_engines(self):
+        """`pl.Trainer` calls `on_train_batch_end` after every training step
+        regardless of the model; it must not assume `train_inference`/
+        `eval_inference` exist just because most models have them."""
+        model = BlackBoxTaskOnly(
+            lightning=True,
+            input_size=8,
+            annotations=self.ann,
+            task_names='task1',
+        )
+        model.on_train_batch_end(outputs=None, batch=None, batch_idx=0)
 
 
 class TestBlackBoxTaskOnlyForward(unittest.TestCase):

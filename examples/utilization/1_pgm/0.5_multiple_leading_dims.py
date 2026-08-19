@@ -80,7 +80,7 @@ def main():
     )
 
     # Inference Initialization — the replicated tensors go in as-is.
-    inference_engine = DeterministicInference(concept_model, activate_before_propagation=True)
+    inference_engine = DeterministicInference(concept_model)
     evidence = {'input': x_rep}
     query_concepts = {"concepts": c_rep, "xor": y_rep}
 

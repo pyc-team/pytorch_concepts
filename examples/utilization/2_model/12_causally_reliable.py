@@ -10,7 +10,6 @@ from torch_concepts import seed_everything
 
 from torch_concepts.nn import CausallyReliableConceptBottleneckModel, MLP
 from torch_concepts.nn.modules.loss import ConceptLoss
-from torch_concepts.nn.modules.utils import GroupConfig
 from torch_concepts.nn.modules.metrics import ConceptMetrics
 from torch_concepts.data import BnLearnDataModule
 from torch_concepts.nn.modules.mid.inference.torch.deterministic import DeterministicInference

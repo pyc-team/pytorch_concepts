@@ -5,7 +5,7 @@ from __future__ import annotations
 import inspect
 import math
 import warnings
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -13,7 +13,7 @@ import torch.nn as nn
 from ..distributions import spec_for
 from ..graph.probabilistic_model import ProbabilisticModel
 from ..variable import Variable
-from .utils import flatten_event, leading_shape
+from .utils import flatten_event, leading_shape, make_temperature_schedule
 from ...outputs import InferenceOutput, ParamDict
 from .....annotations import Annotations
 from .....tensor import AnnotatedTensor
@@ -38,6 +38,31 @@ class BaseInference(nn.Module):
         ``nn.Module.__setattr__`` registers it as a submodule, the engine shares
         parameters with the model rather than copying them, so one optimizer
         over ``pgm.parameters()`` trains the graph however many engines wrap it.
+    initial_temperature, annealing, annealing_rate, final_temperature
+        Schedule for the relaxed-discrete distributions' temperature; see
+        :func:`~torch_concepts.nn.modules.mid.inference.utils.make_temperature_schedule`.
+        Lives here rather than per-engine: annealing is a property of the run,
+        not of a backend, and a training loop should be able to advance it
+        without knowing which engine it holds (see :meth:`temperature_step`).
+        Engines that never sample keep it and never read it.
+    p_int : float, default 0.0
+        Teacher-forcing rate, applied to any variable the **query** supplies a
+        value for: each leading (batch-like) element independently takes the
+        ground truth with probability ``p_int`` and the engine's own realisation
+        otherwise (see
+        :func:`~torch_concepts.nn.modules.mid.inference.utils.teacher_force`).
+        ``1.0`` always forces, ``0.0`` never does, and a value in between is
+        CEM's **RandInt**: it trains a downstream consumer — a concept
+        bottleneck's mixture, say — to cope with concept values the model did
+        not itself predict, which is what an intervention feeds it.
+
+        Here rather than per-backend for the same reason as the temperature: it
+        is a property of the run. Set it on the *train* engine only, leaving
+        evaluation at ``0.0`` so metrics measure the model unaided.
+
+        The draw is per variable, so granularity follows the graph's layout: with
+        one variable per concept (``plate=False``) it is per-sample per-concept,
+        which is RandInt proper; a plate is forced or not as a whole.
 
     Warns
     -----
@@ -45,14 +70,42 @@ class BaseInference(nn.Module):
         If any root factor's parametrization requires input arguments; such a
         root must be supplied as constant evidence on every ``query`` call.
     """
-    
+
     name: str = "BaseInference"
 
-    def __init__(self, pgm: ProbabilisticModel):
+    def __init__(
+        self,
+        pgm: ProbabilisticModel,
+        initial_temperature: float = 1.0,
+        annealing: Union[str, Callable[[int], float]] = "constant",
+        annealing_rate: float = 0.0,
+        final_temperature: float = 1e-6,
+        p_int: float = 0.0,
+    ):
         super().__init__()
         # NOTE: nn.Module.__setattr__ auto-registers ``pgm`` as a submodule, so
         # the engine shares parameters with the original PGM (no copy).
         self.pgm = pgm
+
+        if not 0.0 <= float(p_int) <= 1.0:
+            raise ValueError(f"p_int must be in [0, 1], got {p_int!r}.")
+        self.p_int = float(p_int)
+
+        # Retained for repr/introspection; the live schedule lives in ``_schedule``.
+        self.initial_temperature = float(initial_temperature)
+        self.annealing = annealing
+        self.annealing_rate = float(annealing_rate)
+        self.final_temperature = float(final_temperature)
+        self._schedule = make_temperature_schedule(
+            initial_temperature, annealing, annealing_rate, final_temperature
+        )
+        self._step: int = 0
+        # A buffer, so it follows `.to(device)` and — being persistent — travels
+        # in `state_dict`: evaluation after a reload must decode at the
+        # temperature training reached, not at the initial one.
+        self.register_buffer(
+            "_temperature", torch.tensor(float(self._schedule(self._step)))
+        )
 
         # Both keyed by a query signature and reused across queries: the label
         # chunks a query expands to (see _output_labels) and the Annotations
@@ -81,6 +134,36 @@ class BaseInference(nn.Module):
                 UserWarning,
                 stacklevel=2,
             )
+
+    # ------------------------------------------------------------------
+    # Relaxation temperature
+    # ------------------------------------------------------------------
+    # Shared by every engine, because every engine that realises a discrete
+    # variable relaxes it, and the schedule is a property of the *run* rather
+    # than of any one backend. Engines that never sample simply never read it.
+
+    @property
+    def temperature(self) -> torch.Tensor:
+        """Current relaxation temperature of the discrete distributions."""
+        return self._temperature
+
+    def temperature_step(self) -> None:
+        """Advance the schedule by one training step.
+
+        A no-op outside training, so evaluation reads the temperature training
+        reached rather than annealing past it — a model tested at a relaxation
+        it never trained at samples codes its decoder has never seen.
+
+        Updates the buffer **in place**, so callers must not run this between a
+        forward pass and its ``backward``: the temperature is part of the graph
+        autograd is about to walk. Once per optimiser step, after backward, is
+        the contract (see
+        :meth:`~torch_concepts.nn.modules.high.base.learner.BaseLearner.on_train_batch_end`).
+        """
+        if not self.training:
+            return
+        self._step += 1
+        self._temperature.fill_(float(self._schedule(self._step)))
 
     def _require_directed(self) -> None:
         """Guard for engines that need a topological order.
@@ -149,21 +232,29 @@ class BaseInference(nn.Module):
         self,
         query: Dict[str, Optional[torch.Tensor]],
         evidence: Dict[str, torch.Tensor],
+        default: Optional[int] = None,
     ) -> torch.Size:
-        """It determines the single leading (batch-like) shape that applies to an entire query call, 
+        """It determines the single leading (batch-like) shape that applies to an entire query call,
         by picking one representative tensor.
 
-        If there's any evidence, just take the first (name, value) pair from the dict 
-        and return its leading shape immediately. If there was no evidence, 
+        If there's any evidence, just take the first (name, value) pair from the dict
+        and return its leading shape immediately. If there was no evidence,
         fall through to the query dict and look for the first entry with a non-None tensor value.
-        If neither evidence nor query contains any actual tensor, default to torch.Size([1]).
+        If neither evidence nor query contains any actual tensor, fall back to
+        ``default`` observations (``torch.Size([default])``), or to
+        ``torch.Size([1])`` when no default is given.
+
+        The ``default`` is how an unconditional draw asks for a batch: with no
+        tensor anywhere there is nothing to read a batch size from, so a pure
+        ancestral sample from the priors would otherwise always be a single
+        observation.
         """
         for name, value in evidence.items():
             return self._leading_shape(name, value)
         for name, value in query.items():
             if value is not None:
                 return self._leading_shape(name, value)
-        return torch.Size([1])
+        return torch.Size([1 if default is None else int(default)])
 
     @staticmethod
     def _collapse_leading(

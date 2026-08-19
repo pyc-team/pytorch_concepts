@@ -50,13 +50,17 @@ class CelebADataset(ConceptDataset):
         root: Root directory where the dataset is stored or will be downloaded.
         concept_subset: Optional subset of concept labels to use.
         label_descriptions: Optional dict mapping concept names to descriptions.
+        image_size: When set, each image is centre-cropped to its shorter side and 
+            resized to ``(image_size, image_size)``. 
+            ``None`` (the default) keeps the native 218x178.
     """
-    
+
     def __init__(
         self,
         root: str = None, # root directory to store/load the dataset
         concept_subset: Optional[list] = None,
         label_descriptions: Optional[dict] = None,
+        image_size: Optional[int] = None,
     ):
 
         # If root is not provided, create a local folder automatically
@@ -64,6 +68,7 @@ class CelebADataset(ConceptDataset):
             root = os.path.join(os.getcwd(), 'data', "celeba")
 
         self.root = root
+        self.image_size = int(image_size) if image_size is not None else None
 
         self.label_descriptions = label_descriptions
         self._zip = None  # lazy handle for reading images straight from the zip
@@ -241,7 +246,19 @@ class CelebADataset(ConceptDataset):
         # For most cases, just return raw data
         
         return inputs, concepts, annotations, graph
-    
+
+    def _resize(self, img: "Image.Image") -> "Image.Image":
+        """Centre-crop to the shorter side, then resize to a square.
+
+        CelebA is 218x178, so a plain resize would squash the faces; cropping to
+        178x178 first is the standard preparation.
+        """
+        side = min(img.size)
+        left = (img.size[0] - side) // 2
+        top = (img.size[1] - side) // 2
+        img = img.crop((left, top, left + side, top + side))
+        return img.resize((self.image_size, self.image_size), Image.BILINEAR)
+
     def __getitem__(self, item):
         """
         Get a single sample from the dataset.
@@ -268,6 +285,8 @@ class CelebADataset(ConceptDataset):
                 with self._zip.open(f"img_align_celeba/{filename}") as fh:
                     img = Image.open(fh)
                     img.load()  # force the read so the zip entry handle can close
+            if self.image_size is not None:
+                img = self._resize(img)
             x = torch.from_numpy(np.array(img)).permute(2, 0, 1).float() / 255.0
         
         c = self.concepts[item]

@@ -24,6 +24,7 @@ import torch
 from torch_concepts import seed_everything
 from torch_concepts.nn import ConceptBottleneckModel, ConceptEmbeddingModel, MLP
 from torch_concepts.nn import DeterministicInference, IndependentInference
+from torch_concepts.nn import ConceptLoss
 from torch_concepts.data import ToyDataset
 from torch_concepts.data.base.datamodule import ConceptDataModule
 from torch.distributions import Bernoulli
@@ -104,7 +105,7 @@ def main():
 
     # Define variable distributions as Bernoulli
     variable_distributions = {name: Bernoulli for name in concept_names}
-    loss = torch.nn.BCEWithLogitsLoss()
+    loss = ConceptLoss(binary=torch.nn.BCEWithLogitsLoss())
     optim = torch.optim.AdamW
     optim_kwargs = {'lr': 0.1}
 

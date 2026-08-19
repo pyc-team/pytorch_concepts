@@ -502,6 +502,11 @@ class AnnotatedTensor:
     def __eq__(self, other): return self._wrap(self._data.__eq__(other))
     def __ne__(self, other): return self._wrap(self._data.__ne__(other))
 
+    #: ``__eq__`` is elementwise (it returns a mask, not a bool), so Python's
+    #: default ``__hash__ = None`` would only make the type unusable as a dict
+    #: key or set member. Hash by identity, like ``torch.Tensor`` does.
+    __hash__ = object.__hash__
+
     # --- Arithmetic (binary) ---
     def __add__(self, other):       return self._wrap(self._data.__add__(other))
     def __radd__(self, other):      return self._wrap(self._data.__radd__(other))

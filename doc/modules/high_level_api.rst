@@ -15,7 +15,6 @@ Annotations & Configuration
    :nosignatures:
 
    Annotations
-   GroupConfig
    AnnotatedTensor
    ConceptGraph
 

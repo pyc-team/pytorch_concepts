@@ -34,3 +34,4 @@ dependencies:
     - datasets # HuggingFace datasets (DSprites regression dataset)
     - sympy # symbolic math (DSprites regression dataset)
     - sympytorch # sympy to pytorch conversion (DSprites regression dataset)
+    - pyro-ppl # probabilistic programming (Pyro inference backend)

@@ -279,7 +279,7 @@ class TestAnnotationSurvivesAcrossEngines:
 
 class TestPyroVariationalLeadingDims:
     """The Pyro backend collapses the leading dims into one batch axis and
-    restores them on the reported tensors. Runs only where pyro is installed."""
+    restores them on the reported tensors."""
 
     @staticmethod
     def _engine_and_pgm():
@@ -307,7 +307,6 @@ class TestPyroVariationalLeadingDims:
 
     @pytest.mark.parametrize("leading", [(4,), (2, 3), (2, 3, 1)])
     def test_restore_shapes_and_labels(self, leading):
-        pytest.importorskip("pyro")
         eng, _ = self._engine_and_pgm()
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -318,7 +317,6 @@ class TestPyroVariationalLeadingDims:
             assert hasattr(tensor, "annotation")
 
     def test_matches_the_flattened_run(self):
-        pytest.importorskip("pyro")
         import pyro
         eng, _ = self._engine_and_pgm()
         x = torch.randn(2, 3, 3)
@@ -335,7 +333,6 @@ class TestPyroVariationalLeadingDims:
 
     @pytest.mark.parametrize("leading", [(4,), (2, 3)])
     def test_backward_with_leading_dims(self, leading):
-        pytest.importorskip("pyro")
         eng, pgm = self._engine_and_pgm()
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")

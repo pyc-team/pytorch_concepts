@@ -83,6 +83,7 @@ pass, Lightning training, concept queries — is inherited.
      the matching factory for per-concept state embeddings. Called with the *same*
      ``names`` as ``build_concept_variables``, it returns a list that lines up
      element-by-element: group *i*'s embedding matrix feeds group *i*'s concepts.
+     A concept contributes one embedding row per state (its cardinality).
 
    **Building the PGM**
 
@@ -285,7 +286,7 @@ pass, Lightning training, concept queries — is inherited.
                               LinearEmbeddingToConcept(in_embeddings=self.embedding_size, out_concepts=1),
                               nn.Flatten(start_dim=-2),
                           ),
-                          second="auto",
+                          second="copy",
                       ),
                   )
                   for cvar, evar in zip(concepts, embeddings)
@@ -315,7 +316,7 @@ pass, Lightning training, concept queries — is inherited.
                               in_embeddings=self.embedding_size,
                               out_concepts=tvar.size,
                           ),
-                          second="auto",
+                          second="copy",
                       )
                       for tvar in tasks
                   ],

@@ -94,9 +94,18 @@ Concept Bottleneck Model ``input → latent → concepts → task`` as a probabi
     constructor arguments (e.g., ``logits`` for a Bernoulli distribution). Parent-less (root) variables use a prior such as
     :class:`~torch_concepts.nn.LearnablePrior`.
 
+    A CPD applies **no activation**: whatever a parametrization module emits is handed to the
+    distribution verbatim, so it must already lie in that parameter's domain — ``probs`` in
+    ``[0, 1]``, ``scale`` positive, and so on. Rather than remembering which squashing function
+    each parameter wants, compose a raw layer with
+    ``DefaultActivation(variable, param)``, which reads the family's standard choice: a sigmoid 
+    for a ``Bernoulli``'s ``probs``, a softmax for a ``OneHotCategorical``'s, a softplus for a 
+    ``Normal``'s ``scale``, and the identity for an unconstrained parameter such as ``logits`` or ``loc``. 
+
     .. code-block:: python
 
-       from torch_concepts.nn import ParametricCPD, LearnablePrior, Sequential, LinearConceptToConcept, LinearEmbeddingToConcept
+       from torch_concepts.nn import (ParametricCPD, LearnablePrior, Sequential, DefaultActivation,
+                                      LinearConceptToConcept, LinearEmbeddingToConcept)
        import torch.nn as nn
 
        # Input —> root, generally provided as evidence at inference time
@@ -133,7 +142,8 @@ Concept Bottleneck Model ``input → latent → concepts → task`` as a probabi
            parents=[smoking],
            parametrization={
                'loc':   LinearConceptToConcept(in_concepts=1, out_concepts=1),
-               'scale': Sequential(LinearConceptToConcept(in_concepts=1, out_concepts=1), nn.Softplus()),
+               'scale': Sequential(LinearConceptToConcept(in_concepts=1, out_concepts=1),
+                                   DefaultActivation(tar, 'scale')),
            },
        )
 
@@ -187,7 +197,7 @@ Concept Bottleneck Model ``input → latent → concepts → task`` as a probabi
 
        from torch_concepts.nn import DeterministicInference
 
-       inference = DeterministicInference(model, activate_before_propagation=True)
+       inference = DeterministicInference(model)
 
        x = torch.randn(16, 3, 224, 224)
        out = inference.query(query=["genotype", "smoking", "tar", "cancer"], evidence={'input': x})
@@ -227,7 +237,7 @@ Concept Bottleneck Model ``input → latent → concepts → task`` as a probabi
                              parametrization={'logits': LinearConceptToConcept(2, out_concepts=1)}),
            ],
        )
-       inference = DeterministicInference(model, activate_before_propagation=True)
+       inference = DeterministicInference(model)
 
        # At training time, pass observed labels as query to clamp them as evidence
        x = torch.randn(32, 16)

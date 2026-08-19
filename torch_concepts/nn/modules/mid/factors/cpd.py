@@ -11,8 +11,8 @@ import torch
 import torch.nn as nn
 
 from ..distributions import spec_for
-from .factor import ParametricFactor
-from ..variable import Variable, Delta
+from .factor import ParametricFactor, _TRUNK_KEY
+from ..variable import Variable
 
 
 class ParametricCPD(ParametricFactor):
@@ -58,13 +58,22 @@ class ParametricCPD(ParametricFactor):
         :class:`ParametricFactor`. Defaults to concatenating the parents along
         the last dimension (or splitting them by variable type for a PyC-style
         module).
+    trunk : nn.Module, optional
+        A feature extractor shared by every parameter module. With a trunk the
+        parents are aggregated and encoded **once**, and each entry of
+        ``parametrization`` maps those features to its parameter — so a
+        ``Normal``'s ``loc`` and ``scale`` behind a pretrained backbone cost one
+        pass through it, not two. Rejected on a root CPD, which has no inputs.
+        An unbuilt :class:`LazyConstructor` head is then sized from the trunk's
+        ``out_features``. See :class:`ParametricFactor`.
 
     Raises
     ------
     ValueError
         If ``parametrization`` is omitted, is an empty dict, uses parameter
-        names the variable's distribution family does not accept, or uses the
-        single-module shorthand for a multi-parameter family.
+        names the variable's distribution family does not accept, uses the
+        single-module shorthand for a multi-parameter family, or supplies a
+        ``trunk`` on a root CPD.
     TypeError
         If ``variable`` is neither a ``Variable`` nor a list of them, if a
         parent is not a ``Variable``, or if a parametrization value is not an
@@ -97,6 +106,7 @@ class ParametricCPD(ParametricFactor):
         ] = None,
         parents: Optional[List[Variable]] = None,
         aggregate: Optional[Callable[[Dict[str, torch.Tensor]], torch.Tensor]] = None,
+        trunk: Optional[nn.Module] = None,
     ):
         # Single-Variable path: defer to normal __init__. (A variable with named
         # members — a plate — is still a single Variable and takes this path: one
@@ -138,7 +148,16 @@ class ParametricCPD(ParametricFactor):
             )
 
         return [
-            cls(v, modules[i], parents=parents, aggregate=aggregate)
+            cls(
+                v,
+                modules[i],
+                parents=parents,
+                aggregate=aggregate,
+                # Deep-copied per CPD for the same reason the parametrization is:
+                # broadcast CPDs are independent and must not share weights. Build
+                # the CPDs individually to share one trunk across them.
+                trunk=copy.deepcopy(trunk) if trunk is not None else None,
+            )
             for i, v in enumerate(variable)
         ]
 
@@ -148,6 +167,7 @@ class ParametricCPD(ParametricFactor):
         parametrization: Optional[Union[nn.Module, Dict[str, nn.Module]]] = None,
         parents: Optional[List[Variable]] = None,
         aggregate: Optional[Callable[[Dict[str, torch.Tensor]], torch.Tensor]] = None,
+        trunk: Optional[nn.Module] = None,
     ):
         # When __new__ returned a list, __init__ is also invoked once per
         # element with a singular Variable, so the list-path is a no-op here.
@@ -213,9 +233,18 @@ class ParametricCPD(ParametricFactor):
                     f"nn.Module, got {type(mod).__name__}."
                 )
 
+        if trunk is not None and not parents:
+            raise ValueError(
+                f"ParametricCPD({variable.name!r}): a `trunk` needs parents to "
+                "aggregate — a root CPD has no inputs to extract features from. "
+                "Put the shared layers inside each parameter's module instead."
+            )
+
         # Instantiate any LazyConstructor entries now that the parent (input)
         # and target (output) variable sizes are known.
-        parametrization = self._instantiate_lazy(parametrization, variable, parents)
+        parametrization = self._instantiate_lazy(
+            parametrization, variable, parents, trunk
+        )
 
         # Store the target variable and parents before super().__init__. These
         # are plain (non-nn.Module) objects, so assigning them prior to
@@ -226,6 +255,7 @@ class ParametricCPD(ParametricFactor):
         super().__init__(
             parametrization=parametrization,
             aggregate=aggregate,
+            trunk=trunk,
         )
 
     @staticmethod
@@ -233,6 +263,7 @@ class ParametricCPD(ParametricFactor):
         parametrization: Dict[str, nn.Module],
         variable: Variable,
         parents: List[Variable],
+        trunk: Optional[nn.Module] = None,
     ) -> Dict[str, nn.Module]:
         """Build any unbuilt :class:`LazyConstructor` entries into concrete modules.
 
@@ -249,15 +280,20 @@ class ParametricCPD(ParametricFactor):
           ``MultivariateNormal``'s ``scale_tril`` module is sized to its
           ``size * (size + 1) // 2`` Cholesky entries, not just ``size``.
 
-        Input parents carry a multi-dimensional ``shape`` (a ``torch.Size``), but
-        the default aggregators flatten every event into a single feature axis
-        before a module sees it, so the relevant scalar is ``Variable.size``
-        (``== math.prod(shape)``).
+        Input parents carry a multi-dimensional ``shape`` (a ``torch.Size``); the
+        sizes above are the flat widths (``Variable.size == math.prod(shape)``),
+        which is what a lazy layer's constructor asks for. Note this is only a
+        sizing convention — the default aggregators do **not** flatten: a parent
+        reaches the module in its full event shape (see ``_cat_parents``).
 
         The lazy layer may be the parametrization entry itself, or the **first**
         module of a ``Sequential`` — a continuous variable's scale head is composed
         with its activation as ``Sequential(LazyConstructor(...), softplus)``, and
         the layer before the activation is what needs sizing.
+
+        With a ``trunk``, the parameter modules consume the trunk's output rather
+        than the parents, so their input width is the trunk's ``out_features``
+        instead of the summed parent sizes.
         """
         from ...low.lazy import LazyConstructor
 
@@ -272,8 +308,23 @@ class ParametricCPD(ParametricFactor):
         if not any(lazy_head(m) for m in parametrization.values()):
             return parametrization
 
-        in_concepts = sum(p.size for p in parents if p.variable_type == "concept")
-        in_embeddings = sum(p.size for p in parents if p.variable_type == "embedding")
+        if trunk is not None:
+            trunk_out = getattr(trunk, "out_features", None)
+            if trunk_out is None:
+                raise ValueError(
+                    f"ParametricCPD({variable.name!r}): a LazyConstructor behind a "
+                    f"`trunk` is sized from the trunk's output, but "
+                    f"{type(trunk).__name__} does not declare `out_features`. Set "
+                    "that attribute on the trunk, or pass a concrete module."
+                )
+            # The heads see one untyped feature vector, not typed parents, so the
+            # same width is offered under both names and the head's constructor
+            # picks whichever it declares (``LazyConstructor.build`` also maps
+            # ``in_embeddings`` onto a standard module's ``in_features``).
+            in_concepts = in_embeddings = int(trunk_out)
+        else:
+            in_concepts = sum(p.size for p in parents if p.variable_type == "concept")
+            in_embeddings = sum(p.size for p in parents if p.variable_type == "embedding")
         out_sizes = variable.param_sizes
 
         resolved: Dict[str, nn.Module] = {}
@@ -341,6 +392,19 @@ class ParametricCPD(ParametricFactor):
         parent_variable_values = {
             p: self.resolve_value(p, parent_values) for p in self.parents
         }
+
+        if self.trunk is not None:
+            # Shared trunk: aggregate and extract features **once**, then let each
+            # parameter's head map those features to its parameter. The heads take
+            # a plain feature tensor, so ``layer_kwargs`` goes to the trunk only.
+            cat = self._aggregators[_TRUNK_KEY](parent_variable_values)
+            if isinstance(cat, dict):
+                features = self.trunk(**{**layer_kwargs, **cat})
+            else:
+                features = self.trunk(cat, **layer_kwargs)
+            return {
+                pname: mod(features) for pname, mod in self.parametrization.items()
+            }
 
         # Each parameter module uses its own pre-resolved aggregation function.
         # The aggregated inputs are merged into a *fresh* kwargs dict per

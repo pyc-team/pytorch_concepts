@@ -36,6 +36,8 @@ from .....tensor import AnnotatedTensor
 from .....distributions import Delta
 from ...utils import with_training_mode
 from ...outputs import ModelOutput
+from ...low.encoders.linear import LinearEmbeddingToConcept
+from ...low.sequential import Sequential
 from ...mid.distributions import DEFAULT_DIST_KWARGS
 from ...mid.variable import _DEFAULT_DISTRIBUTIONS, ConceptVariable, EmbeddingVariable
 
@@ -398,8 +400,8 @@ class BaseModel(nn.Module, ABC):
 
         * a plate of ``k`` homogeneous concepts → one :class:`EmbeddingVariable` of
           shape ``(k * cardinality, embedding_size)`` (the members' state embeddings
-          stacked into one matrix); a lone concept is a single-member plate of shape
-          ``(cardinality, embedding_size)``;
+          stacked into one matrix); a lone concept is a single-member plate of
+          shape ``(cardinality, embedding_size)``;
         * with ``plate=False``, one ``EmbeddingVariable`` per concept of shape
           ``(cardinality, embedding_size)``, named via ``name_fmt``.
 
@@ -411,12 +413,12 @@ class BaseModel(nn.Module, ABC):
         out: List[EmbeddingVariable] = []
         for kind, name, members in self._plate_layout(names, plate_name):
             if kind == "plate":
-                card0 = self.concept_annotations.concept(members[0]).cardinality
-                shape = (len(members) * card0, embedding_size)
+                c0 = self.concept_annotations.concept(members[0])
+                shape = (len(members) * c0.cardinality, embedding_size)
             else:
                 name = name_fmt.format(name)
-                card = self.concept_annotations.concept(members[0]).cardinality
-                shape = (card, embedding_size)
+                c = self.concept_annotations.concept(members[0])
+                shape = (c.cardinality, embedding_size)
             out.append(EmbeddingVariable(name, distribution=Delta, shape=shape))
         return out
 
@@ -583,6 +585,18 @@ class BaseModel(nn.Module, ABC):
     #     """
     #     return self._encoder
 
+    def default_extra(
+        self,
+        evidence: Optional[Dict[str, torch.Tensor]] = None,
+        query: Optional[Union[List[str], Dict[str, Optional[torch.Tensor]]]] = None,
+    ) -> Optional[Dict[str, torch.Tensor]]:
+        """Extra context merged into ``out.extra`` for loss terms that need more
+        than params/target. ``None`` by default (nothing merged); override in a
+        model whose loss needs it, e.g. ``{'evidence': evidence}`` for
+        :class:`~torch_concepts.nn.ReconstructionLoss`.
+        """
+        return None
+
     def forward(
         self,
         query: Union[List[str], Dict[str, Optional[torch.Tensor]]],
@@ -630,6 +644,7 @@ class BaseModel(nn.Module, ABC):
             guide_params=result.guide_params,
             samples=result.samples,
             probabilities=result.probabilities,
+            extra=self.default_extra(evidence, query),
         )
 
     @functools.cached_property
@@ -710,15 +725,15 @@ class BaseModel(nn.Module, ABC):
         query = {}
         for name, segments in self._query_segments.items():
             if len(segments) == 1 and segments[0][0] == 'plain':
-                query[name] = raw[:, segments[0][1]].float()
+                query[name] = raw[..., segments[0][1]].float()
                 continue
             pieces = []
             for kind, payload in segments:
                 if kind == 'plain':
-                    pieces.append(raw[:, payload].float())
+                    pieces.append(raw[..., payload].float())
                 else:
                     i, card = payload
-                    pieces.append(F.one_hot(raw[:, i].long(), card).float())
+                    pieces.append(F.one_hot(raw[..., i].long(), card).float())
             query[name] = torch.cat(pieces, dim=-1)
         return query
 

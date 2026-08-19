@@ -172,12 +172,18 @@ class ConceptDataModule(LightningDataModule):
                     "splitter=None (-> RandomSplitter) or a compatible splitter that "
                     "does not use explicit indices."
                 )
-            n = dataset.input_data.shape[0]
+            n = dataset.n_samples
             if max_samples < n:
                 generator = torch.Generator().manual_seed(seed) if seed is not None else None
                 idx = torch.randperm(n, generator=generator)[:max_samples]
-                dataset.input_data = dataset.input_data[idx]
+                # File-list datasets (e.g., CelebA, CUB).
+                if isinstance(dataset.input_data, list):
+                    dataset.input_data = [dataset.input_data[i] for i in idx.tolist()]
+                else:
+                    dataset.input_data = dataset.input_data[idx]
                 dataset.concepts = dataset.concepts[idx]
+                # Record this so any cache can be keyed to them (see ``precompute_embeddings``).
+                dataset.is_subset, dataset.subset_seed = True, seed
                 if isinstance(splitter, FixedIndicesSplitter):
                     # Its indices name original rows, which subsampling drops and
                     # renumbers: keep the survivors and move them to their new
@@ -406,7 +412,7 @@ class ConceptDataModule(LightningDataModule):
         Explicit preprocessing step — call it *before* :meth:`setup`. Delegates
         to :meth:`ConceptDataset.precompute_embeddings` with this datamodule's
         ``batch_size`` and ``workers``. With ``cache=True`` (default) the
-        embeddings are persisted to ``{cache_dir or dataset.root_dir}/{backbone.filename}``
+        embeddings are persisted to ``{cache_dir or dataset.root_dir}``
         and loaded from there on subsequent calls.
 
         Parameters

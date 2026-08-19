@@ -9,8 +9,10 @@ splitting.
 
 Flow:
 1. Load CelebA, limited to a small subset via ``max_samples``.
-2. ``dm.precompute_embeddings(ImageBackbone('resnet18'))`` — computes or loads the
-   cache at ``{dataset.root_dir}/bkb_embs_resnet18.pt``.
+2. ``dm.precompute_embeddings(ImageBackbone('resnet18'))`` — computes or loads
+   the cache at ``{dataset.root_dir}/bkb_embs_resnet18_n1000_seed42.pt`` (the
+   file name identifies the backbone, the row count, and -- for a subset --
+   the sampling seed).
 3. ``dm.setup('fit')`` — splitting only.
 4. Train a ConceptBottleneckModel on the embeddings.
 

@@ -101,6 +101,25 @@ class ParamsDict(Dict[str, AnnotatedTensor]):
         return views
 
 
+def supervised_subset(tensor, target):
+    """``tensor`` restricted to the variables ``target`` provides truth for.
+
+    A quantity spans every queried variable that reports it, which need not be
+    only the supervised concepts: a generative model queried for all its
+    variables also reports ``probs`` for the reconstructed observation. Those
+    have no ground truth, so a loss or metric drops them rather than looking
+    them up in the target and failing. Returns ``None`` when nothing survives,
+    and the tensor itself when everything does (the common case, no copy).
+    """
+    if tensor is None or target is None:
+        return tensor
+    labels = list(tensor.annotation.labels)
+    keep = [n for n in labels if n in target.annotation.label_to_index]
+    if len(keep) == len(labels):
+        return tensor
+    return tensor[keep] if keep else None
+
+
 # ---------------------------------------------------------------------------
 # InferenceOutput
 # ---------------------------------------------------------------------------

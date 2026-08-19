@@ -9,7 +9,6 @@ from typing import Any
 
 from .annotations import Annotations
 from .tensor import AnnotatedTensor
-from .nn.modules.utils import GroupConfig
 from .concept_graph import ConceptGraph
 from .nn.modules.mid.variable import Variable, ConceptVariable, EmbeddingVariable
 from .utils import seed_everything
@@ -31,7 +30,6 @@ __all__ = [
     "ConceptGraph",
 
     # Configuration
-    "GroupConfig",
 
     # Feature extraction
     "Backbone",
