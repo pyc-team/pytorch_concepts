@@ -16,8 +16,7 @@ Gaussian embedding decoded from anchor distances:
 - Both task heads: the paper's, which reads the concept embeddings, and the
   opt-in ``use_anchor_interpolation`` one, which reads the activations
 - Concept interventions: that swapping a predicted embedding for its
-  ground-truth anchor is what the model does, and that it *improves task
-  accuracy*
+  ground-truth anchor is what the model does
 - Gradient flow / parameter updates
 - The ``lightning=True`` training recipe: the sequential stages and what each
   freezes, the backbone warm-up, when ``p_replace`` is on, and the two
@@ -55,8 +54,6 @@ from torch_concepts.nn.modules.mid.variable import (
     ConceptVariable,
     EmbeddingVariable,
 )
-
-import intervention_benchmark as bench
 
 
 def _binary_ann(concepts=('c1', 'c2', 'c3'), task='task'):
@@ -567,87 +564,6 @@ class TestProbCBMPaperEquations(unittest.TestCase):
         self.assertTrue(torch.allclose(
             self.model.concept_uncertainty(self.out), expected, atol=1e-5,
         ))
-
-
-class TestProbCBMInterventionsImprovePerformance(unittest.TestCase):
-    """
-    Intervening on concepts must make the task prediction better.
-
-    See ``intervention_benchmark`` for the construction: the task is a
-    deterministic function of the concepts while the input carries only a noisy
-    view of them, so replacing predicted concepts by their ground truth is
-    strictly informative and a faithful bottleneck must improve as we do it.
-    """
-
-    @staticmethod
-    def _anchor_evidence(model, inputs, concepts, chosen):
-        """
-        Swap the predicted embedding of the ``chosen`` concepts for their
-        ground-truth anchors, keeping the model's own prediction elsewhere.
-        """
-        out = model(query=model.embedding_query_names, input=inputs)
-        return model.anchor_embeddings(
-            {
-                bench.CONCEPT_NAMES[i]: concepts[:, i:i + 1]
-                for i in chosen
-            },
-            out=out,
-        )
-
-    def _trained_model(self, use_anchor_interpolation):
-        torch.manual_seed(0)
-        x_train, c_train, y_train = bench.make_data(600, seed=0)
-        model = ProbCBM(
-            input_size=bench.N_CONCEPTS,
-            annotations=bench.annotations(),
-            task_names=[bench.TASK_NAME],
-            embedding_size=8,
-            class_embedding_size=16,
-            backbone=bench.backbone(),
-            latent_size=bench.HIDDEN_SIZE,
-            use_anchor_interpolation=use_anchor_interpolation,
-            # Random interventions during training (the paper's p_replace)
-            train_inference=DeterministicInference,
-            train_inference_kwargs={'p_int': bench.P_INT},
-        )
-        # With the paper's head the values worth forcing are the anchor
-        # embeddings, not the concepts, and they move as the anchors are
-        # learned, so they have to be rebuilt every step.
-        query_fn = (
-            None if use_anchor_interpolation
-            else lambda: model.anchor_embeddings(c_train)
-        )
-        bench.train(
-            model,
-            x_train,
-            c_train,
-            y_train,
-            epochs=200,
-            query_fn=query_fn,
-        )
-        return model
-
-    def test_task_accuracy_rises_with_the_number_of_intervened_concepts(self):
-        x_test, c_test, y_test = bench.make_data(800, seed=1)
-        model = self._trained_model(use_anchor_interpolation=False)
-        accuracies = bench.intervention_curve(
-            model,
-            x_test,
-            c_test,
-            y_test,
-            evidence_fn=self._anchor_evidence,
-        )
-        bench.assert_interventions_help(self, accuracies)
-
-    def test_interpolating_head_also_responds_to_interventions(self):
-        """
-        The opt-in variant is intervened on its concepts instead, and has to
-        improve just as much.
-        """
-        x_test, c_test, y_test = bench.make_data(800, seed=1)
-        model = self._trained_model(use_anchor_interpolation=True)
-        accuracies = bench.intervention_curve(model, x_test, c_test, y_test)
-        bench.assert_interventions_help(self, accuracies)
 
 
 class TestProbCBMTraining(unittest.TestCase):

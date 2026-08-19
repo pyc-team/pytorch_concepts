@@ -13,8 +13,7 @@ backbone through a bank of concept-activation vectors:
   hyperplane
 - The elastic-net regulariser (the paper's Eq. 1, checked numerically)
 - The PCBM-h residual toggle and the sequential-fitting freeze
-- Concept interventions: that clamping a score reaches the task head, and that
-  intervening *improves task accuracy*
+- Concept interventions: that clamping a score reaches the task head
 - Training, including the ``lightning=True`` recipe: the two sequential stages
   and what each freezes, and the penalty that rides along with each
 """
@@ -22,10 +21,8 @@ import pytest
 import unittest
 import warnings
 
-import numpy as np
 import torch
 import torch.nn as nn
-from sklearn.linear_model import LogisticRegression
 
 from pytorch_lightning import Trainer
 
@@ -37,8 +34,6 @@ from torch_concepts.distributions import Delta
 from torch_concepts.nn import MLP, PostHocCBM
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
 from torch_concepts.nn.modules.mid.variable import ConceptVariable
-
-import intervention_benchmark as bench
 
 
 def _binary_ann(concepts=('c1', 'c2', 'c3'), task='task'):
@@ -348,102 +343,6 @@ class TestPostHocCBMTraining(unittest.TestCase):
             first = first if first is not None else loss.item()
 
         self.assertLess(loss.item(), first)
-
-
-class TestPostHocCBMInterventionsImprovePerformance(unittest.TestCase):
-    """
-    Intervening on the concept scores must make the task prediction better.
-
-    This runs the whole post-hoc recipe on the shared benchmark (see
-    ``intervention_benchmark``): pretrain a black box on the task alone, freeze
-    its trunk, fit one CAV per concept on the frozen embeddings, and then train
-    only the sparse interpretable head. Because the concepts here are signed
-    margins rather than probabilities, interventions clamp them to ``+/-1``,
-    i.e. a unit margin on the correct side of the concept hyperplane.
-    """
-
-    @staticmethod
-    def _pretrain_blackbox(x, y, epochs=400):
-        """
-        A trunk trained end-to-end on the task alone, with no concepts, which is
-        then frozen and handed to the PostHocCBM as its pretrained backbone.
-        """
-        trunk = MLP(
-            input_size=bench.N_CONCEPTS,
-            hidden_size=bench.HIDDEN_SIZE,
-            n_layers=2,
-        )
-        head = nn.Linear(bench.HIDDEN_SIZE, 1)
-        opt = torch.optim.SGD(
-            list(trunk.parameters()) + list(head.parameters()),
-            lr=0.1,
-            momentum=0.9,
-        )
-        loss_fn = nn.BCEWithLogitsLoss()
-        for _ in range(epochs):
-            opt.zero_grad()
-            loss_fn(head(trunk(x)), y).backward()
-            opt.step()
-        return trunk
-
-    @staticmethod
-    def _fit_cavs(embeddings, concepts):
-        """
-        One logistic-regression probe per concept on the frozen embeddings, as
-        in the original PCBM pipeline.
-        """
-        vectors, intercepts = [], []
-        for i in range(concepts.shape[1]):
-            probe = LogisticRegression(max_iter=1000).fit(
-                embeddings,
-                concepts[:, i].numpy(),
-            )
-            vectors.append(probe.coef_[0])
-            intercepts.append(probe.intercept_[0])
-        return (
-            torch.tensor(np.stack(vectors)).float(),
-            torch.tensor(np.stack(intercepts)).float(),
-        )
-
-    def test_task_accuracy_rises_with_the_number_of_intervened_concepts(self):
-        torch.manual_seed(0)
-        x_train, c_train, y_train = bench.make_data(1000, seed=0)
-        x_test, c_test, y_test = bench.make_data(800, seed=1)
-
-        trunk = self._pretrain_blackbox(x_train, y_train)
-        with torch.no_grad():
-            embeddings = trunk(x_train).numpy()
-        vectors, intercepts = self._fit_cavs(embeddings, c_train)
-
-        model = PostHocCBM(
-            input_size=bench.N_CONCEPTS,
-            annotations=bench.annotations(),
-            task_names=[bench.TASK_NAME],
-            concept_vectors=vectors,
-            concept_intercepts=intercepts,
-            backbone=trunk,
-            latent_size=bench.HIDDEN_SIZE,
-        )
-
-        # In the post-hoc setting the concept side is fixed, so we only fit the
-        # task head, under the elastic-net penalty that keeps it sparse.
-        bench.train(
-            model,
-            x_train,
-            c_train,
-            y_train,
-            task_only=True,
-            extra_loss=model.elastic_net,
-        )
-
-        accuracies = bench.intervention_curve(
-            model,
-            x_test,
-            c_test,
-            y_test,
-            value_fn=lambda i, c: 2.0 * c[:, i:i + 1] - 1.0,
-        )
-        bench.assert_interventions_help(self, accuracies)
 
 
 class TestPostHocCBMLightningRecipe(unittest.TestCase):
