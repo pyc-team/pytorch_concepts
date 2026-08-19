@@ -1,125 +1,300 @@
 """
-Anchor-based distance predictors for Probabilistic Concept Bottleneck Models.
+Anchor-based predictors for Probabilistic Concept Bottleneck Models (ProbCBMs).
 
 ProbCBM (Kim et al., ICML 2023, https://arxiv.org/abs/2306.01574) predicts
-concepts and classes from *distances in embedding space* rather than from
-linear logits:
+concepts and classes from distances in embedding space rather than from
+linear logits. This means that each class has a learnable anchor in a
+class-embedding space and class probabilities are a softmax over the scaled
+negative distances to those.
 
-* each concept has a learnable **positive** and **negative** anchor embedding,
-  and the concept probability is a two-way softmax over the (scaled) distances
-  between the predicted concept embedding and the two anchors;
-* each class has a learnable anchor in a class-embedding space, and class
-  probabilities are a softmax over the (scaled) negative distances between a
-  projection of the concept embeddings and the class anchors.
-
-This module provides those pieces as PyC layers:
-
-* :class:`ConceptAnchors` — the shared table of positive/negative concept
-  anchors plus the learnable distance scale;
-* :class:`AnchorEmbeddingToConcept` — concept logits from embedding-to-anchor
-  distances;
-* :class:`ConceptAnchorProjection` — the shared class-head trunk: interpolate
-  the anchors with the concept activations and project the result to the
-  class-embedding space;
-* :class:`AnchorConceptToConcept` — task logits from class-anchor distances.
+Notice that we will use the same general class (:class:`EmbeddingAnchors`) to
+hold and represent both the concept anchors and the class anchors (as they
+can be seen as the same thing but in different spaces).
 """
 import math
-from typing import List, Optional
+
+from typing import List, Optional, Sequence, Union
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from torch.distributions import Distribution, Normal
+
 from ..base.layer import BaseConceptLayer
 
 
-class ConceptAnchors(nn.Module):
+class EmbeddingAnchors(nn.Module):
     """
-    Learnable positive/negative anchor embeddings, one pair per concept.
+    A learnable table of anchor embeddings, and the distance metric over it.
 
-    Holds the ``(n_concepts, 2, embedding_size)`` anchor table (index 0 along
-    the second axis is the *negative* anchor, index 1 the *positive* one) and
-    the learnable ``negative_scale`` used to turn anchor distances into concept
-    logits. Anchors are L2-normalised at use, matching the reference ProbCBM
-    implementation. The module is meant to be *shared*: the concept predictors
-    (:class:`AnchorEmbeddingToConcept`) and the class-head trunk
-    (:class:`ConceptAnchorProjection`) reference the same instance, so
-    interventions replace predicted embeddings with exactly the anchors the
-    concept probabilities are measured against.
+    The table holds ``n_items`` items. These could be things like concepts,
+    tasks, or anything else one wants to predict by proximity. Each of these
+    items will be represented by one anchor per state it can take.
+    Here, a binary item is treated as having two states (negative and positive),
+    so the table always has shape ``(n_items, n_states, embedding_size)``, where
+    ``n_states`` is always greater than or equal to 2.
+
+    :meth:`logits` is the prediction rule: it measures how far a given
+    embedding is from each of an item's anchors and turns those distances into
+    logits, scaled by the learnable :attr:`scale`.
+
+    :meth:`interpolate` runs the rule backwards, mixing an item's anchors by a
+    set of activations (e.g., concept interventions).
 
     Args:
-        n_concepts: Number of (binary) concepts.
+        n_items: Number of items (concepts, tasks, ...) with their own anchors.
         embedding_size: Dimensionality of each anchor embedding.
-        init_negative_scale: Initial value of the distance scale. Default 5.
+        cardinality: Number of states per item, using the PyC convention that a
+            binary item has cardinality 1 (and so two anchors). Default 1. For
+            now, for simplicity, we assume every item has the same cardinality.
+        anchors: Optional initial anchors of shape
+            ``(n_items, n_states, embedding_size)``. Sampled from
+            ``init_distribution`` when omitted. Useful to warm-start from, say,
+            class prototypes.
+        init_distribution: Distribution the initial anchors are drawn from,
+            which is how tables living in different spaces get initialised
+            differently. Defaults to ``Normal(0, 1 / sqrt(embedding_size))``,
+            and is ignored when ``anchors`` is given.
+        init_scale: Initial value of the learnable distance scale. Default 5.
+        per_item_scale: Whether each item gets its own distance scale. ``False``
+            (the default) shares a single scale across the whole table, which
+            is what ProbCBM does; ``True`` lets items calibrate independently,
+            which helps when they are not equally easy to separate.
+        normalize: Whether to L2-normalise the anchors at use, which puts them
+            on the unit hypersphere alongside the embeddings they are compared
+            against. Default True.
+        distance_reduction: How to reduce the squared differences over the
+            embedding axis, either ``"sum"`` (a plain Euclidean norm) or
+            ``"mean"``. Notice that the two differ by a constant factor that the
+            learnable :attr:`scale` could in theory absorb; the reference
+            implementation happens to use ``"sum"`` for concepts and ``"mean"``
+            for classes. Default is ``"sum"``.
+        eps: Stabiliser added inside the square root. Default 1e-6.
     """
 
     def __init__(
         self,
-        n_concepts: int,
+        n_items: int,
         embedding_size: int,
-        init_negative_scale: float = 5.0,
+        cardinality: int = 1,
+        anchors: Optional[torch.Tensor] = None,
+        init_distribution: Optional[Distribution] = None,
+        init_scale: float = 5.0,
+        per_item_scale: bool = False,
+        normalize: bool = True,
+        distance_reduction: str = "sum",
+        eps: float = 1e-6,
     ):
         super().__init__()
-        self.n_concepts = n_concepts
+        if distance_reduction not in ["sum", "mean"]:
+            raise ValueError(
+                f"distance_reduction must be 'sum' or 'mean', got "
+                f"{distance_reduction!r}."
+            )
+        if not isinstance(cardinality, int):
+            # TODO: support per-item cardinalities
+            raise TypeError(
+                f"cardinality must be an int, got {type(cardinality).__name__}."
+                f" We do not currently support per-item cardinalities, so this "
+                f"must be a single int."
+            )
+        if cardinality < 1:
+            raise ValueError(
+                f"cardinality must be >= 1, got {cardinality}."
+            )
+        if n_items < 1:
+            raise ValueError(
+                f"n_items must be >= 1, got {n_items}."
+            )
+
+        self.n_items = n_items
         self.embedding_size = embedding_size
-        anchors = torch.empty(n_concepts, 2, embedding_size)
-        nn.init.trunc_normal_(anchors, std=1.0 / math.sqrt(embedding_size))
+        self.cardinality = cardinality
+        # A binary item needs a (negative, positive) pair rather than a single
+        # anchor, which is where the two conventions meet.
+        self.n_states = cardinality if cardinality > 1 else 2
+        self.per_item_scale = per_item_scale
+        self.normalize = normalize
+        self.distance_reduction = distance_reduction
+        self.eps = eps
+
+        anchor_shape = (n_items, self.n_states, embedding_size)
+        if anchors is None:
+            if init_distribution is None:
+                init_distribution = Normal(
+                    0.0,
+                    1.0 / math.sqrt(embedding_size),
+                )
+            anchors = init_distribution.sample(anchor_shape)
+        else:
+            # We assume that the given anchors can be reshaped into
+            # `anchor_shape`.
+            anchors = torch.as_tensor(anchors, dtype=torch.float).reshape(
+                anchor_shape
+            )
         self.anchors = nn.Parameter(anchors)
-        self.negative_scale = nn.Parameter(
-            torch.tensor([float(init_negative_scale)])
-        )
+        # A shared scale parameter for all items
+        self.scale = nn.Parameter(torch.full(
+            (n_items,) if per_item_scale else (1,),
+            float(init_scale),
+        ))
 
     @property
     def normalized(self) -> torch.Tensor:
-        """L2-normalised anchors, shape ``(n_concepts, 2, embedding_size)``."""
-        return F.normalize(self.anchors, p=2, dim=-1)
+        """
+        The anchors as used, of shape ``(n_items, n_states, embedding_size)``,
+        L2-normalised when :attr:`normalize` is set.
+        """
+        return (
+            F.normalize(self.anchors, p=2, dim=-1)
+            if self.normalize else self.anchors
+        )
 
-    def interpolate(self, values: torch.Tensor) -> torch.Tensor:
-        """Anchor embeddings interpolated by concept activations.
-
-        For activation ``v_i`` of concept ``i`` (a probability, a relaxed
-        sample, or a hard 0/1 value under intervention),
-        returns ``v_i * anchor_i^+ + (1 - v_i) * anchor_i^-`` — exactly the
-        ground-truth anchor embedding when ``v_i`` is a hard label, which is
-        how ProbCBM performs interventions.
-
-        Args:
-            values: Concept activations of shape (batch, n_concepts).
-
-        Returns:
-            torch.Tensor: Interpolated embeddings of shape
-                (batch, n_concepts, embedding_size).
+    def _anchors_for(self, items: Optional[List[int]]) -> torch.Tensor:
+        """
+        The anchors of ``items``, or of every item when ``items`` is None.
         """
         anchors = self.normalized
-        values = values.unsqueeze(-1)
-        return values * anchors[:, 1, :] + (1.0 - values) * anchors[:, 0, :]
+        return anchors if items is None else anchors[items]
+
+    def _scale_for(self, items: Optional[List[int]]) -> torch.Tensor:
+        """
+        The distance scale of ``items``. Only a per-item scale needs slicing;
+        a shared one broadcasts over every item as it is.
+        """
+        if items is None or not self.per_item_scale:
+            return self.scale
+        return self.scale[items]
+
+    def distances(
+        self,
+        embeddings: torch.Tensor,
+        items: Optional[List[int]] = None,
+    ) -> torch.Tensor:
+        """
+        Distance from each embedding to each of its item's anchors.
+
+        Args:
+            embeddings: Embeddings of shape (batch, m * embedding_size) or
+                (batch, m, embedding_size), where m is the number of items
+                selected by ``items``.
+            items: Optional indices selecting a subset of the table.
+
+        Returns:
+            torch.Tensor: Distances of shape (batch, m, n_states).
+        """
+        anchors = self._anchors_for(items)
+        z = embeddings.reshape(embeddings.shape[0], -1, self.embedding_size)
+        squared = (z.unsqueeze(2) - anchors.unsqueeze(0)).pow(2)
+        reduced = (
+            squared.sum(-1) if self.distance_reduction == "sum"
+            else squared.mean(-1)
+        )
+        return torch.sqrt(reduced + self.eps)
+
+    def logits(
+        self,
+        embeddings: torch.Tensor,
+        items: Optional[List[int]] = None,
+    ) -> torch.Tensor:
+        """
+        Predict each item's state from how close the embedding is to its
+        anchors.
+
+        Args:
+            embeddings: Embeddings of shape (batch, m * embedding_size) or
+                (batch, m, embedding_size).
+            items: Optional indices selecting a subset of the table.
+
+        Returns:
+            torch.Tensor: Logits of shape (batch, m * cardinality).
+        """
+        distance = self.distances(embeddings, items)
+        scale = self._scale_for(items)
+        if self.cardinality == 1:
+            # Binary item: one logit from the (negative, positive) pair.
+            return scale * (distance[..., 0] - distance[..., 1])
+        # ``distance`` carries a trailing state axis here, so the scale has to
+        # be lined up against the item axis rather than broadcast into it.
+        return (-scale.unsqueeze(-1) * distance).flatten(start_dim=1)
+
+    def interpolate(
+        self,
+        values: torch.Tensor,
+        items: Optional[List[int]] = None,
+    ) -> torch.Tensor:
+        """
+        Mix each item's anchors by its activations, the inverse of
+        :meth:`logits`.
+
+        Args:
+            values: Activations of shape (batch, m * cardinality). For a binary
+                item these are the probabilities ``v``, weighting the anchors
+                by ``[1 - v, v]``.
+            items: Optional indices selecting a subset of the table.
+
+        Returns:
+            torch.Tensor: Mixed embeddings of shape
+                (batch, m, embedding_size).
+        """
+        anchors = self._anchors_for(items)
+        weights = values.reshape(values.shape[0], anchors.shape[0], -1)
+        if self.cardinality == 1:
+            weights = torch.cat([1.0 - weights, weights], dim=-1)
+        return (weights.unsqueeze(-1) * anchors.unsqueeze(0)).sum(-2)
 
 
-class AnchorEmbeddingToConcept(BaseConceptLayer):
+class AnchorPredictor(BaseConceptLayer):
     """
-    Concept predictor computing logits from embedding-to-anchor distances.
+    Predicts a set of variables from how close an embedding is to their anchors.
 
-    For each concept, the logit is ``s * (d(z, a^-) - d(z, a^+))`` where ``z``
-    is the (sampled or mean) concept embedding, ``a^+``/``a^-`` the concept's
-    positive/negative anchors and ``s`` the shared learnable
-    ``negative_scale``. This is the two-way softmax over scaled distances of
-    the reference ProbCBM (``use_neg_concept=True``) expressed as a single
-    Bernoulli logit: ``sigmoid(logit) = softmax([-s·d^-, -s·d^+])[+]``.
+    This is the prediction rule ProbCBM uses on both of its levels, so the model
+    instantiates it twice with different arguments rather than having two
+    layers. Going from the latent to the concepts, each concept owns a
+    (negative, positive) anchor pair and the embedding is read against it
+    directly. Going from the concepts to the tasks, a ``projection`` first maps
+    the concept embeddings into a class-embedding space and each task owns one
+    anchor per class.
+
+    The layer builds and owns its own :class:`EmbeddingAnchors` table, exposed
+    as :attr:`anchors`, so nothing has to be constructed on its behalf. That
+    table carries the distance scale too, which means a model splitting one
+    level across several predictors gets one scale per group rather than one
+    per level; ``per_item_scale`` makes that split explicit instead.
+
+    It also accepts either representation of its input, which is what lets the
+    task head sit on top of either the concept embeddings or the concept
+    activations. Given *embeddings* it uses them as they are; given
+    *activations* it recovers embeddings by interpolating ``source_anchors``,
+    the table those activations were decoded from. The two agree whenever an
+    activation is hard (an intervention, or teacher forcing), since the
+    interpolation *is* the ground-truth anchor, and differ only for a soft one.
 
     Args:
-        anchors: The shared :class:`ConceptAnchors` table.
-        concept_idx: Optional indices selecting which concepts this layer
-            predicts (used by the per-concept building path). ``None`` (the
-            default) predicts all concepts in the table at once.
-        eps: Stabiliser added inside the square root. Default 1e-6.
+        n_items: Number of variables (concepts, tasks, ...) this layer predicts.
+        embedding_size: Dimensionality of the space the anchors live in, i.e.
+            of the projection's *output* when there is one.
+        cardinality: Number of states per item, using the PyC convention that a
+            binary item has cardinality 1 (and so two anchors). Default 1.
+        projection: Optional map applied to the input before it is compared
+            against the anchors, used by the concept-to-task level to reach the
+            class-embedding space. ``None`` (the default) compares directly.
+        source_anchors: The :class:`EmbeddingAnchors` the layer's *activation*
+            input was decoded from, needed only when something upstream feeds
+            it activations rather than embeddings. Several tables may be given,
+            in which case their interpolations are concatenated in order, which
+            is what a bottleneck split across several plates needs.
+        **anchor_kwargs: Forwarded to :class:`EmbeddingAnchors`, e.g.
+            ``per_item_scale``, ``normalize``, ``distance_reduction``, ``eps``,
+            ``init_distribution``, ``init_scale`` or explicit ``anchors``.
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn import AnchorEmbeddingToConcept, ConceptAnchors
+        >>> from torch_concepts.nn import AnchorPredictor
         >>>
-        >>> anchors = ConceptAnchors(n_concepts=4, embedding_size=16)
-        >>> predictor = AnchorEmbeddingToConcept(anchors)
-        >>> logits = predictor(torch.randn(8, 4 * 16))
+        >>> predictor = AnchorPredictor(n_items=4, embedding_size=16)
+        >>> logits = predictor(embeddings=torch.randn(8, 4 * 16))
         >>> print(logits.shape)
         torch.Size([8, 4])
 
@@ -130,165 +305,81 @@ class AnchorEmbeddingToConcept(BaseConceptLayer):
 
     def __init__(
         self,
-        anchors: ConceptAnchors,
-        concept_idx: Optional[List[int]] = None,
-        eps: float = 1e-6,
-    ):
-        n_selected = (
-            anchors.n_concepts if concept_idx is None else len(concept_idx)
-        )
-        super().__init__(
-            out_concepts=n_selected,
-            in_embeddings=n_selected * anchors.embedding_size,
-        )
-        self.anchors = anchors
-        self.concept_idx = (
-            list(concept_idx) if concept_idx is not None
-            else None
-        )
-        self.eps = eps
-
-    def forward(self, embeddings: torch.Tensor) -> torch.Tensor:
-        """
-        Predict concept logits from concept embeddings.
-
-        Args:
-            embeddings: Concept embeddings of shape (batch, m * embedding_size)
-                or (batch, m, embedding_size), where m is the number of
-                concepts this layer predicts.
-
-        Returns:
-            torch.Tensor: Concept logits of shape (batch, m).
-        """
-        batch_size = embeddings.shape[0]
-        z = embeddings.reshape(batch_size, -1, self.anchors.embedding_size)
-        anchors = self.anchors.normalized
-        if self.concept_idx is not None:
-            anchors = anchors[self.concept_idx]
-        # (batch, m, 2): distance of each embedding to its (neg, pos) anchors.
-        distance = torch.sqrt(
-            (z.unsqueeze(2) - anchors.unsqueeze(0)).pow(2).sum(-1) + self.eps
-        )
-        return self.anchors.negative_scale * (
-            distance[..., 0] - distance[..., 1]
-        )
-
-
-class ConceptAnchorProjection(nn.Module):
-    """
-    Shared trunk of the ProbCBM class head.
-
-    Interpolates the concept anchors with the concept activations
-    (:meth:`ConceptAnchors.interpolate`) and projects the concatenated result
-    into the class-embedding space with a single linear map. Also holds the
-    learnable class distance ``scale`` shared by every task head. Meant to be
-    shared across all :class:`AnchorConceptToConcept` heads so multi-task
-    models use one class-embedding space, as in the reference implementation.
-
-    Args:
-        anchors: The shared :class:`ConceptAnchors` table.
-        class_embedding_size: Dimensionality of the class-embedding space.
-        init_scale: Initial value of the class distance scale. Default 5.
-    """
-
-    def __init__(
-        self,
-        anchors: ConceptAnchors,
-        class_embedding_size: int,
-        init_scale: float = 5.0,
-    ):
-        super().__init__()
-        self.anchors = anchors
-        self.class_embedding_size = class_embedding_size
-        self.projection = nn.Linear(
-            anchors.n_concepts * anchors.embedding_size,
-            class_embedding_size,
-        )
-        self.scale = nn.Parameter(torch.tensor([float(init_scale)]))
-
-    def forward(self, concepts: torch.Tensor) -> torch.Tensor:
-        """
-        Project concept activations into the class-embedding space.
-
-        Args:
-            concepts: Concept activations of shape (batch, n_concepts).
-
-        Returns:
-            torch.Tensor: Class embeddings of shape
-                (batch, class_embedding_size).
-        """
-        mixed = self.anchors.interpolate(concepts)
-        return self.projection(mixed.flatten(start_dim=1))
-
-
-class AnchorConceptToConcept(BaseConceptLayer):
-    """
-    Distance-based task predictor of ProbCBM.
-
-    Projects the concept activations into the class-embedding space through
-    the shared :class:`ConceptAnchorProjection` trunk and computes logits from
-    the distances to learnable per-class anchors. A categorical task with
-    cardinality ``k`` uses ``k`` anchors and logits ``-s * d_k``, so a softmax
-    over the logits recovers ProbCBM's ``softmax(-s * distance)``. A binary
-    task (cardinality 1) uses a (negative, positive) anchor pair and the
-    single logit ``s * (d^- - d^+)``, the two-anchor special case.
-
-    Args:
-        projection: The shared :class:`ConceptAnchorProjection` trunk.
-        cardinality: Cardinality of each task handled by this layer (1 for a
-            binary task). Default 1.
-        n_heads: Number of tasks handled by this layer (>1 on the plate
-            building path, where one layer predicts all tasks). Default 1.
-        eps: Stabiliser added inside the square root. Default 1e-10.
-
-    References:
-        Kim et al. "Probabilistic Concept Bottleneck Models", ICML 2023.
-        https://arxiv.org/abs/2306.01574
-    """
-
-    def __init__(
-        self,
-        projection: ConceptAnchorProjection,
+        n_items: int,
+        embedding_size: int,
         cardinality: int = 1,
-        n_heads: int = 1,
-        eps: float = 1e-10,
+        projection: Optional[nn.Module] = None,
+        source_anchors: Optional[
+            Union[EmbeddingAnchors, Sequence[EmbeddingAnchors]]
+        ] = None,
+        **anchor_kwargs,
     ):
+        if source_anchors is None:
+            source_anchors = []
+        elif isinstance(source_anchors, EmbeddingAnchors):
+            source_anchors = [source_anchors]
+
         super().__init__(
-            out_concepts=n_heads * cardinality,
-            in_concepts=projection.anchors.n_concepts,
+            out_concepts=n_items * cardinality,
+            # What the layer reads is whatever its parents provide: embeddings
+            # of the width the projection (or the anchors) expect, and/or the
+            # activations of the tables it interpolates.
+            in_embeddings=(
+                projection.in_features if projection is not None
+                else n_items * embedding_size
+            ),
+            in_concepts=(
+                sum(t.n_items * t.cardinality for t in source_anchors) or None
+            ),
+        )
+        self.anchors = EmbeddingAnchors(
+            n_items=n_items,
+            embedding_size=embedding_size,
+            cardinality=cardinality,
+            **anchor_kwargs,
         )
         self.projection = projection
-        self.cardinality = cardinality
-        self.n_heads = n_heads
-        self.eps = eps
-        n_anchor_states = cardinality if cardinality > 1 else 2
-        self.class_anchors = nn.Parameter(
-            torch.randn(
-                n_heads,
-                n_anchor_states,
-                projection.class_embedding_size,
-            )
-        )
+        self.source_anchors = nn.ModuleList(source_anchors)
 
-    def forward(self, concepts: torch.Tensor) -> torch.Tensor:
+    def _embeddings_from(self, concepts: torch.Tensor) -> torch.Tensor:
         """
-        Predict task logits from concept activations.
+        Recover embeddings from activations by interpolating the anchors those
+        activations were decoded from, one chunk per source table.
+        """
+        if not self.source_anchors:
+            raise ValueError(
+                f"{type(self).__name__} was given concept activations but no "
+                f"`source_anchors` to interpolate them from; pass the table "
+                f"the activations were decoded against."
+            )
+        chunks = []
+        start = 0
+        for table in self.source_anchors:
+            width = table.n_items * table.cardinality
+            chunks.append(table.interpolate(concepts[:, start:start + width]))
+            start += width
+        return torch.cat(chunks, dim=1)
+
+    def forward(
+        self,
+        concepts: Optional[torch.Tensor] = None,
+        embeddings: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        """
+        Predict each item's state from the input, however it is represented.
 
         Args:
-            concepts: Concept activations of shape (batch, n_concepts).
+            concepts: Activations of the variables this layer predicts from, of
+                shape (batch, n_source_items * source_cardinality).
+            embeddings: Embeddings of shape (batch, n * size) or (batch, n,
+                size), where the widths are those the projection (or the
+                anchors) expect.
 
         Returns:
-            torch.Tensor: Task logits of shape (batch, n_heads * cardinality).
+            torch.Tensor: Logits of shape (batch, n_items * cardinality).
         """
-        class_embedding = self.projection(concepts)
-        # (batch, n_heads, n_anchor_states): distance to every class anchor.
-        diff = (
-            class_embedding.unsqueeze(1).unsqueeze(1) -
-            self.class_anchors.unsqueeze(0)
-        )
-        distance = torch.sqrt(diff.pow(2).mean(-1) + self.eps)
-        scale = self.projection.scale
-        if self.cardinality == 1:
-            # Binary task: single logit from the (neg, pos) anchor pair.
-            return scale * (distance[..., 0] - distance[..., 1])
-        return (-scale * distance).flatten(start_dim=1)
+        if embeddings is None:
+            embeddings = self._embeddings_from(concepts)
+        if self.projection is not None:
+            embeddings = self.projection(embeddings.flatten(start_dim=1))
+        return self.anchors.logits(embeddings)

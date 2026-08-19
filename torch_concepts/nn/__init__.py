@@ -41,10 +41,8 @@ from .modules.low.predictors.hypernet import HyperlinearConceptEmbeddingToConcep
 from .modules.low.predictors.linear import LinearConceptToConcept
 from .modules.low.predictors.mix import MixConceptEmbeddingToConcept
 from .modules.low.predictors.anchor import (
-    AnchorConceptToConcept,
-    AnchorEmbeddingToConcept,
-    ConceptAnchorProjection,
-    ConceptAnchors,
+    AnchorPredictor,
+    EmbeddingAnchors,
 )
 from .modules.low.predictors.residual import ResidualConceptEmbeddingToConcept
 
@@ -155,10 +153,8 @@ __all__ = [
     "CallableConceptToConcept",
     "HyperlinearConceptEmbeddingToConcept",
     "MixConceptEmbeddingToConcept",
-    "AnchorConceptToConcept",
-    "AnchorEmbeddingToConcept",
-    "ConceptAnchorProjection",
-    "ConceptAnchors",
+    "AnchorPredictor",
+    "EmbeddingAnchors",
     "CAVEmbeddingToConcept",
     "ConceptActivationVectors",
     "CAVScoreEncoder",

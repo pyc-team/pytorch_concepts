@@ -17,6 +17,7 @@ from typing import Optional, Mapping
 from functools import cached_property
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 import pytorch_lightning as pl
 from pytorch_lightning.utilities.types import Optimizer, LRScheduler
@@ -295,6 +296,39 @@ class BaseLearner(pl.LightningModule):
         Override to supply additional observed (non-concept) variables.
         """
         return {"input": inputs["x"]}
+
+    def supervised_loss(self, out, target, names):
+        """Mean cross-entropy over ``names``, scored one variable at a time.
+
+        A categorical variable is scored against its classes and a binary one
+        against its single logit, so a level holding both is handled without
+        the caller having to split it. Available to models whose objective is
+        fixed by their paper and so bypass the composed :attr:`loss`.
+
+        Parameters
+        ----------
+        out : ModelOutput
+            A forward output whose query included ``names``.
+        target : AnnotatedTensor
+            Concept-space ground truth, as :meth:`prepare_target` returns.
+        names : List[str]
+            Concept/task labels to score.
+
+        Returns
+        -------
+        torch.Tensor
+            Scalar loss, averaged over ``names``.
+        """
+        total = 0.0
+        for name in names:
+            logits, labels = out.logits[[name]], target[[name]]
+            if self.concept_annotations.concept(name).cardinality > 1:
+                total = total + F.cross_entropy(logits, labels.argmax(-1))
+            else:
+                total = total + F.binary_cross_entropy_with_logits(
+                    logits, labels.float(),
+                )
+        return total / max(len(names), 1)
 
     def shared_step(self, batch, step):
         """Shared logic for train/val/test steps.
