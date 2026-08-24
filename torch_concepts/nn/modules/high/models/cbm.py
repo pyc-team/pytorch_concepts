@@ -19,9 +19,10 @@ References
 ----------
 Koh et al. "Concept Bottleneck Models", ICML 2020. https://proceedings.mlr.press/v119/koh20a.html
 """
-from typing import List, Optional, Union
+from typing import Callable, List, Optional, Union
 
 import torch
+import torch.nn as nn
 
 from torch.distributions import Bernoulli, OneHotCategorical, Normal
 
@@ -70,6 +71,12 @@ class ConceptBottleneckModel(BipartiteModel):
         the level factories). ``None`` (default) and ``True`` group homogeneous
         concepts into the minimum number of plates — even a lone concept becomes a
         single-member plate. ``False`` uses one individual variable per concept.
+    concept_encoder_factory : callable, optional
+        Factory ``(in_embeddings, out_concepts) -> nn.Module`` used instead of
+        the default linear latent-to-concept encoder. ``out_concepts`` is the
+        annotation subset for one concept plate, so custom encoders can align
+        fixed state prototypes with their output logits. This path supports only
+        binary and categorical intermediate concepts.
     **kwargs
         Forwarded to :class:`BaseModel` (e.g. ``backbone``, ``latent_size``, and
         the Lightning training arguments).
@@ -97,6 +104,7 @@ class ConceptBottleneckModel(BipartiteModel):
         train_inference_kwargs: Optional[dict] = None,
         lightning: bool = False,
         plate: Optional[bool] = None,
+        concept_encoder_factory: Optional[Callable[[int, Annotations], nn.Module]] = None,
         **kwargs,
     ):
         super().__init__(
@@ -107,6 +115,16 @@ class ConceptBottleneckModel(BipartiteModel):
             plate=plate,
             **kwargs,
         )
+        if concept_encoder_factory is not None:
+            intermediate = self.concept_annotations.subset(
+                self.intermediate_concept_names
+            )
+            if any(kind == "continuous" for kind in intermediate.types):
+                raise ValueError(
+                    "concept_encoder_factory supports binary and categorical "
+                    "intermediate concepts only."
+                )
+        self.concept_encoder_factory = concept_encoder_factory
         # One builder for both layouts (plate / individual, decided per level).
         self.pgm = self._build_model()
 
@@ -159,13 +177,25 @@ class ConceptBottleneckModel(BipartiteModel):
         tasks = self.build_concept_variables(self.task_names, plate_name="tasks")
 
         # latent → concepts: one encoder per concept variable (per group).
+        def encoder_for(cvar):
+            if self.concept_encoder_factory is None:
+                return LazyConstructor(LinearEmbeddingToConcept)
+            annotation = self.concept_annotations.subset(cvar.members)
+            encoder = self.concept_encoder_factory(self.latent_size, annotation)
+            if not isinstance(encoder, nn.Module):
+                raise TypeError(
+                    "concept_encoder_factory must return an nn.Module, got "
+                    f"{type(encoder).__name__}."
+                )
+            return encoder
+
         encoders = ParametricCPD(
             variable=concepts,
             parents=[latent_var],
             parametrization=[
                 self._flexible_parametrization(
                     variable=c,
-                    first=LazyConstructor(LinearEmbeddingToConcept), # parameterization for the first parameter
+                    first=encoder_for(c), # parameterization for the first parameter
                     second=LazyConstructor(LinearEmbeddingToConcept), # parameterization for the second parameter
                     # nn.Softplus() or ScaleTrilActivation will be 
                     # attached automatically to the second head for continuous variables.

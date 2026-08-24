@@ -14,10 +14,11 @@ import pytest
 import unittest
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributions import Bernoulli, OneHotCategorical, RelaxedBernoulli, RelaxedOneHotCategorical
 from torch_concepts.nn.modules.high.models.cbm import ConceptBottleneckModel
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
-from torch_concepts.nn import MLP, DefaultActivation
+from torch_concepts.nn import MLP, DefaultActivation, PrototypeEmbeddingToConcept
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.annotations import Annotations
 
@@ -330,6 +331,126 @@ class TestCBMFactory(unittest.TestCase):
         )
 
         self.assertFalse(isinstance(model, BaseLearner))
+
+
+class TestCBMConceptEncoderFactory(unittest.TestCase):
+    """Tests for custom, label-free concept encoders."""
+
+    def test_factory_receives_each_plate_annotation(self):
+        annotations = Annotations(
+            labels=["striped", "red", "target"],
+            cardinalities=[1, 1, 1],
+            types=["binary", "binary", "binary"],
+        )
+        received = []
+
+        def factory(in_embeddings, out_concepts):
+            received.append(tuple(out_concepts.labels))
+            return PrototypeEmbeddingToConcept(
+                in_embeddings,
+                out_concepts,
+                F.normalize(torch.randn(out_concepts.size, in_embeddings), dim=-1),
+            )
+
+        model = ConceptBottleneckModel(
+            input_size=4,
+            annotations=annotations,
+            task_names=["target"],
+            concept_encoder_factory=factory,
+        )
+        out = model(input=torch.randn(3, 4), query=["striped", "red", "target"])
+
+        assert received == [("striped", "red")]
+        assert _logits(out, ["striped", "red", "target"]).shape == (3, 3)
+
+    def test_factory_rejects_invalid_encoders_and_continuous_concepts(self):
+        binary = Annotations(labels=["concept", "task"], cardinalities=[1, 1])
+        with pytest.raises(TypeError, match="nn.Module"):
+            ConceptBottleneckModel(
+                input_size=4,
+                annotations=binary,
+                task_names=["task"],
+                concept_encoder_factory=lambda *_: object(),
+            )
+
+        continuous = Annotations(
+            labels=["amount", "task"],
+            cardinalities=[1, 1],
+            types=["continuous", "binary"],
+        )
+        with pytest.raises(ValueError, match="binary and categorical"):
+            ConceptBottleneckModel(
+                input_size=4,
+                annotations=continuous,
+                task_names=["task"],
+                concept_encoder_factory=lambda *_: nn.Identity(),
+            )
+
+    def test_default_encoder_path_is_unchanged(self):
+        annotations = Annotations(labels=["concept", "task"], cardinalities=[1, 1])
+        model = ConceptBottleneckModel(
+            input_size=4, annotations=annotations, task_names=["task"]
+        )
+        out = model(input=torch.randn(2, 4), query=["concept", "task"])
+        assert _logits(out, ["concept", "task"]).shape == (2, 2)
+
+
+class TestTaskOnlyPrototypeTraining(unittest.TestCase):
+    """Task-only optimisation with externally grounded prototypes."""
+
+    def test_training_uses_only_embeddings_and_task_labels(self):
+        torch.manual_seed(3)
+        embedding_size = 16
+        prototype_rows = F.normalize(torch.randn(2, embedding_size), dim=-1)
+        coefficients = torch.randn(512, 2)
+        x = F.normalize(
+            coefficients @ prototype_rows + 0.05 * torch.randn(512, embedding_size),
+            dim=-1,
+        )
+        y = (coefficients[:, 0] > 0).float()
+        annotations = Annotations(
+            labels=["prototype_a", "prototype_b", "task"],
+            cardinalities=[1, 1, 1],
+            types=["binary", "binary", "binary"],
+        )
+        prototype_by_concept = {
+            "prototype_a": prototype_rows[0],
+            "prototype_b": prototype_rows[1],
+        }
+
+        def factory(in_embeddings, out_concepts):
+            rows = torch.stack([
+                prototype_by_concept[name] for name in out_concepts.labels
+            ])
+            return PrototypeEmbeddingToConcept(in_embeddings, out_concepts, rows)
+
+        model = ConceptBottleneckModel(
+            input_size=embedding_size,
+            annotations=annotations,
+            task_names=["task"],
+            backbone=nn.Identity(),
+            latent_size=embedding_size,
+            concept_encoder_factory=factory,
+        )
+        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-2)
+        for _ in range(300):
+            out = model(input=x, query=["task"])
+            loss = F.binary_cross_entropy_with_logits(
+                out.logits["task"].tensor, y.unsqueeze(-1)
+            )
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+
+        with torch.inference_mode():
+            logits = model(input=x, query=["task"]).logits["task"].tensor
+        accuracy = ((logits.sigmoid() > 0.5).squeeze(-1) == y.bool()).float().mean()
+        assert accuracy > 0.9
+        encoder = next(
+            module for module in model.modules()
+            if isinstance(module, PrototypeEmbeddingToConcept)
+        )
+        assert encoder.state_prototypes.grad is None
 
 
 class TestCBMUnifiedForward(unittest.TestCase):

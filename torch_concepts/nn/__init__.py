@@ -31,6 +31,7 @@ from .modules.mid.activations import DefaultActivation
 from .modules.low.encoders.linear import LinearEmbeddingToConcept
 from .modules.low.encoders.whitening import ConceptWhitening, WhitenedEmbeddingToConcept
 from .modules.low.encoders.cav import CAVEmbeddingToConcept
+from .modules.low.encoders.prototype import PrototypeEmbeddingToConcept
 
 # Predictors
 from .modules.low.predictors.call import CallableConceptToConcept
@@ -139,6 +140,7 @@ __all__ = [
     "ConceptWhitening",
     "WhitenedEmbeddingToConcept",
     "CAVEmbeddingToConcept",
+    "PrototypeEmbeddingToConcept",
 
     # Predictor classes
     "LinearConceptToConcept",

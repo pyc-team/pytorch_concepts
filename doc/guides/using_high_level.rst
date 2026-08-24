@@ -165,6 +165,61 @@ Expand each block below for an explanation and an example.
            loss.backward()
            optimizer.step()
 
+    **Label-free, prototype-grounded concepts.** When an external model puts
+    inputs and concept descriptions in a shared embedding space (for example,
+    CLIP image and text embeddings), ``PrototypeEmbeddingToConcept`` can keep
+    those concept meanings fixed. The caller supplies compatible embeddings;
+    PyC does not load the external model. The loop below uses only task labels
+    ``y_train``—it never receives concept ground truth:
+
+    .. code-block:: python
+
+       import torch
+       import torch.nn.functional as F
+       from torch_concepts import Annotations
+       from torch_concepts.nn import (
+           ConceptBottleneckModel, PrototypeEmbeddingToConcept,
+       )
+
+       annotations = Annotations(
+           labels=["striped", "red", "target"],
+           cardinalities=[1, 1, 2],
+           types=["binary", "binary", "categorical"],
+       )
+       # x_train and prototypes are embeddings from the same external space.
+       prototypes = F.normalize(torch.randn(2, 512), dim=-1)
+       prototype_by_concept = dict(zip(["striped", "red"], prototypes))
+
+       def prototype_encoder(in_embeddings, concept_annotations):
+           rows = torch.stack([
+               prototype_by_concept[name]
+               for name in concept_annotations.labels
+           ])
+           return PrototypeEmbeddingToConcept(
+               in_embeddings, concept_annotations, rows, temperature=12.0,
+           )
+
+       model = ConceptBottleneckModel(
+           input_size=512,
+           annotations=annotations,
+           task_names=["target"],
+           backbone=torch.nn.Identity(),
+           latent_size=512,
+           concept_encoder_factory=prototype_encoder,
+       )
+       optimizer = torch.optim.AdamW(model.parameters(), lr=1e-2)
+       for x_batch, y_batch in loader:  # y_batch is the task label only
+           out = model(input=x_batch, query=["target"])
+           loss = F.cross_entropy(out.logits["target"].tensor, y_batch)
+           optimizer.zero_grad()
+           loss.backward()
+           optimizer.step()
+
+    Cosine similarity is computed after L2-normalising both sides, so raw or
+    pre-normalised compatible embeddings are accepted. This validates the
+    CBM wiring and preserves externally supplied grounding; task labels alone
+    do not establish semantic concepts.
+
     **PyTorch Lightning.** Pass ``lightning=True`` together with a ``loss`` (either a standard
     |pytorch_logo| PyTorch loss or a |pyc_logo| :class:`~torch_concepts.nn.ConceptLoss`),
     optional ``metrics``, and an optimizer; then hand the model and a datamodule to a ``Trainer``:

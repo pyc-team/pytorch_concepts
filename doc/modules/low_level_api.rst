@@ -41,6 +41,7 @@ Encoders
    ConceptWhitening
    WhitenedEmbeddingToConcept
    CAVEmbeddingToConcept
+   PrototypeEmbeddingToConcept
 
 Predictors
 ----------
