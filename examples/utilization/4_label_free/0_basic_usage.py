@@ -1,13 +1,34 @@
-"""Minimal label-free concept supervision example on ColorMNIST.
+"""Label-free concept supervision on ColorMNIST with flexible dataset layouts.
 
 This example uses:
 - LLMConceptGenerator with LiteLLMBackend to produce a concept vocabulary.
 - CLIPAnnotator to produce raw image-concept similarity scores.
 - Calibrator and FilterAnnotator stages to turn similarities into
   probabilities and filter uncertain sample-level annotations.
-- ConceptSupervisionPipeline to generate concepts from train and annotate
-  both train and validation partitions.
+- ConceptSupervisionPipeline, whose concept-discovery and annotation targets
+  can be chosen independently.
 - A tiny concept bottleneck classifier trained on the generated concepts.
+
+The ``--data-mode`` option demonstrates four equivalent ways to describe a
+dataset layout to the pipeline. Their difference is not the concept model; it
+is where split information lives:
+
+- ``full``: one dataset is used for both concept discovery and annotation. It
+  is the simplest unsplit baseline.
+- ``train-to-full``: one complete dataset is kept, but training-row indices
+  limit concept discovery. Annotation still covers every row. This is the
+  default because it avoids validation/test data influencing the vocabulary
+  while preserving a single annotation tensor aligned with the complete
+  dataset for later train/validation slicing.
+- ``indexed-splits``: one complete dataset is accompanied by named index
+  sequences. Use this when splits exist as indices rather  than as dataset objects.
+- ``separate-datasets``: named dataset objects are passed directly for
+  annotation, and the training dataset itself is used for concept discovery.
+  This fits DataModules or workflows that already expose split datasets.
+
+This flexibility lets a generator retain access to the metadata of its source
+dataset while annotations can either remain globally aligned or be kept as
+split-specific tensors.
 
 Usage:
 
@@ -15,13 +36,15 @@ Usage:
 
     python -m examples.utilization.4_label_free.0_basic_usage \
       --llm-model gemini/gemini-3.5-flash \
-      --llm-temperature 1.0
+      --llm-temperature 1.0 \
+      --data-mode train-to-full
+
+``--data-mode`` selects exactly one layout. Only ``train-to-full`` continues
+to the CBM training demonstration.
 
 For another LiteLLM provider, set the API key expected by that provider, e.g.
 ``OPENAI_API_KEY`` for ``--llm-model openai/gpt-4o``.
 """
-
-# TODO: Crea nuovi esempi per testare la pipeline con varie combinazioni di split e non split.
 
 import argparse
 import base64
@@ -29,6 +52,7 @@ from io import BytesIO
 
 import torch
 from torch import nn
+from torch.utils.data import Subset
 from PIL import Image
 from tqdm import tqdm
 
@@ -59,14 +83,41 @@ def _image_data_url(image: torch.Tensor) -> str:
     return f"data:image/png;base64,{encoded}"
 
 
-def dataset_aware_prompt(dataset, class_names=None, num_examples=4, **kwargs):
-    """Build an in-context prompt using images from the generation dataset."""
+def dataset_aware_prompt(
+    dataset,
+    class_names=None,
+    indices=None,
+    num_examples=4,
+    **kwargs,
+):
+    """Build a prompt from the rows selected for concept discovery.
+
+    ``indices`` is supplied by ``generation_indices`` when the pipeline uses a
+    complete dataset but restricts generation to a split. Sampling those rows
+    here prevents validation/test images from influencing the LLM vocabulary.
+    When ``dataset`` is already a :class:`~torch.utils.data.Subset`, no indices
+    are needed: its local rows are sampled while metadata is read from the
+    underlying dataset.
+    """
     del kwargs
-    example_indices = torch.linspace(
-        0,
-        len(dataset) - 1,
-        steps=min(num_examples, len(dataset)),
-    ).long()
+    candidate_indices = range(len(dataset)) if indices is None else indices
+    num_candidates = len(candidate_indices)
+    if num_candidates:
+        positions = torch.linspace(
+            0,
+            num_candidates - 1,
+            steps=min(num_examples, num_candidates),
+        ).long()
+        example_indices = [
+            int(candidate_indices[position]) for position in positions.tolist()
+        ]
+    else:
+        example_indices = []
+
+    metadata_dataset = dataset
+    while isinstance(metadata_dataset, Subset):
+        metadata_dataset = metadata_dataset.dataset
+
     content = [{
         "type": "text",
         "text": (
@@ -76,11 +127,11 @@ def dataset_aware_prompt(dataset, class_names=None, num_examples=4, **kwargs):
             "shape concepts. Return one concept per line and no explanations."
         ),
     }]
-    for index in example_indices.tolist():
+    for index in example_indices:
         sample = dataset[index]
         native = sample["concepts"]["native"]
-        digit = int(native[dataset.concept_names.index("digit")])
-        color_id = int(native[dataset.concept_names.index("color")])
+        digit = int(native[metadata_dataset.concept_names.index("digit")])
+        color_id = int(native[metadata_dataset.concept_names.index("color")])
         color = ("red", "green")[color_id]
         content.extend([
             {
@@ -95,11 +146,31 @@ def dataset_aware_prompt(dataset, class_names=None, num_examples=4, **kwargs):
     return [{"role": "user", "content": content}]
 
 
+def _print_generated(generated):
+    """Print generated output names and tensor shapes."""
+    for name, values in generated.items():
+        print(f"{name}: {tuple(values.shape)}")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--llm-model", default="gemini/gemini-3.5-flash")
     parser.add_argument("--llm-temperature", type=float, default=1.0)
     parser.add_argument("--llm-timeout", type=float, default=120.0)
+    parser.add_argument(
+        "--data-mode",
+        choices=(
+            "full",
+            "train-to-full",
+            "indexed-splits",
+            "separate-datasets",
+        ),
+        default="train-to-full",
+        help=(
+            "Dataset layout demonstrated by this invocation. The default "
+            "discovers concepts from training rows and annotates all rows."
+        ),
+    )
     parser.add_argument(
         "--clip-device",
         default=None,
@@ -114,14 +185,12 @@ def main():
         temperature=args.llm_temperature,
         timeout=args.llm_timeout,
     )
-    # The generator sees the datamodule's concatenated dataset and proposes a
-    # shared concept vocabulary for the downstream annotator.
+    # The generator proposes one shared concept vocabulary for the annotator.
     generator = LLMConceptGenerator(
         llm=llm,
         prompt=dataset_aware_prompt,
     )
-    # The annotator scores the concatenated dataset once; train and validation
-    # rows are selected from that shared output below.
+    # The annotation target is selected by the requested data mode below.
     annotator = CLIPAnnotator(
         model_name="openai/clip-vit-base-patch32",
         prompt_template="a photo of a {}",
@@ -152,6 +221,37 @@ def main():
     train_indices = datamodule.trainset.indices
     val_indices = datamodule.valset.indices
 
+    pipeline_kwargs = {"class_names": ["even", "odd"]}
+    if args.data_mode == "full":
+        generated = pipeline(dataset, **pipeline_kwargs)
+        _print_generated(generated)
+        return
+
+    if args.data_mode == "indexed-splits":
+        generated = pipeline(
+            dataset,
+            generation_indices=train_indices,
+            annotation_indices={
+                "train": train_indices,
+                "val": val_indices,
+            },
+            **pipeline_kwargs,
+        )
+        _print_generated(generated)
+        return
+
+    if args.data_mode == "separate-datasets":
+        generated = pipeline(
+            datamodule.trainset,
+            annotation_datasets={
+                "train": datamodule.trainset,
+                "val": datamodule.valset,
+            },
+            **pipeline_kwargs,
+        )
+        _print_generated(generated)
+        return
+
     # Save the native task labels before generated concepts are selected as
     # ground truth below. That selection changes ``concept_names`` to the
     # generated vocabulary.
@@ -168,9 +268,10 @@ def main():
     generated_name = "CLIPAnnotator"
     datamodule.generate_concepts(
         pipeline,
-        class_names=["even", "odd"],
+        generation_indices=train_indices,
         use_as_gt=True,
         generated_gt_name=generated_name,
+        **pipeline_kwargs,
     )
 
     generated = dataset.generated_concepts[generated_name]

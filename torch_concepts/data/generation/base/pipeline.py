@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Callable, Literal, Sequence
 
-from torch.utils.data import Dataset
+from torch.utils.data import Dataset, Subset
 
 from torch_concepts import Annotations
 from torch_concepts.tensor import AnnotatedTensor
@@ -14,14 +14,9 @@ from torch_concepts.data.generation.base.generator import Generator
 from torch_concepts.data.generation.base.filter_generator import FilterGenerator
 from torch_concepts.data.generation.filters import DeduplicateConcepts
 
-# TODO: La pipeline deve poter essere utilizzabile su dataset splittati o non. Gestire coi kwargs gli indici degli split. In questo modo si può usare la pipeline sia per generare concetti su un dataset concatenato, sia per generare concetti su un dataset splittato (train/val/test). In entrambi i casi, la pipeline deve essere in grado di gestire i dataset e gli indici degli split in modo flessibile.
-
-
 # merged: merge all generated concepts, then send them to all annotators.
 # cartesian: send each generated concept axis to all annotators.
 # zip: send each generated concept axis to the corresponding annotator.
-# Annotation can run over the generation dataset or over named datasets such as
-# {"train": train_dataset, "val": val_dataset}.
 RoutingMode = Literal["merged", "cartesian", "zip"]
 
 
@@ -31,10 +26,21 @@ DEFAULT_GENERATOR_FILTER = DeduplicateConcepts()
 class ConceptSupervisionPipeline:
     """Compose concept generation, annotation, calibration, and filtering.
 
-    Calling the pipeline uses ``dataset`` as the concept-generation dataset.
-    By default, that same dataset is annotated. Pass ``annotation_datasets`` to
-    annotate one or more named datasets with the generated concept axis while
-    still generating concepts from ``dataset``.
+    Concept discovery and sample annotation are deliberately independent. A
+    generator uses dataset-level evidence to define a concept vocabulary, while
+    an annotator assigns values for that vocabulary to individual samples. This
+    separation lets the same pipeline work whether splits are represented by
+    one concatenated dataset plus indices or by distinct dataset objects.
+
+    Calling the pipeline with only ``dataset`` discovers concepts and annotates
+    every row in that dataset. ``generation_indices`` restricts the evidence
+    seen by generators, but generators still receive the original dataset
+    object; this is useful when prompts depend on dataset metadata. Annotation
+    targets can then be selected independently with either
+    ``annotation_indices`` (logical subsets of ``dataset``) or
+    ``annotation_datasets`` (already-separated dataset objects). The pipeline
+    does not define what a "train" or "validation" split means: those names
+    and their rows belong to the caller.
 
     Routing controls which generated concept axes are sent to each annotator:
 
@@ -155,22 +161,45 @@ class ConceptSupervisionPipeline:
         self,
         dataset: Dataset,
         class_names: list[str] | None = None,
+        generation_indices: Sequence[int] | None = None,
         annotation_datasets: Mapping[str, Dataset] | None = None,
+        annotation_indices: Mapping[str, Sequence[int]] | None = None,
         **kwargs: Any,
     ) -> dict[str, AnnotatedTensor]:
-        """Generate concepts from ``dataset`` and annotate datasets.
+        """Generate a concept vocabulary and annotate selected dataset rows.
+
+        The generation and annotation selections answer different questions:
+        ``generation_indices`` says which samples may influence the vocabulary;
+        annotation targets say which samples receive values for that vocabulary.
+        For example, use training indices for generation and leave annotation
+        targets unspecified to discover concepts from training data while
+        obtaining one annotation tensor aligned with the complete dataset.
+
+        Use ``annotation_indices`` when one complete dataset is split by row
+        indices and split-specific outputs are desired. Use
+        ``annotation_datasets`` when those splits are already represented by
+        dataset objects. These forms are alternatives because mixing them would
+        make the source of each named annotation target ambiguous.
 
         Parameters
         ----------
         dataset : Dataset
-            Dataset used by concept generators. If ``annotation_datasets`` is
-            omitted, this dataset is also annotated.
+            Dataset used by concept generators. If no annotation targets are
+            supplied, this dataset is also annotated.
         class_names : list[str], optional
             Class names forwarded to concept generators.
+        generation_indices : sequence of int, optional
+            Rows exposed to concept generation through the ``indices`` keyword.
+            The generator still receives the original ``dataset`` object.
         annotation_datasets : mapping of str to Dataset, optional
             Named datasets to annotate with the concepts generated from
             ``dataset``. Output keys are prefixed with each mapping key, e.g.
             ``"train_CLIPAnnotator"`` and ``"val_CLIPAnnotator"``.
+        annotation_indices : mapping of str to sequence of int, optional
+            Named logical subsets of ``dataset`` to annotate. Each sequence is
+            wrapped in a temporary :class:`torch.utils.data.Subset`, and output
+            keys are prefixed as for ``annotation_datasets``. Mutually
+            exclusive with ``annotation_datasets``.
         **kwargs
             Additional keyword arguments forwarded to generators and annotators.
 
@@ -180,22 +209,26 @@ class ConceptSupervisionPipeline:
             Sample-level concept values carrying their concept-axis metadata.
             With named annotation datasets, keys are split-prefixed.
         """
+        datasets_to_annotate, prefix_outputs = self._annotation_dataset_map(
+            dataset,
+            annotation_datasets,
+            annotation_indices,
+        )
         generator_names = self._component_names(self.generators)
         annotator_names = self._component_names(self.annotators)
+        generation_kwargs = dict(kwargs)
+        if generation_indices is not None:
+            generation_kwargs["indices"] = generation_indices
         concepts = {
             generator_name: generator.generate(
                 dataset=dataset,
                 class_names=class_names,
-                **kwargs,
+                **generation_kwargs,
             )
             for generator_name, generator in zip(generator_names, self.generators)
         }
 
         values: dict[str, AnnotatedTensor] = {}
-        datasets_to_annotate, prefix_outputs = self._annotation_dataset_map(
-            dataset,
-            annotation_datasets,
-        )
         for dataset_name, annotation_dataset in datasets_to_annotate.items():
             dataset_values = self._annotate_dataset(
                 concepts=concepts,
@@ -470,13 +503,14 @@ class ConceptSupervisionPipeline:
     def _annotation_dataset_map(
         default_dataset: Dataset,
         annotation_datasets: Mapping[str, Dataset] | None,
+        annotation_indices: Mapping[str, Sequence[int]] | None = None,
     ) -> tuple[dict[str, Dataset], bool]:
         """Resolve and validate the datasets that should be annotated.
 
         When no explicit mapping is supplied, the generation dataset is
-        returned under an empty name and output prefixing is disabled.
-        Otherwise, mapping names and dataset values are validated and retained
-        in their original order.
+        returned under an empty name and output prefixing is disabled. Named
+        datasets are retained directly, while named index sequences become
+        temporary subsets of the default dataset.
 
         Parameters
         ----------
@@ -484,6 +518,8 @@ class ConceptSupervisionPipeline:
             Generation dataset used as the annotation fallback.
         annotation_datasets : mapping of str to Dataset, optional
             Explicitly named datasets to annotate.
+        annotation_indices : mapping of str to sequence of int, optional
+            Explicitly named row selections from ``default_dataset``.
 
         Returns
         -------
@@ -497,10 +533,41 @@ class ConceptSupervisionPipeline:
             If the supplied value is not a mapping or a mapping value is not a
             dataset.
         ValueError
-            If the mapping is empty or contains an empty or non-string name.
+            If both target forms are supplied, or if a mapping is empty or
+            contains an empty or non-string name.
         """
-        if annotation_datasets is None:
+        if annotation_datasets is not None and annotation_indices is not None:
+            raise ValueError(
+                "annotation_datasets and annotation_indices are mutually exclusive."
+            )
+        if annotation_datasets is None and annotation_indices is None:
             return {"": default_dataset}, False
+
+        if annotation_indices is not None:
+            if not isinstance(annotation_indices, Mapping):
+                raise TypeError(
+                    "annotation_indices must be a mapping of names to index "
+                    "sequences."
+                )
+            if not annotation_indices:
+                raise ValueError("annotation_indices must not be empty.")
+
+            subsets: dict[str, Dataset] = {}
+            for name, indices in annotation_indices.items():
+                if not isinstance(name, str) or not name:
+                    raise ValueError(
+                        "annotation_indices keys must be non-empty strings."
+                    )
+                if not isinstance(indices, Sequence) or isinstance(
+                    indices, (str, bytes)
+                ):
+                    raise TypeError(
+                        f"annotation_indices[{name!r}] must be a sequence of "
+                        "indices."
+                    )
+                subsets[name] = Subset(default_dataset, indices)
+            return subsets, True
+
         if not isinstance(annotation_datasets, Mapping):
             raise TypeError(
                 "annotation_datasets must be a mapping of names to datasets."
