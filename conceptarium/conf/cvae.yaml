@@ -17,8 +17,9 @@ hydra:
       # recon * 0.5 * || input - decoder(z, concepts) ||^2 
       recon: 1.0, 2.0 
 
-      # Nel paper originale abbiamo q(z | x, c), non q(z | x)
-      model.model_cls.condition_encoder: true
+      # p(z | c) vs a fixed N(0, I). Pinned to the paper's conditional prior so the
+      # job count is unchanged; add `, false` to run the ablation (doubles the sweep).
+      model.model_cls.conditional_prior: true
 
       model.model_cls.prior_encoder.hidden_size: 64
 

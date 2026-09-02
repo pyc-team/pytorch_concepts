@@ -219,11 +219,12 @@ def judge_predict(judge, flat, blocks, batch_size):
 
 
 def train_judge(datamodule, shape, device, epochs, width, lr, batch_size):
-    """The external judge for steerability, trained on REAL data: ``(judge, accuracy)``.
+    """The external judge for steerability, trained on REAL data: ``(judge, accuracies)``.
 
     The paper scores steering with a classifier trained on real data rather than the
-    model's own concept head -- otherwise the model grades its own homework -- and
-    requires it to reach at least 98% before the steerability figure means anything.
+    model's own concept head -- otherwise the model grades its own homework -- and gates
+    on the WORST concept ("the minimum accuracy of any concept classifier is at least
+    98%"), so ``accuracies`` is per concept and the check below is too.
 
     Every concept is treated as MULTICLASS with ``max(cardinality, 2)`` classes, so a
     binary concept is simply 2-class and nothing downstream branches on concept type.
@@ -267,12 +268,16 @@ def train_judge(datamodule, shape, device, epochs, width, lr, batch_size):
             for i, (name, column, _) in enumerate(blocks):
                 correct[i] += (predicted[name] == c[:, column].long()).sum().cpu()
             total += x.shape[0]
-    accuracy = float((correct / max(total, 1)).mean())
-    if accuracy < 0.95:
-        logger.warning("judge reached %.1f%% accuracy, below the 95%% the steerability "
-                       "metric assumes; raise --classifier-epochs or --classifier-width",
-                       100 * accuracy)
-    return judge, accuracy, blocks
+    # Per concept, never averaged: one concept the judge cannot read makes its own
+    # steerability column meaningless, and a mean hides that behind the concepts it can.
+    per_concept = {name: float(correct[i] / max(total, 1))
+                   for i, (name, _, _) in enumerate(blocks)}
+    failed = {name: a for name, a in per_concept.items() if a < 0.95}
+    if failed:
+        logger.warning("judge below 95%% on %s; those steerability scores are not readable "
+                       "-- raise --classifier-epochs or --classifier-width",
+                       ", ".join(f"{n} {100 * a:.1f}%" for n, a in failed.items()))
+    return judge, per_concept, blocks
 
 
 def steerability(engine, judge, blocks, images, drawn, concepts, batch_size):
@@ -292,8 +297,11 @@ def steerability(engine, judge, blocks, images, drawn, concepts, batch_size):
             # If yes then we can steer the concept to that state, otherwise continue.
             if candidates.numel() == 0:
                 continue
+            # Set all the evidence: 'z', 'all concepts'
             evidence = {name: drawn[name][candidates] for name in drawn}
+            # Change the value of the steered concept
             evidence[variable.name] = value.expand(candidates.numel(), -1)
+            # generate the image 
             steered = decode(engine, evidence, batch_size)
             scores.append(100.0 * (judge_predict(judge, steered, blocks, batch_size)
                                    [variable.name] == k).float().mean().item())
@@ -382,9 +390,13 @@ def analyse(job_dir, args, device):
     score, n = fid(images[: args.n_fid], datamodule, shape, device, args.batch_size)
     row = {"model": name, "run_dir": str(job_dir), "fid": score, "n_fid_samples": n}
 
-    # CBGM only, by request. The metric itself is model-agnostic -- drop this guard to
-    # score the CVAE baseline the paper's Table 1 compares against.
-    if name == "cbgm":
+    # Steerability needs `z` drawn independently of the concepts: clamping `z` while
+    # intervening isolates the intervention only if `z` does not already encode the
+    # concepts it was drawn under. Always true for the CBGM (fixed N(0, I)), true for a
+    # CVAE only without its conditional prior -- under p(z | c) the drawn `z` carries
+    # `c_old`, so the decoder is handed a contradiction and the score measures how it
+    # resolves that rather than how well the model steers.
+    if name == "cbgm" or not getattr(model, "conditional_prior", True):
         figure_steering(engine, images, drawn, concepts, shape,
                         out_dir / "steering.png", args.batch_size)
         dataset = str(cfg.dataset.name)
@@ -392,8 +404,9 @@ def analyse(job_dir, args, device):
             _JUDGES[dataset] = train_judge(datamodule, shape, device, args.classifier_epochs,
                                            args.classifier_width, args.classifier_lr,
                                            args.batch_size)
-        judge, accuracy, blocks = _JUDGES[dataset]
-        row["classifier_accuracy"] = accuracy
+        judge, accuracies, blocks = _JUDGES[dataset]
+        row["classifier_accuracy"] = min(accuracies.values())  # the paper's gate: the worst
+        row.update({f"classifier_accuracy_{n}": a for n, a in accuracies.items()})
         row.update(steerability(engine, judge, blocks, images[: args.n_steer],
                                 {k: v[: args.n_steer] for k, v in drawn.items()},
                                 concepts, args.batch_size))
