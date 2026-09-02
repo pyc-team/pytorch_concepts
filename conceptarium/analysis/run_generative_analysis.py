@@ -3,9 +3,15 @@
 Finds every finished CBGM / CVAE run under ``--outputs``, rebuilds it from its saved
 config and checkpoint, and writes per run:
 
-    results/generative/fid.csv                              one row per run
+    results/generative/results.csv                          one row per run
     results/generative/<model>/<run>/generation.png         5x2 prior samples + concepts
     results/generative/<model>/<run>/steering.png           CBGM only, see below
+
+`results.csv` carries FID for every run, plus -- for CBGM -- the paper's steerability
+metric (Ismail et al., ICLR 2024, Table 1) and the accuracy of the classifier that judges
+it. The paper turns a binary concept ON and scores that one direction; a k-way concept has
+no single "on", so those average the same procedure over every state. colormnist needs the
+generalisation (neither concept is binary), CelebA is all binary and matches Table 1.
 
 Generation is a single unconditioned ancestral query. Each model's own graph supplies the
 order: CBGM draws ``z -> embeddings -> c -> mixing -> x``, CVAE ``c -> z -> x`` (its prior
@@ -60,13 +66,13 @@ def find_runs(root: Path):
     (which also stands in for "it did not crash"). Filtering on the model target is what
     keeps the discriminative runs sharing this output tree out of the table.
     """
-    found = {}
-    for config in sorted(root.rglob(".hydra/config.yaml")):
+    jobs = set()
+    for config in root.rglob(".hydra/config.yaml"):
         job = config.parent.parent
         target = OmegaConf.select(OmegaConf.load(config), "model.model_cls._target_") or ""
         if target.split(".")[-1] in MODELS and any((job / "checkpoints").glob("*.ckpt")):
-            found.setdefault(job.resolve(), None)
-    return sorted(found, key=lambda p: p.stat().st_mtime)
+            jobs.add(job.resolve())
+    return sorted(jobs, key=lambda p: p.stat().st_mtime)
 
 
 def load(job_dir: Path, device):
@@ -97,7 +103,7 @@ def load(job_dir: Path, device):
     return cfg, datamodule, model, engine
 
 
-def grid(rows, shape, path, titles=None, row_labels=None):
+def grid(rows, shape, path, titles=None):
     """Write a grid of images, one tensor batch per row; short rows leave a blank tail."""
     import matplotlib
     matplotlib.use("Agg")
@@ -110,17 +116,11 @@ def grid(rows, shape, path, titles=None, row_labels=None):
         images = batch.detach().reshape(-1, *shape).cpu().clamp(0, 1)
         for c in range(n_cols):
             ax = axes[r][c]
-            ax.set_xticks([]), ax.set_yticks([])
-            for spine in ax.spines.values():
-                spine.set_visible(False)
+            ax.axis("off")
             if c < images.shape[0]:
                 ax.imshow(images[c].permute(1, 2, 0).squeeze().numpy())
-            else:
-                ax.set_visible(False)
             if titles is not None and titles[r] is not None and c < len(titles[r]):
                 ax.set_title(titles[r][c], fontsize=5)
-        if row_labels is not None:
-            axes[r][0].set_ylabel(row_labels[r], fontsize=6)
     fig.tight_layout()
     fig.savefig(path, dpi=150)
     plt.close(fig)
@@ -177,7 +177,7 @@ def figure_generation(images, drawn, annotations, concepts, shape, path, rows=2,
          titles=[captions[r * cols:(r + 1) * cols] for r in range(rows)])
 
 
-def figure_steering(engine, images, drawn, model, concepts, shape, path, batch_size, n_rows=5):
+def figure_steering(engine, images, drawn, concepts, shape, path, batch_size, n_rows=5):
     """Each row: one generated sample, then that sample at every state of every concept.
 
     Every column is decoded from the *same* ``z`` as the original beside it, so a
@@ -193,12 +193,115 @@ def figure_steering(engine, images, drawn, model, concepts, shape, path, batch_s
 
     columns, titles = [images[:n_rows]], ["original"]
     for variable in concepts:
-        for state, value in states_of(model.pgm.variables[variable.name], images.device):
+        for state, value in states_of(variable, images.device):
             columns.append(decode(engine, {**base, variable.name: value.expand(n_rows, -1)},
                                   batch_size))
             titles.append(f"{variable.name}={state}")
     grid([torch.stack([col[r] for col in columns]) for r in range(n_rows)], shape, path,
          titles=[titles] + [None] * (n_rows - 1))
+
+
+_JUDGES = {}  # dataset name -> (judge, accuracy); it depends on the data, not the model
+
+
+def judge_predict(judge, flat, blocks, batch_size):
+    """Each concept's predicted class index, per sample."""
+    chunks = []
+    with torch.inference_mode():
+        for i in range(0, flat.shape[0], batch_size):
+            chunks.append(judge(flat[i: i + batch_size].clamp(0, 1)))
+    logits = torch.cat(chunks)
+    out, offset = {}, 0
+    for name, _, n in blocks:
+        out[name] = logits[:, offset: offset + n].argmax(-1)
+        offset += n
+    return out
+
+
+def train_judge(datamodule, shape, device, epochs, width, lr, batch_size):
+    """The external judge for steerability, trained on REAL data: ``(judge, accuracy)``.
+
+    The paper scores steering with a classifier trained on real data rather than the
+    model's own concept head -- otherwise the model grades its own homework -- and
+    requires it to reach at least 98% before the steerability figure means anything.
+
+    Every concept is treated as MULTICLASS with ``max(cardinality, 2)`` classes, so a
+    binary concept is simply 2-class and nothing downstream branches on concept type.
+    One shared conv trunk (global average pooling, so the parameter count does not
+    depend on image size) feeds a single head split into per-concept blocks.
+    """
+    annotations = datamodule.annotations
+    blocks = [(name, annotations.concept(name).index, max(annotations.concept(name).cardinality, 2))
+              for name in annotations.labels]
+    judge = nn.Sequential(
+        nn.Unflatten(-1, shape),
+        nn.Conv2d(shape[0], width, 3, stride=2, padding=1), nn.ReLU(),
+        nn.Conv2d(width, 2 * width, 3, stride=2, padding=1), nn.ReLU(),
+        nn.Conv2d(2 * width, 4 * width, 3, stride=2, padding=1), nn.ReLU(),
+        nn.AdaptiveAvgPool2d(1), nn.Flatten(),
+        nn.Linear(4 * width, sum(n for _, _, n in blocks)),
+    ).to(device)
+
+    def losses(logits, c):
+        offset = 0
+        for _, column, n in blocks:
+            yield F.cross_entropy(logits[:, offset: offset + n], c[:, column].long())
+            offset += n
+
+    optimiser = torch.optim.AdamW(judge.parameters(), lr=lr)
+    judge.train()
+    for _ in range(epochs):
+        for batch in datamodule.train_dataloader():
+            x, c = batch["inputs"]["x"].to(device), batch["concepts"]["c"].to(device)
+            loss = sum(losses(judge(x.reshape(x.shape[0], -1)), c))
+            optimiser.zero_grad()
+            loss.backward()
+            optimiser.step()
+
+    judge.eval()
+    correct, total = torch.zeros(len(blocks)), 0
+    with torch.inference_mode():
+        for batch in datamodule.test_dataloader():
+            x, c = batch["inputs"]["x"].to(device), batch["concepts"]["c"].to(device)
+            predicted = judge_predict(judge, x.reshape(x.shape[0], -1), blocks, batch_size)
+            for i, (name, column, _) in enumerate(blocks):
+                correct[i] += (predicted[name] == c[:, column].long()).sum().cpu()
+            total += x.shape[0]
+    accuracy = float((correct / max(total, 1)).mean())
+    if accuracy < 0.95:
+        logger.warning("judge reached %.1f%% accuracy, below the 95%% the steerability "
+                       "metric assumes; raise --classifier-epochs or --classifier-width",
+                       100 * accuracy)
+    return judge, accuracy, blocks
+
+
+def steerability(engine, judge, blocks, images, drawn, concepts, batch_size):
+    """Steerability metric: the average fraction of samples whose concept can be steered."""
+    
+    predicted = judge_predict(judge, images, blocks, batch_size)
+    results, per_concept = {}, []
+    # For each concept variable
+    for variable in concepts:
+        scores = []
+        # For each state of that concept variable
+        for k, (_, value) in enumerate(states_of(variable, images.device)):
+            if variable.size == 1 and k == 0:
+                continue  # binary: the paper turns the concept ON, it never turns it off
+            candidates = (predicted[variable.name] != k).nonzero().flatten()
+            # Check if the concept prediction is equal to that state.
+            # If yes then we can steer the concept to that state, otherwise continue.
+            if candidates.numel() == 0:
+                continue
+            evidence = {name: drawn[name][candidates] for name in drawn}
+            evidence[variable.name] = value.expand(candidates.numel(), -1)
+            steered = decode(engine, evidence, batch_size)
+            scores.append(100.0 * (judge_predict(judge, steered, blocks, batch_size)
+                                   [variable.name] == k).float().mean().item())
+        score = sum(scores) / len(scores) if scores else float("nan")
+        results[f"steerability_{variable.name}"] = score
+        per_concept.append(score)
+    results["steerability"] = sum(per_concept) / len(per_concept) if per_concept else float("nan")
+    return results
 
 
 class Inception(nn.Module):
@@ -254,7 +357,7 @@ def fid(generated, datamodule, shape, device, batch_size):
     return float(metric.compute()), n
 
 
-def analyse(job_dir, args, device, out_root):
+def analyse(job_dir, args, device):
     """Figures and the FID row for one trained run."""
     cfg, datamodule, model, engine = load(job_dir, device)
     name = MODELS[cfg.model.model_cls._target_.split(".")[-1]]
@@ -266,18 +369,35 @@ def analyse(job_dir, args, device, out_root):
     # `<date>_<sweep>_<job>`: a job dir is named for its number alone, so every job of a
     # sweep would otherwise share one output directory and overwrite the last.
     run_id = f"{job_dir.parent.parent.name}_{job_dir.parent.name}_{job_dir.name}"
-    out_dir = out_root / name / run_id
+    out_dir = args.results / name / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
-    images, drawn = draw(engine, "z", concepts, max(args.n_fid, 10), args.batch_size)
+    # One draw serves the figures, FID and steerability, so all three describe the
+    # same samples rather than three independent ones.
+    images, drawn = draw(engine, "z", concepts,
+                         max(args.n_fid, args.n_steer, 10), args.batch_size)
 
     figure_generation(images, drawn, datamodule.annotations, concepts, shape,
                       out_dir / "generation.png")
-    if name == "cbgm":
-        figure_steering(engine, images, drawn, model, concepts, shape,
-                        out_dir / "steering.png", args.batch_size)
 
     score, n = fid(images[: args.n_fid], datamodule, shape, device, args.batch_size)
-    return {"model": name, "run_dir": str(job_dir), "fid": score, "n_fid_samples": n}
+    row = {"model": name, "run_dir": str(job_dir), "fid": score, "n_fid_samples": n}
+
+    # CBGM only, by request. The metric itself is model-agnostic -- drop this guard to
+    # score the CVAE baseline the paper's Table 1 compares against.
+    if name == "cbgm":
+        figure_steering(engine, images, drawn, concepts, shape,
+                        out_dir / "steering.png", args.batch_size)
+        dataset = str(cfg.dataset.name)
+        if dataset not in _JUDGES:  # depends on the data, not the model: train it once
+            _JUDGES[dataset] = train_judge(datamodule, shape, device, args.classifier_epochs,
+                                           args.classifier_width, args.classifier_lr,
+                                           args.batch_size)
+        judge, accuracy, blocks = _JUDGES[dataset]
+        row["classifier_accuracy"] = accuracy
+        row.update(steerability(engine, judge, blocks, images[: args.n_steer],
+                                {k: v[: args.n_steer] for k, v in drawn.items()},
+                                concepts, args.batch_size))
+    return row
 
 
 def main():
@@ -285,6 +405,11 @@ def main():
     parser.add_argument("--outputs", type=Path, default=Path("outputs"))
     parser.add_argument("--results", type=Path, default=Path("results/generative"))
     parser.add_argument("--n-fid", type=int, default=2048)
+    parser.add_argument("--n-steer", type=int, default=1000,
+                        help="prior draws scored for steerability (the paper's number)")
+    parser.add_argument("--classifier-epochs", type=int, default=5)
+    parser.add_argument("--classifier-width", type=int, default=16)
+    parser.add_argument("--classifier-lr", type=float, default=1e-3)
     parser.add_argument("--batch-size", type=int, default=128)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--steer-concepts", nargs="*", default=None,
@@ -305,7 +430,7 @@ def main():
         print(f"\n=== {job_dir} ===")
         try:
             seed_everything(args.seed)
-            rows.append(analyse(job_dir, args, device, args.results))
+            rows.append(analyse(job_dir, args, device))
             print(rows[-1])
         except Exception as error:  # a checkpoint predating an architecture change, say
             logger.exception("skipping %s", job_dir)
@@ -314,8 +439,8 @@ def main():
     if rows:
         args.results.mkdir(parents=True, exist_ok=True)
         table = pd.DataFrame(rows).sort_values("fid")
-        table.to_csv(args.results / "fid.csv", index=False)
-        print(f"\n{table.to_string(index=False)}\n\nwrote {args.results / 'fid.csv'}")
+        table.to_csv(args.results / "results.csv", index=False)
+        print(f"\n{table.to_string(index=False)}\n\nwrote {args.results / 'results.csv'}")
     for job_dir, error in failures:
         print(f"skipped {job_dir}: {type(error).__name__}: {error}")
     if failures and not rows:
