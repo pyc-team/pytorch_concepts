@@ -6,11 +6,15 @@ Tests loss functions for concept-based learning:
 - WeightedConceptLoss: Weighted combination of concept and task losses
 - DepthWeightedConceptLoss: Graph-depth-weighted concept losses
 """
+import math
+
 import pytest
 import unittest
 import torch
 from torch import nn
-from torch_concepts.nn.modules.loss import ConceptLoss, WeightedConceptLoss, DepthWeightedConceptLoss, L1LogitRegularizer
+from torch_concepts.nn.modules.loss import (ConceptLoss, WeightedConceptLoss,
+                                            DepthWeightedConceptLoss, L1LogitRegularizer,
+                                            ReconstructionLoss)
 from torch_concepts.nn.modules.outputs import ModelOutput
 from torch_concepts.annotations import Annotations
 from torch_concepts.tensor import AnnotatedTensor
@@ -1383,3 +1387,63 @@ class TestContinuousQuantityResolution:
         assert float(ConceptLoss(continuous=torch.nn.MSELoss())(out)) == pytest.approx(1.0)
         assert float(ConceptLoss(continuous=torch.nn.MSELoss(),
                                  continuous_param="value")(out)) == pytest.approx(16.0)
+
+
+class TestReconstructionLossDelta:
+    """``ReconstructionLoss`` over a ``Delta`` observation.
+
+    A point mass has no spread to score, and ``Delta.log_prob`` is a
+    gradient-free constant 0, so the family gets its own branch: the squared
+    error. The factor of 0.5 is not cosmetic — it makes the term the sigma=1
+    Gaussian NLL minus its (decoder-independent) constant, so a model moved from
+    ``Normal`` to ``Delta`` keeps the reconstruction weight it was tuned with.
+    """
+
+    @staticmethod
+    def _output(value, observed):
+        annotations = Annotations(
+            labels=["input"], cardinalities=[value.shape[-1]], types=["continuous"]
+        )
+        return ModelOutput(
+            value=AnnotatedTensor(value, annotations, axis=-1),
+            extra={"evidence": {"input": observed}},
+        )
+
+    def test_the_family_is_inferred_from_a_lone_value_quantity(self):
+        """No `distribution=` needed: `{'value'}` names Delta on its own."""
+        value = torch.zeros(4, 3)
+        loss = ReconstructionLoss(variable="input")(self._output(value, torch.ones(4, 3)))
+        # 0.5 * ||1 - 0||^2 summed over 3 elements = 1.5, the same for every row.
+        assert float(loss) == pytest.approx(1.5)
+
+    def test_it_equals_half_the_summed_squared_error(self):
+        value, observed = torch.randn(6, 5), torch.randn(6, 5)
+        loss = ReconstructionLoss(variable="input")(self._output(value, observed))
+        expected = (0.5 * (value - observed).pow(2).sum(-1)).mean()
+        assert torch.allclose(loss, expected)
+
+    def test_it_matches_the_sigma_one_gaussian_nll_up_to_a_constant(self):
+        """The identity the switch off `Normal` rests on."""
+        value, observed = torch.randn(6, 5), torch.randn(6, 5)
+        delta = ReconstructionLoss(variable="input")(self._output(value, observed))
+        normal = -torch.distributions.Independent(
+            torch.distributions.Normal(value, torch.ones_like(value)), 1
+        ).log_prob(observed).mean()
+        constant = 5 * 0.5 * math.log(2 * math.pi)
+        assert torch.allclose(normal - delta, torch.tensor(constant))
+
+    def test_the_reduction_still_applies_to_the_batch(self):
+        value, observed = torch.randn(6, 5), torch.randn(6, 5)
+        out = self._output(value, observed)
+        mean = ReconstructionLoss(variable="input")(out)
+        total = ReconstructionLoss(variable="input", reduction="sum")(out)
+        assert torch.allclose(total, mean * 6)
+
+    def test_it_carries_a_gradient(self):
+        """`Delta.log_prob` returns a detached CPU scalar; the squared error must
+        not, or the decoder would train on nothing."""
+        value = torch.randn(4, 3, requires_grad=True)
+        ReconstructionLoss(variable="input")(
+            self._output(value, torch.randn(4, 3))
+        ).backward()
+        assert value.grad is not None and bool((value.grad != 0).any())

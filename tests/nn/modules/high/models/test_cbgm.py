@@ -1,17 +1,19 @@
 """Smoke tests for the Concept Bottleneck Generative Model.
 
-CBGM sets ``param_for_discrete_var = "probs"``, so every head it builds must end
-in the activation that maps a raw output into ``[0, 1]`` (Bernoulli) or onto the
-simplex (categorical). ``_flexible_parametrization`` composes that activation
-onto every head from the family's ``DistributionSpec``, so the heads passed in —
-including the user's ``decoder`` — are raw. These tests pin the resulting
-parameters to their domains.
+CBGM sets ``param_for_discrete_var = "probs"``, so every concept head it builds
+must end in the activation that maps a raw output into ``[0, 1]`` (Bernoulli) or
+onto the simplex (categorical). ``_flexible_parametrization`` composes that
+activation onto every head from the family's ``DistributionSpec``, so the heads
+passed in are raw. These tests pin the resulting parameters to their domains.
+
+The observation is a ``Delta``: one ``value`` head, no ``scale``, and the
+decoder's output taken verbatim — which is what makes a generated sample the
+decoder's image rather than that image plus noise.
 """
 import pytest
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.distributions import Bernoulli, Normal
 
 from torch_concepts.annotations import Annotations
 from torch_concepts.nn import (
@@ -20,6 +22,7 @@ from torch_concepts.nn import (
     MLP,
     ReconstructionLoss,
 )
+from torch_concepts.distributions import Delta
 
 pytest.importorskip("pyro", reason="CBGM's default inference engine needs pyro-ppl")
 
@@ -32,11 +35,10 @@ def build_model(annotations, plate=None, use_unknown=True, **kwargs):
         input_size=INPUT_SIZE,
         annotations=annotations,
         encoder=MLP(INPUT_SIZE, 16, LATENT_SIZE),
-        # Raw: the model composes the observation's `probs` sigmoid on top.
+        # The decoder's output is the reconstruction, unactivated.
         decoder=MLP(n_contexts * EMBEDDING_SIZE, 16, INPUT_SIZE),
         latent_size=LATENT_SIZE,
         embedding_size=EMBEDDING_SIZE,
-        observation=Bernoulli,
         plate=plate,
         use_unknown=use_unknown,
         **kwargs,
@@ -61,9 +63,10 @@ class TestConceptBottleneckGenerativeModel:
         model = build_model(binary_annotations)
         out = model(query=list(model.pgm.variables), input=torch.rand(6, INPUT_SIZE))
         # `probs` is one annotated tensor holding every queried variable that has
-        # them — both concepts and the reconstructed observation.
+        # them. The observation is a Delta and so reports `value`, not `probs`.
         assert bool(((out.probs >= 0) & (out.probs <= 1)).all())
-        assert out.probs["input"].shape == (6, INPUT_SIZE)
+        assert "input" not in out.probs.annotation.labels
+        assert out.value["input"].shape == (6, INPUT_SIZE)
         for name in ("a", "b"):
             assert out.probs[name].shape == (6, 1)
 
@@ -110,7 +113,7 @@ class TestConceptBottleneckGenerativeModel:
     def test_gradients_reach_the_decoder(self, binary_annotations):
         model = build_model(binary_annotations)
         out = model(query=list(model.pgm.variables), input=torch.rand(6, INPUT_SIZE))
-        out.probs["input"].sum().backward()
+        out.value["input"].sum().backward()
         assert any(p.grad is not None for p in model.decoder.parameters())
 
 
@@ -146,7 +149,6 @@ class TestGuideSharesOneBackbonePass:
             decoder=MLP(n_contexts * EMBEDDING_SIZE, 16, INPUT_SIZE),
             latent_size=LATENT_SIZE,
             embedding_size=EMBEDDING_SIZE,
-            observation=Bernoulli,
             plate=False,
         )
 
@@ -231,7 +233,7 @@ class TestBinaryStateEmbeddings:
         reach the encoder that produces them, not just the concept head."""
         model = build_model(binary_annotations, plate=False)
         out = model(query=list(model.pgm.variables), input=torch.rand(6, INPUT_SIZE))
-        out.probs["input"].sum().backward()
+        out.value["input"].sum().backward()
 
         emb_cpd = model.pgm.factors["a_embedding"]
         grads = [p.grad for p in emb_cpd.parameters()]
@@ -259,8 +261,8 @@ class TestUseUnknownAblation:
         matching-width bottleneck, and gradients must still reach it."""
         model = build_model(binary_annotations, plate=False, use_unknown=False)
         out = model(query=list(model.pgm.variables), input=torch.rand(6, INPUT_SIZE))
-        assert out.probs["input"].shape == (6, INPUT_SIZE)
-        out.probs["input"].sum().backward()
+        assert out.value["input"].shape == (6, INPUT_SIZE)
+        out.value["input"].sum().backward()
         assert any(p.grad is not None for p in model.decoder.parameters())
 
 
@@ -288,20 +290,24 @@ class TestContextNetwork:
             context_hidden_size=8, context_norm="layer",
         )
         out = model(query=list(model.pgm.variables), input=torch.rand(6, INPUT_SIZE))
-        assert out.probs["input"].shape == (6, INPUT_SIZE)
-        out.probs["input"].sum().backward()
+        assert out.value["input"].shape == (6, INPUT_SIZE)
+        out.value["input"].sum().backward()
         emb_cpd = model.pgm.factors["a_embedding"]
         grads = [p.grad for p in emb_cpd.parameters()]
         assert grads and all(g is not None for g in grads)
 
 
-class TestNormalObservation:
-    """``observation=Normal`` with ``global_scale=True`` (the default): ``loc``
-    from the decoder, ``scale`` a single learnable value shared by every pixel
-    and every sample, instead of a whole second copy of the decoder.
+class TestDeltaObservation:
+    """The observation is a point mass: one ``value`` head, no ``scale``, and the
+    decoder's output taken verbatim.
+
+    That last part is the reason for the family. Under a ``Normal`` an
+    unconditional draw is ``loc + sigma * eps``, so at sigma=1 over pixels in
+    [0, 1] the generated image is mostly noise and every consumer has to know to
+    read ``loc`` instead of the sample. A Delta has nothing to add.
     """
 
-    def _model(self, binary_annotations, global_scale=True, input_size=INPUT_SIZE):
+    def _model(self, binary_annotations, input_size=INPUT_SIZE):
         n_contexts = len(binary_annotations.labels) + 1
         flat_size = input_size if isinstance(input_size, int) else 1
         if not isinstance(input_size, int):
@@ -314,44 +320,44 @@ class TestNormalObservation:
             decoder=MLP(n_contexts * EMBEDDING_SIZE, 16, flat_size),
             latent_size=LATENT_SIZE,
             embedding_size=EMBEDDING_SIZE,
-            observation=Normal,
-            global_scale=global_scale,
             plate=False,
         )
 
-    def test_reports_loc_and_positive_scale(self, binary_annotations):
+    def test_reports_value_and_nothing_else(self, binary_annotations):
         model = self._model(binary_annotations)
         out = model(query=list(model.pgm.variables), input=torch.rand(6, INPUT_SIZE))
-        assert out.loc["input"].shape == (6, INPUT_SIZE)
-        assert bool((out.scale["input"] > 0).all())
+        assert sorted(out.params["input"]) == ["value"]
+        assert out.value["input"].shape == (6, INPUT_SIZE)
 
-    def test_global_scale_has_exactly_one_parameter(self, binary_annotations):
-        model = self._model(binary_annotations, global_scale=True)
-        scale_head = model.pgm.factors["input"].parametrization["scale"]
-        assert sum(p.numel() for p in scale_head.parameters()) == 1
+    def test_the_cpd_allocates_a_single_head(self, binary_annotations):
+        """No `scale` head at all — not a fixed one, not a decoder copy."""
+        cpd = self._model(binary_annotations).pgm.factors["input"]
+        assert set(cpd.parametrization) == {"value"}
 
-    def test_global_scale_false_reproduces_the_decoder_copy(self, binary_annotations):
-        model = self._model(binary_annotations, global_scale=False)
-        scale_head = model.pgm.factors["input"].parametrization["scale"]
-        assert sum(p.numel() for p in scale_head.parameters()) > 1
-        decoder_params = sum(p.numel() for p in model.decoder.parameters())
-        scale_params = sum(p.numel() for p in scale_head.parameters())
-        assert scale_params >= decoder_params  # a full independent copy
-
-    def test_reconstruction_loss_is_finite(self, binary_annotations):
+    def test_reconstruction_loss_is_the_squared_error(self, binary_annotations):
+        """`ReconstructionLoss` scores a Delta as 0.5 * ||x - v||^2, which is the
+        sigma=1 Gaussian NLL minus its constant — so a model moved off `Normal`
+        keeps the reconstruction weight it was tuned with."""
         model = self._model(binary_annotations)
         x = torch.rand(6, INPUT_SIZE)
         out = model(query=list(model.pgm.variables), input=x)
-        out.extra = {"evidence": {"input": x}}
         loss = ReconstructionLoss(variable="input")(out)
+        expected = (0.5 * (out.value["input"] - x).pow(2).sum(-1)).mean()
         assert torch.isfinite(loss)
+        assert torch.allclose(loss, expected)
 
-    def test_generation_through_ancestral_sampling(self, binary_annotations):
-        """The scale head's ``(B, size)`` output must survive an *unconditioned*
-        decode of a multi-dimensional observation — the exact path
-        ``analysis/run_generative_analysis.py`` uses to produce ``overview.png`` and the
-        steering figures. A scale collapsed to ``(1,)``/``()`` would raise deep
-        inside the relaxed-distribution builder here, not at training time."""
+    def test_the_evidence_reaches_the_loss_without_help(self, binary_annotations):
+        """`default_extra` publishes it on every forward — the loss needs no
+        manual `out.extra`."""
+        model = self._model(binary_annotations)
+        x = torch.rand(6, INPUT_SIZE)
+        out = model(query=list(model.pgm.variables), input=x)
+        assert torch.equal(out.extra["evidence"]["input"], x)
+
+    def test_a_generated_sample_is_the_decoder_output(self, binary_annotations):
+        """The point of the Delta. Under a Normal this draw was `loc + noise`;
+        it is now exactly what the decoder produced, so `analysis`-style code can
+        read the sample directly. Also covers a multi-dimensional observation."""
         image_shape = (1, 8, 8)
         model = self._model(binary_annotations, input_size=image_shape)
         model.eval()
@@ -362,8 +368,8 @@ class TestNormalObservation:
 
         out = engine.query(query=query, evidence={}, n_samples=3)
         flat_size = image_shape[0] * image_shape[1] * image_shape[2]
-        assert out.loc["input"].shape == (3, flat_size)
-        assert bool((out.scale["input"] > 0).all())
+        assert out.value["input"].shape == (3, flat_size)
+        assert torch.allclose(out.samples["input"], out.value["input"])
 
 
 class TestContinuousConcepts:
@@ -429,9 +435,6 @@ class TestTeacherForcingRate:
             decoder=MLP(n_contexts * EMBEDDING_SIZE, 16, INPUT_SIZE),
             latent_size=LATENT_SIZE,
             embedding_size=EMBEDDING_SIZE,
-            observation=Normal,
-            scale_init=0.3,
-            scale_learnable=False,
             inference_kwargs=dict(engine),
             train_inference_kwargs=dict(engine),
             plate=False,
@@ -490,10 +493,12 @@ class TestTeacherForcingRate:
             forced = self._model(annotations, p_int).default_query(ground_truth)["a"]
             assert torch.equal(forced, ground_truth)
 
-    def test_fixed_scale_head_has_no_parameters(self):
+    def test_the_observation_has_a_single_value_head(self):
+        """A Delta observation allocates one head, whatever `p_int` is: there is
+        no spread to parametrize alongside the decoder's output."""
         annotations = Annotations(labels=["a"], cardinalities=[1], types=["binary"])
-        head = self._model(annotations, 0.0).pgm.factors["input"].parametrization["scale"]
-        assert sum(p.numel() for p in head.parameters()) == 0
+        cpd = self._model(annotations, 0.0).pgm.factors["input"]
+        assert set(cpd.parametrization) == {"value"}
 
     @pytest.mark.parametrize("p_int", [1.0, 0.5, 0.0])
     def test_concepts_still_report_probs(self, p_int):
@@ -555,9 +560,6 @@ class TestTemperatureAnnealing:
             decoder=MLP(n_contexts * EMBEDDING_SIZE, 16, INPUT_SIZE),
             latent_size=LATENT_SIZE,
             embedding_size=EMBEDDING_SIZE,
-            observation=Normal,
-            scale_init=0.3,
-            scale_learnable=False,
             plate=False,
             lightning=True,  # the temperature hook is a LightningModule hook
             **kwargs,

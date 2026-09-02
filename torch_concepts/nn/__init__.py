@@ -66,6 +66,7 @@ from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
 from .modules.high.models.cbm import ConceptBottleneckModel
 from .modules.high.models.cem import ConceptEmbeddingModel
 from .modules.high.models.cbgm import ConceptBottleneckGenerativeModel
+from .modules.high.models.cvae import ConditionalVariationalAutoencoder
 from .modules.high.models.graph_cbm import GraphConceptBottleneckModel
 from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
 
@@ -196,6 +197,7 @@ __all__ = [
     "ConceptBottleneckModel",
     "ConceptEmbeddingModel",
     "ConceptBottleneckGenerativeModel",
+    "ConditionalVariationalAutoencoder",
     "GraphConceptBottleneckModel",
     "CausallyReliableConceptBottleneckModel",
     # Models (mid-level)

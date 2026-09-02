@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 import math
 import warnings
 from typing import Callable, Dict, List, Optional, Tuple, Union
@@ -11,6 +10,7 @@ import torch
 import torch.nn as nn
 
 from ..distributions import spec_for
+from ..factors.factor import _module_input_names
 from ..graph.probabilistic_model import ProbabilisticModel
 from ..variable import Variable
 from .utils import flatten_event, leading_shape, make_temperature_schedule
@@ -121,10 +121,9 @@ class BaseInference(nn.Module):
             f.name
             for f in pgm.factors.values()
             if getattr(f, "is_root", False)
-            and any(
-                len(inspect.signature(mod.forward).parameters) > 0
-                for mod in f.parametrization.values()
-            )
+            # the library's own root priors are ``Sequential(LearnablePrior, 
+            # activation)``, which takes no input despite its ``*args`` signature.
+            and any(_module_input_names(mod) for mod in f.parametrization.values())
         ]
         if roots_needing_input:
             warnings.warn(

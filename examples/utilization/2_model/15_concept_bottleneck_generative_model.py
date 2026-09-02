@@ -18,7 +18,8 @@ unsupervised context away from the concept contexts.
 Experiment settings:
 - Dataset: Color-MNIST via ``ColorMNISTDataModule``, two categorical concepts
   (``digit`` 10-way, ``color`` 2-way), images flattened to 3x28x28 = 2352
-  pixels modelled as a Gaussian observation.
+  pixels, decoded deterministically (a ``Delta`` observation scored by
+  squared error).
 - Model: ``ConceptBottleneckGenerativeModel`` with MLP encoder/decoder.
 - Inference engine: Pyro ``VariationalInference`` with a guide on ``z``.
 - Loss: a ``CompositeLoss`` of ``recon + kl + alpha * concept + beta * orthogonality``.
@@ -36,7 +37,6 @@ References:
 import math
 
 import torch
-from torch.distributions import Normal
 
 from torch_concepts import seed_everything
 from torch_concepts.data import ColorMNISTDataModule
@@ -55,6 +55,10 @@ LATENT_SIZE = 32     # dim(z)
 EMBEDDING_SIZE = 16  # m, the width of one context embedding
 ALPHA = 5.0          # concept loss weight
 BETA = 1.0           # orthogonality loss weight
+# This example used to carry a Gaussian likelihood at sigma=0.3, whose NLL
+# weighted the reconstruction gradient by 1/sigma**2. A Delta observation has no
+# sigma, so the same reconstruction-to-KL balance is now stated outright.
+RECON = 1 / 0.3 ** 2  # 11.11
 
 
 def concept_accuracy(output, concepts, names):
@@ -91,16 +95,9 @@ def main():
         encoder=MLP(n_pixels, 256, LATENT_SIZE),
         latent_size=LATENT_SIZE,
         embedding_size=EMBEDDING_SIZE,
-        # A Gaussian likelihood over pixel intensities: `loc` is the decoder's
-        # output and `scale` is one fixed sigma shared by every pixel, which
-        # keeps the reconstruction-to-KL ratio a hyper-parameter rather than
-        # something a learned sigma quietly anneals away.
-        observation=Normal,
-        scale_init=0.3,
-        scale_learnable=False,
-        # Raw: the model composes the observation parameter's activation on top
-        # (the identity for a Normal's `loc`), so the MLP must not squash its
-        # own output — the network learns to land in [0, 1] itself.
+        # The observation is a Delta, so the decoder's output IS the
+        # reconstruction — no activation is composed on top, and the network
+        # learns to land in [0, 1] itself.
         decoder=MLP(context_size, 256, n_pixels, n_layers=2, activation="leaky_relu"),
     )
     print(model)
@@ -115,7 +112,7 @@ def main():
             ConceptLoss(categorical=NLLProbLoss()),
             OrthogonalityLoss(variables=["mixing", "unknown"]),
         ],
-        weights=[1.0, 1.0, ALPHA, BETA],
+        weights=[RECON, 1.0, ALPHA, BETA],
     )
 
     # Every PGM variable is queried: the observed image arrives as `input`
@@ -155,7 +152,7 @@ def main():
     with torch.no_grad():
         out = model(query=query, input=x)
     print("concept accuracy:", concept_accuracy(out, c, concept_names))
-    save_grid(x, out.loc["input"].clamp(0, 1), "cbgm_colormnist_reconstruction.png")
+    save_grid(x, out.value["input"].clamp(0, 1), "cbgm_colormnist_reconstruction.png")
 
 
 def save_grid(original, reconstruction, path):

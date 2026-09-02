@@ -24,8 +24,8 @@ References
 Ismail et al. "Concept Bottleneck Generative Models", ICLR 2024.
 https://openreview.net/forum?id=L9U5MJJleF
 """
-import copy
-from typing import Optional, Type
+
+from typing import Optional
 
 import torch
 import torch.nn as nn
@@ -40,7 +40,6 @@ from ...low.dense_layers import LinearEmbeddingEncoder, MLPEmbeddingEncoder
 from ...low.encoders.linear import LinearEmbeddingToConcept
 from ...low.predictors.mix import MixConceptEmbeddings
 from ...low.priors import FixedPrior
-from ...low.scales import GlobalScale
 from ...mid.inference.base import BaseInference
 from ...mid.inference.pyro.variational import VariationalInference
 from ...mid.graph.bayesian_network import BayesianNetwork
@@ -71,10 +70,10 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         ``latent_size`` values: the mean of ``q(z | input)``.
     decoder : nn.Module
         The post-concept-bottleneck network, mapping the flattened bottleneck
-        (``embedding_size * (n_concepts + 1)``) to ``input_size`` **raw** values.
-        The model composes the observation parameter's activation on top —
-        identity for a ``Normal``'s ``loc``, a sigmoid for a ``Bernoulli``'s
-        ``probs`` — so a decoder that squashes its own output is activated twice.
+        (``embedding_size * (n_concepts + 1)``) to ``input_size`` values. The
+        observation is a ``Delta``, whose ``value`` takes no activation, so this
+        output **is** the reconstruction: a decoder for images in ``[0, 1]`` has
+        to land there itself.
     latent_size : int, default 64
         Dimensionality of ``z``.
     embedding_size : int, default 16
@@ -107,26 +106,6 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         ``BatchNorm1d``, which bounds the embeddings when ``z`` wanders off the
         posterior; ``'layer'`` does the same without depending on the batch, so
         a single generated sample decodes the way a batch of them does.
-    observation : type, default ``torch.distributions.Normal``
-        Distribution family of the generated variable. ``Bernoulli`` for images
-        in ``[0, 1]``; ``Normal`` needs a ``scale`` too — see ``global_scale``.
-    global_scale : bool, default True
-        Only consulted when ``observation`` has a ``scale``. ``True``: one
-        learnable sigma shared by every pixel and sample
-        (:class:`~torch_concepts.nn.GlobalScale`). ``False``: ``scale`` gets its
-        own copy of ``decoder``.
-    scale_init : float, default 1.0
-        The ``global_scale`` standard deviation — its starting point when
-        ``scale_learnable``, its fixed value otherwise. It sets the weight of the
-        reconstruction term: the Gaussian NLL's gradient carries a
-        ``1 / scale**2`` factor, so halving it quadruples reconstruction relative
-        to the KL. For images in ``[0, 1]``, values below ~0.3 make the KL
-        negligible unless its loss weight is raised to compensate.
-    scale_learnable : bool, default True
-        Whether ``global_scale`` is trained. A learned scale settles at the
-        residual RMS, which shrinks as the fit improves and therefore keeps
-        *raising* the effective reconstruction weight — annealing the KL away.
-        Set ``False`` to pin the trade-off at ``scale_init``.
     inference, inference_kwargs, train_inference, train_inference_kwargs
         Inference engine configuration. Defaults to
         :class:`~torch_concepts.nn.VariationalInference`, with the guide on
@@ -172,7 +151,6 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
     Examples
     --------
     >>> import torch
-    >>> from torch.distributions import Bernoulli
     >>> from torch_concepts.annotations import Annotations
     >>> from torch_concepts.nn import ConceptBottleneckGenerativeModel, MLP
     >>>
@@ -181,10 +159,9 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
     >>> model = ConceptBottleneckGenerativeModel(
     ...     input_size=784, annotations=ann,
     ...     encoder=MLP(784, 128, 32),
-    ...     # Raw: the observation's activation (identity for `loc`, a sigmoid
-    ...     # for a Bernoulli's `probs`) is composed on top for you.
+    ...     # The decoder's output is the reconstruction, unactivated.
     ...     decoder=MLP(3 * 8, 128, 784),
-    ...     latent_size=32, embedding_size=8, observation=Bernoulli,
+    ...     latent_size=32, embedding_size=8,
     ... )  # doctest: +SKIP
     >>> out = model(query=list(model.pgm.variables), input=torch.rand(4, 784))  # doctest: +SKIP
 
@@ -192,7 +169,6 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
     --------
     torch_concepts.nn.MixConceptEmbeddings : the concept bottleneck layer
     torch_concepts.nn.functional.concept_orthogonality : the orthogonality penalty
-    torch_concepts.nn.GlobalScale : the default ``scale`` head for a Normal observation
     """
 
     supported_concept_types = frozenset({"binary", "categorical", "continuous"})
@@ -218,10 +194,6 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         use_unknown: bool = True,
         context_hidden_size: Optional[int] = None,
         context_norm: Optional[str] = None,
-        observation: Type = Normal,
-        global_scale: bool = True,
-        scale_init: float = 1.0,
-        scale_learnable: bool = True,
         inference: Optional[BaseInference] = VariationalInference,
         inference_kwargs: Optional[dict] = None,
         train_inference: Optional[BaseInference] = None,
@@ -249,10 +221,6 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
                 "LinearEmbeddingEncoders, which take no normalisation — the "
                 "setting would be silently dropped."
             )
-        self.observation = observation
-        self.global_scale = global_scale
-        self.scale_init = scale_init
-        self.scale_learnable = scale_learnable
         self.encoder = encoder if encoder is not None else nn.Identity()
         self.decoder = decoder if decoder is not None else nn.Identity()
 
@@ -369,7 +337,7 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         """
 
         # --- variables ---
-        observed = EmbeddingVariable("input", distribution=self.observation, shape=self.input_size)
+        observed = EmbeddingVariable("input", distribution=Delta, shape=self.input_size)
         latent = EmbeddingVariable("z", distribution=Normal, size=self.latent_size)
         # Concepts and their embeddings share the grouping, hence align 1:1.
         concepts = self.build_concept_variables(self.concept_names, plate_name="concepts")
@@ -480,24 +448,14 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         def decoder_head(decoder):
             return pyc.nn.Sequential(nn.Flatten(start_dim=-2), decoder)
 
-        # `loc` always comes from the decoder. A `scale` — only allocated when the
-        # family has one — is either a single learnable sigma (homoscedastic, the
-        # default) or its OWN copy of the decoder: sharing a trunk with `loc` would
-        # make the spread a fixed function of the mean.
-        if "loc" not in observed.param_sizes:
-            scale_head = None
-        elif self.global_scale:
-            scale_head = GlobalScale(observed.size, init=self.scale_init,
-                                     learnable=self.scale_learnable)
-        else:
-            scale_head = decoder_head(copy.deepcopy(self.decoder))
         decoder_cpd = ParametricCPD(
             variable=observed,
             parents=[mixing, *unknowns],
+            # A Delta has a single `value` parameter, so `second` is not needed:
+            # the decoder's output IS the reconstruction.
             parametrization=self._flexible_parametrization(
                 variable=observed,
                 first=decoder_head(self.decoder),
-                second=scale_head,
             ),
             aggregate=cat_embeddings,
         )

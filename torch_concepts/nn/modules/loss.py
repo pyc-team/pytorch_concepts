@@ -11,6 +11,7 @@ from .utils import TYPES, by_type, check_collection
 from .outputs import CONTINUOUS_QUANTITIES, ModelOutput, supervised_subset
 from ..functional import concept_orthogonality
 from ...concept_graph import ConceptGraph
+from ...distributions import Delta
 
 
 def _get_forward_signature(module: nn.Module):
@@ -143,6 +144,7 @@ _FAMILY_BY_PARAMS = {
     frozenset({"logits"}): dist.Bernoulli,
     frozenset({"loc", "scale"}): dist.Normal,
     frozenset({"loc", "scale_tril"}): dist.MultivariateNormal,
+    frozenset({"value"}): Delta,
 }
 
 
@@ -292,10 +294,11 @@ class ReconstructionLoss(PyCLoss):
     """Negative log-likelihood of an **observed** variable under its own CPD.
 
     The generative half of an ELBO: the model predicts the parameters of
-    ``variable`` and this scores the value that was actually observed against
     them. Family-agnostic — a ``Bernoulli`` observation gives the usual
-    binary cross-entropy, a ``Normal`` one a Gaussian NLL — so it works for any
-    observed variable of any registered family, not just an image.
+    binary cross-entropy, a ``Normal`` one a Gaussian NLL, and a ``Delta`` — a
+    deterministic decoder, which is what the generative models use — the squared
+    error. It works for any observed variable of any registered family, not just
+    an image.
 
     The observed value is read from ``output.extra['evidence']``, which a
     learner publishes by overriding
@@ -367,12 +370,20 @@ class ReconstructionLoss(PyCLoss):
         # to the parameters' layout before scoring.
         reference = next(iter(params.values()))
         flat = observed.reshape(reference.shape).to(reference.dtype)
-        # ``validate_args=False``: a Bernoulli likelihood over grey levels in
-        # [0, 1] is the standard VAE reconstruction term (it is exactly
-        # ``binary_cross_entropy``), but those values are outside Bernoulli's
-        # declared {0, 1} support and strict validation would reject them.
-        d = dist.Independent(family(**params, validate_args=False), 1)
-        nll = -d.log_prob(flat)
+        if family is Delta:
+            # A point mass has no spread to score: its NLL is degenerate, and
+            # this Delta's ``log_prob`` is a gradient-free constant 0. The
+            # squared error is the sigma=1 Gaussian NLL minus its constant —
+            # identical gradients — so a model moved from ``Normal`` to
+            # ``Delta`` keeps whatever reconstruction weight it was tuned with.
+            nll = 0.5 * (params["value"] - flat).pow(2).sum(-1)
+        else:
+            # ``validate_args=False``: a Bernoulli likelihood over grey levels in
+            # [0, 1] is the standard VAE reconstruction term (it is exactly
+            # ``binary_cross_entropy``), but those values are outside Bernoulli's
+            # declared {0, 1} support and strict validation would reject them.
+            d = dist.Independent(family(**params, validate_args=False), 1)
+            nll = -d.log_prob(flat)
         return nll.sum() if self.reduction == "sum" else nll.mean()
 
 
