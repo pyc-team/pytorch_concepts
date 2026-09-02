@@ -26,13 +26,13 @@ model_cls:
   embedding_size: 16   # m, width of ONE concept's embedding
   plate: false         # one variable per concept, so each can be intervened on
 
-  # Whether the guide reads the concepts as well as the image, i.e.
-  # q(z | x, c) rather than q(z | x). true is the paper's recognition network:
-  # z then only has to carry what the condition does not, which is what stops
-  # the decoder learning to ignore c and losing steerability. false is the
-  # ablation — and the only setting under which an image can be encoded without
-  # knowing its concepts.
-  condition_encoder: true
+  # Which prior over z: p(z | c), the paper's conditional one (its trunk is
+  # `prior_encoder` below), or a fixed N(0, I). true is the paper; false is the
+  # ablation, and the only setting whose KL target is constant — see the CAUTION
+  # on `prior_encoder`. The guide is q(z | x, c) either way: that one is
+  # hard-coded, since z only carries what the condition does not, which is what
+  # stops the decoder learning to ignore c and losing steerability.
+  conditional_prior: true
 
   # The observation is a point mass the model hard-codes: `input` is a Delta whose
   # single `value` parameter IS the decoder's raw output. No activation is
@@ -84,7 +84,7 @@ model_cls:
   # CAUTION: the KL's target is now learnable. Because p(z|c) sees only c, the
   # zero-KL solution is q ignoring the image altogether — z carries nothing and the
   # model degenerates into a c -> image map. `free_bits` in conf/loss/cvae.yaml is
-  # the floor; watch the KL term, not val_loss.
+  # the floor; watch the KL term, not val_loss. Unused when conditional_prior=false.
   prior_encoder:
     _target_: torch_concepts.nn.MLP
     input_size: ${math:"${data_dims.n_concepts} * ${model.model_cls.embedding_size}"}

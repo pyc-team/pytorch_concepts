@@ -5,10 +5,14 @@ In the concept-based setting, the concepts are the condition, and the CVAE
 is a generative model that factorizes the joint as follows
 ``p(c) p(z | c) p(x | z, c)``.
 
-The prior is the paper's **conditional** one: ``z`` is drawn per condition rather
-than from a fixed ``N(0, I)``, so the latent only has to carry what ``c`` does
-not. It reads the concepts through the same embedding the guide and the decoder
-use, so ``c`` has one learned representation across the whole model.
+The prior defaults to the paper's **conditional** ``p(z | c)``: ``z`` is drawn per
+condition rather than from a fixed ``N(0, I)``, so the latent only has to carry
+what ``c`` does not. It reads the concepts through the same embedding the guide
+and the decoder use, so ``c`` has one learned representation across the whole
+model. ``conditional_prior=False`` swaps in a plain ``N(0, I)`` instead — the
+ablation, and the setting under which the KL target is fixed.
+
+The guide is always ``q(z | x, c)``, the paper's recognition network.
 
 One deviation from the paper remains, in the direction of the simpler
 formulation the practitioner's version uses:
@@ -40,7 +44,7 @@ from .....annotations import Annotations
 from .....concept_graph import ConceptGraph
 from .....distributions import Delta
 from ...low.dense_layers import MLP
-from ...low.priors import LearnablePrior
+from ...low.priors import FixedPrior, LearnablePrior
 from ...mid.inference.base import BaseInference
 from ...mid.inference.pyro.variational import VariationalInference
 from ...mid.graph.bayesian_network import BayesianNetwork
@@ -100,8 +104,9 @@ class ConditionedInput(nn.Module):
 class ConditionalVariationalAutoencoder(DirectedGraphModel):
     """Conditional VAE whose condition is the concept set.
 
-    Generative process ``p(c) p(z | c) p(input | z, c)``, trained as a VAE through
-    a variational guide ``q(z | input, c)``. Intervening on a concept changes the
+    Generative process ``p(c) p(z | c) p(input | z, c)`` — or ``p(z)`` in place of
+    ``p(z | c)`` when ``conditional_prior`` is False — trained as a VAE through a
+    variational guide ``q(z | input, c)``. Intervening on a concept changes the
     decoder's input directly, with no bottleneck in between.
 
     Parameters
@@ -130,13 +135,13 @@ class ConditionalVariationalAutoencoder(DirectedGraphModel):
         decoder reads is ``n_concepts * m`` wide however the concepts are
         distributed — one binary and one 100-way categorical contribute ``m``
         each, not 1 and 100.
-    condition_encoder : bool, default True
-        Whether the guide reads the concepts as well as the observation. ``True``
-        is the paper's ``q(z | x, y)``: ``z`` then only has to carry what the
-        condition does not, which is what stops the decoder learning to ignore
-        ``c``. ``False`` gives ``q(z | input)``, which needs no concept values to
-        encode with — the ablation, and the fallback if a caller wants to
-        reconstruct an observation whose concepts are unknown.
+    conditional_prior : bool, default True
+        Which prior over ``z``. ``True`` is the paper's ``p(z | c)``, built over
+        ``prior_encoder``: ``z`` is drawn per condition, so it only has to carry
+        what ``c`` does not. ``False`` is a fixed ``p(z) = N(0, I)`` — the plain
+        VAE prior, the ablation that shows what conditioning buys, and the way to
+        remove the collapse mode the Notes describe, since the KL then has a
+        constant target. The guide is ``q(z | input, c)`` either way.
     prior_encoder : nn.Module, optional
         The conditional prior's feature extractor, mapping the embedded condition
         (``condition_size``) to a vector; two linear readouts over it produce
@@ -144,7 +149,8 @@ class ConditionalVariationalAutoencoder(DirectedGraphModel):
         :class:`~torch_concepts.nn.MLP` or ``nn.Linear`` does). Defaults to
         ``MLP(condition_size, latent_size)``. The hidden layer is the point: read
         linearly, ``loc`` would be a *sum* of per-concept contributions, so the
-        prior could not tell "digit 7 in red" from digit-7 plus red.
+        prior could not tell "digit 7 in red" from digit-7 plus red. Unused when
+        ``conditional_prior`` is False.
     inference, inference_kwargs, train_inference, train_inference_kwargs
         Inference engine configuration. Defaults to
         :class:`~torch_concepts.nn.VariationalInference`, with the guide on
@@ -177,13 +183,14 @@ class ConditionalVariationalAutoencoder(DirectedGraphModel):
     is not a number to compare against a CBM/CBGM's. What *is* comparable is the
     steerability of the generations and their FID.
 
-    The prior is learned, so the KL has no fixed target: ``KL(q(z | x, c) ‖
-    p(z | c))`` can be driven to zero by ``p`` drifting toward ``q`` rather than by
-    ``q`` becoming informative. Because ``p`` sees only ``c``, the zero-KL solution
+    With ``conditional_prior`` the prior is learned, so the KL has no fixed target:
+    ``KL(q(z | x, c) ‖ p(z | c))`` can be driven to zero by ``p`` drifting toward
+    ``q`` rather than by ``q`` becoming informative. Because ``p`` sees only ``c``, the zero-KL solution
     is ``q`` ignoring ``input`` altogether — ``z`` then carries nothing and the
     model degenerates into a ``c → input`` map that reconstructs the conditional
     mean. Watch the KL term; ``KLDivergenceLoss(latents=['z'], free_bits=...)``
-    puts a floor under each latent dimension if it collapses.
+    puts a floor under each latent dimension if it collapses, and
+    ``conditional_prior=False`` removes the mode outright.
 
     Any registered distribution family works for a concept, via
     ``variable_distributions``: the plain discrete families (the defaults), their
@@ -238,7 +245,7 @@ class ConditionalVariationalAutoencoder(DirectedGraphModel):
         decoder: nn.Module = None,
         latent_size: int = 64,
         embedding_size: int = 16,
-        condition_encoder: bool = True,
+        conditional_prior: bool = True,
         prior_encoder: nn.Module = None,
         inference: Optional[BaseInference] = VariationalInference,
         inference_kwargs: Optional[dict] = None,
@@ -257,7 +264,7 @@ class ConditionalVariationalAutoencoder(DirectedGraphModel):
             **kwargs,
         )
         self.embedding_size = embedding_size
-        self.condition_encoder = bool(condition_encoder)
+        self.conditional_prior = bool(conditional_prior)
         self.encoder = encoder if encoder is not None else nn.Identity()
         self.decoder = decoder if decoder is not None else nn.Identity()
 
@@ -266,10 +273,12 @@ class ConditionalVariationalAutoencoder(DirectedGraphModel):
         # rather than a bare readout because a linear map off the embedding makes
         # `loc` additive across concepts — the prior could then not tell "digit 7
         # in red" from digit-7 plus red. Sized from what the model already knows.
-        self.prior_encoder = (
-            prior_encoder if prior_encoder is not None
-            else MLP(self.condition_size, self.latent_size)
-        )
+        self.prior_encoder = None
+        if self.conditional_prior:
+            self.prior_encoder = (
+                prior_encoder if prior_encoder is not None
+                else MLP(self.condition_size, self.latent_size)
+            )
 
         self.pgm = self._build_model()
 
@@ -307,11 +316,6 @@ class ConditionalVariationalAutoencoder(DirectedGraphModel):
         in the query — observed ones with values, latents absent or ``None`` —
         and the generative loss terms need the ones the base learner's
         concept-only query would leave out (``input``, for the reconstruction).
-
-        The concepts carry values because they are *evidence*: they are the
-        condition the decoder reads and, with ``condition_encoder``, part of what
-        the guide encodes. Unlike a CBGM's query this is not teacher forcing —
-        there is no prediction being overridden.
         """
         return {
             **{name: None for name in self.pgm.variables},
@@ -392,8 +396,8 @@ class ConditionalVariationalAutoencoder(DirectedGraphModel):
             "the guide's readout",
             "`encoder` nor `backbone` declares",
         )
-        conditioning = self._concept_variables() if self.condition_encoder else []
-        width = int(width) + (self.condition_size if self.condition_encoder else 0)
+        conditioning = self._concept_variables()
+        width = int(width) + self.condition_size
         return ParametricCPD(
             variable=z,
             parents=[observed, *conditioning],
@@ -412,7 +416,8 @@ class ConditionalVariationalAutoencoder(DirectedGraphModel):
         """Assemble the CVAE Bayesian network.
 
         ``concepts → z → input``: one learnable marginal per concept (group), a
-        conditional prior ``p(z | c)`` over the embedded condition, and a decoder
+        prior over ``z`` (conditional on the embedded condition, or a fixed
+        ``N(0, I)`` when ``conditional_prior`` is False), and a decoder
         reading ``z`` concatenated with the *embedded* concepts. The decoder's input is
         therefore ``latent_size + condition_size`` wide, ``z`` first, then one
         ``embedding_size``-wide block per concept in annotation order.
@@ -437,21 +442,33 @@ class ConditionalVariationalAutoencoder(DirectedGraphModel):
         # so `c` has one learned representation across the whole model — and the
         # two heads are independent readouts over that shared trunk, exactly as in
         # the guide. `prior_encoder` supplies the nonlinearity between them.
-        prior_width = self._readout_width(
-            getattr(self.prior_encoder, "out_features", None),
-            "the conditional prior's readout",
-            "`prior_encoder` declares",
-        )
-        latent_cpd = ParametricCPD(
-            variable=latent,
-            parents=[*concepts],
-            trunk=pyc.nn.Sequential(self.condition_embedding, self.prior_encoder),
-            parametrization=self._flexible_parametrization(
+        if self.conditional_prior:
+            prior_width = self._readout_width(
+                getattr(self.prior_encoder, "out_features", None),
+                "the conditional prior's readout",
+                "`prior_encoder` declares",
+            )
+            latent_cpd = ParametricCPD(
                 variable=latent,
-                first=nn.Linear(prior_width, latent.size),
-                second=nn.Linear(prior_width, latent.size),
-            ),
-        )
+                parents=[*concepts],
+                trunk=pyc.nn.Sequential(self.condition_embedding, self.prior_encoder),
+                parametrization=self._flexible_parametrization(
+                    variable=latent,
+                    first=nn.Linear(prior_width, latent.size),
+                    second=nn.Linear(prior_width, latent.size),
+                ),
+            )
+        else:
+            # p(z) = N(0, I): parent-less and fixed, so the KL has a constant
+            # target and `z` carries everything `c` does not by construction.
+            latent_cpd = ParametricCPD(
+                latent,
+                parents=[],
+                parametrization={
+                    "loc": FixedPrior(torch.zeros(self.latent_size)),
+                    "scale": FixedPrior(torch.ones(self.latent_size)),
+                },
+            )
         # p(c): one parent-less parameter per concept (per member, for a plate),
         # activated into its own domain — a sigmoid for a Bernoulli, a per-member
         # softmax for a categorical, softplus on a continuous concept's scale.

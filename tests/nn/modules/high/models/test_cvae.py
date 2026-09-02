@@ -263,7 +263,7 @@ class TestConditionalPrior:
             build_model(binary_annotations, plate=False, prior_encoder=nn.ReLU())
 
     @pytest.mark.parametrize(
-        "kwargs", [{"plate": False}, {"plate": True}, {"condition_encoder": False}]
+        "kwargs", [{"plate": False}, {"plate": True}, {"conditional_prior": False}]
     )
     def test_generation_runs_the_full_chain(self, kwargs):
         """p(c) -> p(z | c) -> p(input | z, c), with no evidence at all."""
@@ -280,32 +280,48 @@ class TestConditionalPrior:
         assert out.value["input"].shape == (4, INPUT_SIZE)
 
 
-class TestConditionEncoderAblation:
-    """``condition_encoder`` decides whether the guide is `q(z | x, c)` or `q(z | x)`."""
+class TestPriorSwitch:
+    """``conditional_prior`` picks `p(z | c)` or a fixed `N(0, I)`; the guide never moves."""
 
-    def test_the_conditioned_guide_reads_every_concept(self, binary_annotations):
-        model = build_model(binary_annotations, plate=False)
+    @pytest.mark.parametrize("conditional_prior", [True, False])
+    def test_the_guide_always_reads_every_concept(
+        self, binary_annotations, conditional_prior
+    ):
+        """`q(z | x, c)` is hard-coded — the paper's recognition network, either prior."""
+        model = build_model(
+            binary_annotations, plate=False, conditional_prior=conditional_prior
+        )
         assert [p.name for p in model.pgm.guides["z"].parents] == ["input", "a", "b"]
 
-    def test_the_unconditioned_guide_reads_the_input_only(self, binary_annotations):
-        model = build_model(binary_annotations, plate=False, condition_encoder=False)
-        assert [p.name for p in model.pgm.guides["z"].parents] == ["input"]
-
-    @pytest.mark.parametrize("condition_encoder", [True, False])
-    def test_the_posterior_moves_with_the_condition_only_when_conditioned(
-        self, binary_annotations, condition_encoder
+    @pytest.mark.parametrize("conditional_prior", [True, False])
+    def test_the_posterior_moves_with_the_condition(
+        self, binary_annotations, conditional_prior
     ):
         model = build_model(
-            binary_annotations, plate=False, condition_encoder=condition_encoder
+            binary_annotations, plate=False, conditional_prior=conditional_prior
         )
         x = torch.rand(5, INPUT_SIZE)
-        zeros, ones = torch.zeros(5, 2), torch.ones(5, 2)
-        a = model(query=model.default_query(zeros), input=x)
-        b = model(query=model.default_query(ones), input=x)
+        a = model(query=model.default_query(torch.zeros(5, 2)), input=x)
+        b = model(query=model.default_query(torch.ones(5, 2)), input=x)
+        # Same image, different condition: q(z | x, c) must move regardless of prior.
+        assert not torch.allclose(
+            a.guide_params["loc"]["z"], b.guide_params["loc"]["z"]
+        )
 
-        same = torch.allclose(a.guide_params["loc"]["z"], b.guide_params["loc"]["z"])
-        # Same image, different condition: q(z | x, c) must move, q(z | x) must not.
-        assert same is not condition_encoder
+    def test_the_conditional_prior_reads_the_concepts(self, binary_annotations):
+        model = build_model(binary_annotations, plate=False, conditional_prior=True)
+        assert [p.name for p in model.pgm.factors["z"].parents] == ["a", "b"]
+        assert model.prior_encoder is not None
+
+    def test_the_fixed_prior_is_a_parentless_standard_normal(self, binary_annotations):
+        """`N(0, I)` exactly, and carrying no gradient — the KL target must not drift."""
+        model = build_model(binary_annotations, plate=False, conditional_prior=False)
+        factor = model.pgm.factors["z"]
+        assert list(factor.parents) == []
+        assert model.prior_encoder is None
+        assert torch.equal(factor.parametrization["loc"](), torch.zeros(LATENT_SIZE))
+        assert torch.equal(factor.parametrization["scale"](), torch.ones(LATENT_SIZE))
+        assert not any(p.requires_grad for p in factor.parameters())
 
 
 class CountingBackbone(nn.Module):
