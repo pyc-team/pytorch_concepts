@@ -1,0 +1,53 @@
+# =============================================================
+# ELBO for a conditional VAE.
+#
+# conf/loss/cbgm.yaml minus the orthogonality term (there is no
+# unsupervised context to push away from anything), and with the
+# concept term meaning something different:
+#
+#   reconstruction  0.5 * || input - decoder(z, concepts) ||^2
+#   KL              KL( q(z|input,concepts) || p(z|concepts) )
+#   concept         fits the MARGINAL p(c)
+#
+# The concept term does NOT train a concept predictor — a CVAE
+# reads its concepts and never infers them from the image, and no
+# gradient runs from p(c) to the decoder. It fits the learnable
+# marginal to the empirical concept frequencies, which is what
+# makes an *unconditional* draw (for FID) produce a plausible
+# condition. Its weight is therefore not a trade-off against
+# reconstruction the way `alpha` is in a CBGM; 1.0 is fine.
+#
+# The model sets `param_for_discrete_var = "probs"`, so the
+# concept term must read `probs` — hence NLLProbLoss / BCELoss
+# rather than CrossEntropyLoss / BCEWithLogitsLoss.
+# =============================================================
+_target_: "torch_concepts.nn.CompositeLoss"
+
+weights: [1.0, 1.0, 1.0]
+
+terms:
+  # The observation is a Delta, which ReconstructionLoss scores as
+  # 0.5 * ||x - v||^2 SUMMED over pixels and averaged over the batch -- the same
+  # convention KLDivergenceLoss uses, so `recon` and `kl` are directly comparable.
+  # (torch.nn.MSELoss's elementwise mean would divide this by 2352 and let the KL
+  # dominate by three orders of magnitude.) Identical to conf/loss/cbgm.yaml.
+  - _target_: "torch_concepts.nn.ReconstructionLoss"
+    variable: input
+
+  # `free_bits` floors each latent dimension's batch-averaged KL. Nothing in the
+  # ELBO stops a dimension collapsing onto the prior and carrying nothing, and
+  # once enough have, q(z) occupies a thin sliver of a space p(z) spreads mass
+  # over uniformly -- so a draw from the prior lands where the decoder was never
+  # trained. Conditioning makes this MORE likely, not less: the decoder can
+  # satisfy much of the reconstruction from c alone, leaving z with less to do.
+  - _target_: "torch_concepts.nn.KLDivergenceLoss"
+    latents: [z]
+    free_bits: 0.5
+
+  - _target_: "torch_concepts.nn.ConceptLoss"
+    binary_param: probs
+    categorical_param: probs
+    binary:
+      _target_: "torch.nn.BCELoss"
+    categorical:
+      _target_: "torch_concepts.nn.NLLProbLoss"

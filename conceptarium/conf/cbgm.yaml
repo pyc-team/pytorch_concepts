@@ -1,0 +1,84 @@
+defaults:
+  - _default
+  - override /model: cbgm
+  - override /loss: cbgm
+  - override /dataset: colormnist
+  - _self_
+
+hydra:
+  job:
+    name: cbgm
+  sweeper:
+    params:
+      dataset: colormnist, celeba
+
+      p_int: 0.0, 0.5, 1.0
+
+      # Concept supervision. 
+      alpha: 1, 5
+
+      recon: 1.0, 2.0 # recon * 0.5 * || input - decoder(z, concepts) ||^2
+
+      kl: 1.0, 5.0
+
+      model.model_cls.embedding_size: 8, 16, 32
+
+      model.model_cls.use_unknown: true, false
+
+seed: 42
+
+recon: 1.0    # 0.5 * || input - decoder(bottleneck) ||^2, summed over pixels
+kl: 0.9       # KL( q(z|input) || p(z) )
+alpha: 9.0    # concept supervision
+beta: 1    # orthogonality
+
+# CEM's RandInt, applied to the TRAIN engine only (conf/model/cbgm.yaml reads it as
+# ${p_int}); eval stays at 0.0. Declared here so it is overridable -- see the axis
+# comment above for what the values mean.
+p_int: 0.25
+
+# The one axis that changes the GRAPH rather than a weight. Fixed here, flipped
+# from the CLI -- see the header.
+model:
+  model_cls:
+    use_unknown: true
+
+loss:
+  weights:   # block style: `[${recon}, ...]` is a YAML flow-sequence parse error
+    - ${recon}
+    - ${kl}
+    - ${alpha}
+    - ${beta}
+
+dataset:
+  datamodule:
+    batch_size: 256
+
+# MUST stay false: precomputing embeddings replaces the pixels in the dataset with
+# backbone features, which destroys the reconstruction target. The backbone still
+# runs live, once per step, as the guide's shared trunk.
+precompute_embeddings: False
+force_precompute: False
+
+trainer:
+  max_epochs: 50
+  monitor: "val_loss"
+  patience: 10
+  accelerator: "auto"
+  logger: null       # null / wandb
+  log_model: false
+
+  # Ramp the KL weight 0 -> `kl` over the first 5 epochs. At full strength from
+  # step 0 the KL is trivially minimised by ignoring the input: the guide matches
+  # the prior, z carries nothing, and the decoder settles for reproducing the
+  # per-condition mean. Dimensions lost that way rarely come back, and the run
+  # still reports a respectable val_loss.
+  callbacks:
+    - _target_: "torch_concepts.nn.LossWeightWarmup"
+      term: KLDivergenceLoss
+      epochs: 5
+
+matmul_precision: medium
+
+debug: true   # set false to write the run to conceptarium/runs.csv
+notes: cbgm
