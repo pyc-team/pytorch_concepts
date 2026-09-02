@@ -65,8 +65,8 @@ trainer:
   monitor: "val_loss"
   patience: 10
   accelerator: "auto"
-  logger: null       # null / wandb
-  log_model: false
+  logger: wandb       # null / wandb
+  log_model: true
 
   # Ramp the KL weight 0 -> `kl` over the first 5 epochs. At full strength from
   # step 0 the KL is trivially minimised by ignoring the input: the guide matches
