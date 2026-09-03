@@ -41,8 +41,10 @@ class ConceptDataset(Dataset):
         name (str): Name of the dataset.
         precision (int or str): Numerical precision for tensors (16, 32, or 64).
         input_data (Tensor): Input features/images.
-        concepts (AnnotatedTensor, optional): Native concept values and their
-            metadata.
+        native_concepts (AnnotatedTensor, optional): Persistent native concept
+            values and their metadata.
+        concepts (AnnotatedTensor, optional): Concept supervision currently
+            selected for model training.
         generated_concepts (dict[str, AnnotatedTensor]): Generated sample-level
             concept values and metadata keyed by pipeline output name.
         ground_truth (AnnotatedTensor, optional): Concept supervision selected
@@ -100,6 +102,7 @@ class ConceptDataset(Dataset):
         self.precision = precision
         self.embs_precomputed = False  # whether input_data 
                                        # contains precomputed embeddings
+        self.native_concepts: Optional[AnnotatedTensor] = None
         self.concepts: Optional[AnnotatedTensor] = None
         self.use_as_gt = False
         self.generated_gt_name: Optional[str] = None
@@ -120,7 +123,7 @@ class ConceptDataset(Dataset):
         # sanity check
         axis_annotation = annotations
 
-        if axis_annotation.cardinalities is not None:
+        if axis_annotation is not None and axis_annotation.cardinalities is not None:
             concept_names_with_cardinality = [name for name, card in zip(axis_annotation.labels, axis_annotation.cardinalities) if card is not None]
             concept_names_without_cardinality = [name for name in axis_annotation.labels if name not in concept_names_with_cardinality]
             if concept_names_without_cardinality:
@@ -128,14 +131,22 @@ class ConceptDataset(Dataset):
 
         # set concept annotations
         self._annotations = annotations
-        # maybe reduce annotations based on subset of concept names
-        self._maybe_reduce_annotations(annotations,
-                                       concept_names_subset)
-        # group same-type concepts contiguously (stable within each type) so
-        # AnnotatedTensor.binary()/.categorical()/.continuous() resolve to a
-        # view instead of a per-batch advanced-index copy
-        if reorder_by_type:
-            self._annotations = self._maybe_reorder_by_type(self._annotations)
+        self.concept_names_all: List[str] = []
+        self._all_concept_annotation: Optional[Annotations] = None
+        if annotations is None:
+            if concept_names_subset is not None:
+                raise ValueError(
+                    "concept_names_subset requires native concept annotations."
+                )
+        else:
+            # maybe reduce annotations based on subset of concept names
+            self._maybe_reduce_annotations(annotations,
+                                           concept_names_subset)
+            # group same-type concepts contiguously (stable within each type) so
+            # AnnotatedTensor.binary()/.categorical()/.continuous() resolve to a
+            # view instead of a per-batch advanced-index copy
+            if reorder_by_type:
+                self._annotations = self._maybe_reorder_by_type(self._annotations)
 
         # Set dataset's input data X
         # TODO: input is assumed to be a one of "np.ndarray, pd.DataFrame, Tensor" for now
@@ -181,12 +192,16 @@ class ConceptDataset(Dataset):
         entry of ``concepts['generated']`` for this sample.
         """
         x = self.input_data[item]
-        native = self.concepts[item] if self.concepts is not None else None
+        native = (
+            self.native_concepts[item]
+            if self.native_concepts is not None
+            else None
+        )
         generated = {
             name: values[item]
             for name, values in self.generated_concepts.items()
         }
-        if self._ground_truth_source == "native":
+        if self.concepts is self.native_concepts and self.concepts is not None:
             selected = native
         elif self._ground_truth_source is not None:
             selected = generated[self._ground_truth_source]
@@ -205,29 +220,68 @@ class ConceptDataset(Dataset):
     def collate(self, samples):
         """Collate samples into a batch, re-annotating the ground-truth concepts.
 
-        The default collate stacks the per-sample (plain, 1-D) concept rows into a
-        ``(batch, n_concepts)`` tensor; this re-wraps that tensor as an
+        Per-sample (plain, 1-D) concept rows are stacked into
+        ``(batch, n_concepts)`` tensors and re-wrapped as
         :class:`~torch_concepts.tensor.AnnotatedTensor` carrying the same
-        concept-space annotation as :attr:`concepts`, so every batch's concepts
-        are label/type aware. Any fitted scalers are attached under ``'scalers'``
-        (a reference to the dataset-level dict, so the learner can transform in
-        scaled space and report metrics in the original scale). Inputs and any
-        other keys are collated unchanged. Used as the DataLoader ``collate_fn``
-        by :class:`ConceptDataModule`.
+        metadata as their selected, native, or generated source. Unavailable
+        selected/native views remain ``None``. Any fitted scalers are attached
+        under ``'scalers'`` (a reference to the dataset-level dict, so the
+        learner can transform in scaled space and report metrics in the
+        original scale). Used as the DataLoader ``collate_fn`` by
+        :class:`ConceptDataModule`.
         """
-        batch = default_collate(samples)
-        annotation = self._ground_truth_annotation
-        if annotation is not None and isinstance(batch, dict):
-            concepts = batch.get('concepts')
-            if isinstance(concepts, dict):
-                c = concepts.get('c')
-                if isinstance(c, Tensor) and c.dim() >= 2 and c.shape[1] == annotation.size:
-                    # axis=1 to match how the concepts are stored (see the
-                    # explanatory comment in ``_set_concepts``); for this 2-D
-                    # batch it is the same axis as the default -1, but pinning it
-                    # keeps the stored and collated representations consistent.
-                    concepts['c'] = AnnotatedTensor(c, annotation, axis=1)
-        if isinstance(batch, dict) and self.scalers:
+        def collate_optional(values, annotation, name):
+            if all(value is None for value in values):
+                return None
+            if any(value is None for value in values):
+                raise ValueError(
+                    f"Cannot collate {name}: only some samples contain values."
+                )
+            collated = default_collate(values)
+            if annotation is not None:
+                collated = AnnotatedTensor(collated, annotation, axis=1)
+            return collated
+
+        generated_keys = tuple(self.generated_concepts)
+        expected_keys = set(generated_keys)
+        for index, sample in enumerate(samples):
+            sample_keys = set(sample["concepts"]["generated"])
+            if sample_keys != expected_keys:
+                raise ValueError(
+                    "Generated concept sources must be consistent across "
+                    f"samples; sample {index} has {sorted(sample_keys)}, "
+                    f"expected {sorted(expected_keys)}."
+                )
+
+        concept_samples = [sample["concepts"] for sample in samples]
+        batch = {
+            "inputs": default_collate([sample["inputs"] for sample in samples]),
+            "concepts": {
+                "c": collate_optional(
+                    [concepts["c"] for concepts in concept_samples],
+                    self._ground_truth_annotation,
+                    "selected concepts",
+                ),
+                "native": collate_optional(
+                    [concepts["native"] for concepts in concept_samples],
+                    (
+                        self.native_concepts.annotation
+                        if self.native_concepts is not None
+                        else None
+                    ),
+                    "native concepts",
+                ),
+                "generated": {
+                    name: collate_optional(
+                        [concepts["generated"][name] for concepts in concept_samples],
+                        self.generated_concepts[name].annotation,
+                        f"generated concepts {name!r}",
+                    )
+                    for name in generated_keys
+                },
+            },
+        }
+        if self.scalers:
             batch['scalers'] = self.scalers
         return batch
 
@@ -272,16 +326,16 @@ class ConceptDataset(Dataset):
         Returns:
             List[str]: Names of all concepts.
         """
-        if self.ground_truth is None:
+        if self.concepts is None:
             return []
-        return self.ground_truth.annotation.labels
+        return self.concepts.annotation.labels
 
     @property
     def annotations(self) -> Optional[Annotations]:
         """Annotations for the concepts in the dataset."""
         return (
-            self.ground_truth.annotation
-            if self.ground_truth is not None
+            self.concepts.annotation
+            if self.concepts is not None
             else None
         )
 
@@ -318,7 +372,7 @@ class ConceptDataset(Dataset):
     @property
     def has_native_concepts(self) -> bool:
         """Whether the dataset provides native concept annotations."""
-        return self.concepts is not None
+        return self.native_concepts is not None
 
     @property
     def has_generated_concepts(self) -> bool:
@@ -328,7 +382,7 @@ class ConceptDataset(Dataset):
     @property
     def has_concepts(self) -> bool:
         """Whether concept supervision is available for training."""
-        return self.ground_truth is not None
+        return self.concepts is not None
 
     @property
     def root_dir(self) -> str:
@@ -567,41 +621,69 @@ class ConceptDataset(Dataset):
         generated_gt_name: Optional[str] = None,
     ) -> None:
         """Store generated concept values together with their metadata."""
-        invalid = {
-            name: type(values).__name__
-            for name, values in concepts.items()
-            if not isinstance(values, AnnotatedTensor)
-        }
-        if invalid:
-            raise TypeError(
-                "Generated concepts must be AnnotatedTensor instances; "
-                f"got {invalid}."
+        normalized = {}
+        for name, values in concepts.items():
+            if not isinstance(values, AnnotatedTensor):
+                raise TypeError(
+                    f"Generated concept source {name!r} must be an "
+                    f"AnnotatedTensor, got {type(values).__name__}."
+                )
+            if values.dim() != 2:
+                raise ValueError(
+                    f"Generated concept source {name!r} must be "
+                    f"2-dimensional, got shape {tuple(values.shape)}."
+                )
+            if values.shape[0] != len(self):
+                raise ValueError(
+                    f"Generated concept source {name!r} has "
+                    f"{values.shape[0]} samples, but dataset has {len(self)}."
+                )
+            normalized[name] = (
+                values
+                if values.axis == 1
+                else AnnotatedTensor(values.tensor, values.annotation, axis=1)
             )
+
+        selects_generated = bool(normalized) and (
+            use_as_gt or self.native_concepts is None
+        )
+        if (
+            selects_generated
+            and generated_gt_name is not None
+            and generated_gt_name not in normalized
+        ):
+            available = ", ".join(normalized)
+            raise ValueError(
+                f"generated_gt_name={generated_gt_name!r} is not a generated "
+                f"concept source. Available sources: {available}."
+            )
+
         self.use_as_gt = use_as_gt
         self.generated_gt_name = generated_gt_name
-        self.generated_concepts = dict(concepts)
+        self.generated_concepts = normalized
         self._resolve_ground_truth()
 
     def _resolve_ground_truth(self) -> None:
         """Resolve the tensor and annotation used as training supervision."""
         if self.use_as_gt and self.generated_concepts:
             name = self._resolve_generated_gt_name()
-            self.ground_truth = self.generated_concepts[name]
-            self._ground_truth_annotation = self.ground_truth.annotation
+            selected = self.generated_concepts[name]
             self._ground_truth_source = name
-        elif getattr(self, "concepts", None) is not None:
-            self.ground_truth = self.concepts
-            self._ground_truth_annotation = self.ground_truth.annotation
+        elif self.native_concepts is not None:
+            selected = self.native_concepts
             self._ground_truth_source = "native"
         elif self.generated_concepts:
             name = self._resolve_generated_gt_name()
-            self.ground_truth = self.generated_concepts[name]
-            self._ground_truth_annotation = self.ground_truth.annotation
+            selected = self.generated_concepts[name]
             self._ground_truth_source = name
         else:
-            self.ground_truth = None
-            self._ground_truth_annotation = None
+            selected = None
             self._ground_truth_source = None
+        self.concepts = selected
+        self.ground_truth = selected
+        self._ground_truth_annotation = (
+            selected.annotation if selected is not None else None
+        )
 
     def _resolve_generated_gt_name(self) -> str:
         """Return the generated source selected for ground-truth supervision."""
@@ -663,11 +745,16 @@ class ConceptDataset(Dataset):
         """
         if not isinstance(graph, pd.DataFrame):
             raise TypeError(f"Graph must be a pandas DataFrame, got {type(graph).__name__}.")
-        # Subset graph to match current concept_names
-        subgraph = graph.loc[self.concept_names, self.concept_names]
+        if self._annotations is None:
+            raise ValueError(
+                "A native concept graph requires native concept annotations."
+            )
+        # Subset the native graph to match the selected native annotation axis.
+        native_concept_names = list(self._annotations.labels)
+        subgraph = graph.loc[native_concept_names, native_concept_names]
         self._graph = ConceptGraph(
             data=parse_tensor(subgraph, 'graph', self.precision),
-            node_names=self.concept_names
+            node_names=native_concept_names
         )
         
     def set_concepts(self, concepts: Union[np.ndarray, pd.DataFrame, Tensor, AnnotatedTensor]):
@@ -680,6 +767,11 @@ class ConceptDataset(Dataset):
                 bare array has no names and is taken to follow
                 :attr:`concept_names_all`, the declared annotation order.
         """
+        if self._annotations is None:
+            raise ValueError(
+                "Native concepts cannot be set without native concept annotations."
+            )
+
         # Validate shape
         # concepts' length must match dataset's length
         if concepts.shape[0] != self.n_samples:
@@ -720,10 +812,12 @@ class ConceptDataset(Dataset):
         # is still the concept axis) and collation would fail on a list of
         # AnnotatedTensors.
         concept_ann = self._annotations.to_concept_space()
-        if concepts.dim() >= 2 and concepts.shape[1] == concept_ann.size:
-            self.concepts = AnnotatedTensor(concepts, concept_ann, axis=1)
-        else:
-            self.concepts = concepts
+        if concepts.dim() != 2 or concepts.shape[1] != concept_ann.size:
+            raise ValueError(
+                "Native concepts must have shape (n_samples, n_concepts); "
+                f"got {tuple(concepts.shape)} for {concept_ann.size} concepts."
+            )
+        self.native_concepts = AnnotatedTensor(concepts, concept_ann, axis=1)
         self._resolve_ground_truth()
 
     def add_exogenous(self,

@@ -22,10 +22,9 @@ from typing import List, Mapping, Optional
 import zipfile
 import shutil
 
-from torch_concepts import AnnotatedTensor, Annotations
+from torch_concepts import Annotations
 from torch_concepts.data.base import ConceptDataset
 from torch_concepts.data.io import download_url
-from torch_concepts.data.utils import parse_tensor
 
 logger = logging.getLogger(__name__)
 
@@ -752,7 +751,6 @@ class CUBDataset(ConceptDataset):
         self.task_names = list(CLASS_NAMES)
 
         filenames, concepts, annotations, graph = self.load()
-        annotations = annotations.to_concept_space()
         if split is not None:
             indices = self._split_indices(split)
             filenames = [filenames[index] for index in indices]
@@ -955,33 +953,6 @@ class CUBDataset(ConceptDataset):
             }
             for index, img_path in enumerate(self.input_data)
         ]
-
-    def set_concepts(self, concepts):
-        """Set CUB concept-space annotations.
-
-        CUB stores one column per concept, including the class as an integer
-        index, so the annotation must be treated as concept-space.
-        """
-        if concepts.shape[0] != self.n_samples:
-            raise RuntimeError(
-                f"Concepts has {concepts.shape[0]} samples but "
-                f"input_data has {self.n_samples}."
-            )
-        if not isinstance(concepts, (pd.DataFrame, np.ndarray, torch.Tensor)):
-            raise TypeError(
-                "Concepts must be a np.ndarray, pd.DataFrame, or Tensor, "
-                f"got {type(concepts).__name__}."
-            )
-
-        values = parse_tensor(concepts, 'concepts', self.precision)
-        columns = self._all_concept_annotation.get_slice(self._annotations.labels)
-        values = values[:, columns]
-        concept_ann = self._annotations.to_concept_space()
-        if values.dim() >= 2 and values.shape[1] == concept_ann.size:
-            self.concepts = AnnotatedTensor(values, concept_ann)
-        else:
-            self.concepts = values
-        self._resolve_ground_truth()
 
     def __getitem__(self, item: int) -> dict:
         sample = super().__getitem__(item)

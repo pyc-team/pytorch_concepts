@@ -224,7 +224,7 @@ class DSpritesRegressionDataset(ConceptDataset):
         if self.embs_precomputed:
             return sample
         image = torch.tensor(self.input_data[item], dtype=torch.float32)
-        sample['inputs']['x'] = image.unsqueeze(0)  # (1, 64, 64)
+        sample['inputs']['x'] = image.unsqueeze(0).expand(3, -1, -1)
         return sample
 
     @property

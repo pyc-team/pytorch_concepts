@@ -6,9 +6,8 @@ from torch_concepts.tensor import AnnotatedTensor
 class FilterAnnotator(ABC):
     """Filter out concepts from individual samples.
 
-    Implementations must preserve the input tensor shape and represent filtered
-    sample-concept entries with ``NaN``, meaning that the concept is absent
-    from that sample.
+    Implementations must preserve the input tensor shape and annotation
+    metadata. Concrete filters define how selected entries are represented.
     """
 
     @abstractmethod

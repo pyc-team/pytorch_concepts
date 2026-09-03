@@ -13,4 +13,4 @@ class ThresholdAnnotationFilter(FilterAnnotator):
             raise TypeError(
                 "ThresholdAnnotationFilter requires floating-point scores."
             )
-        return scores.masked_fill(scores < self.threshold, float("nan"))
+        return scores.masked_fill(scores < self.threshold, 0.0)

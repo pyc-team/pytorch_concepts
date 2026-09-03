@@ -71,8 +71,7 @@ class ConceptSupervisionPipeline:
         merging; for cartesian and zip routing it is applied independently to
         each generator output. Pass ``None`` to disable generator filtering.
     raw_annotation_filter : FilterAnnotator, optional
-        Sample-level filter applied to each raw annotation tensor. Filtered
-        entries are represented by ``NaN``.
+        Sample-level filter applied to each raw annotation tensor.
     calibrator : Calibrator, optional
         Transformation applied after raw annotation filtering.
     calibrated_annotation_filter : FilterAnnotator, optional
@@ -80,9 +79,7 @@ class ConceptSupervisionPipeline:
         calibrator is configured, it receives the raw-filtered scores.
     aggregator : callable, optional
         Function that aggregates the final generated concept tensors.
-        Aggregation is supported only with merged routing. Aggregators are
-        responsible for deciding how to handle any ``NaN`` entries introduced
-        by annotation filters.
+        Aggregation is supported only with merged routing.
     routing : {'merged', 'cartesian', 'zip'}, default='merged'
         Routing mode used to combine generators and annotators, as described
         above.

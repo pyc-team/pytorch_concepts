@@ -9,6 +9,14 @@ This example uses:
   can be chosen independently.
 - A tiny concept bottleneck classifier trained on the generated concepts.
 
+ColorMNIST supplies native ``digit`` and ``color`` annotations for a small set
+of training examples used in the LLM prompt. This demonstrates partial concept
+supervision: sparse known concepts provide in-context evidence from which the
+model expands to a broader generated vocabulary. The subsequent CLIP
+annotation stage applies that generated vocabulary automatically across the
+chosen dataset rows. This vocabulary-generation step is therefore not purely
+concept-label-free, and the native and generated vocabularies remain separate.
+
 The ``--data-mode`` option demonstrates four equivalent ways to describe a
 dataset layout to the pipeline. Their difference is not the concept model; it
 is where split information lives:
@@ -95,6 +103,8 @@ def dataset_aware_prompt(
     ``indices`` is supplied by ``generation_indices`` when the pipeline uses a
     complete dataset but restricts generation to a split. Sampling those rows
     here prevents validation/test images from influencing the LLM vocabulary.
+    Their known native digit and color concepts provide sparse in-context
+    evidence that the LLM expands into a broader visual vocabulary.
     When ``dataset`` is already a :class:`~torch.utils.data.Subset`, no indices
     are needed: its local rows are sampled while metadata is read from the
     underlying dataset.
@@ -121,17 +131,19 @@ def dataset_aware_prompt(
     content = [{
         "type": "text",
         "text": (
-            "Generate 12 short visual concepts useful for classifying "
-            f"ColorMNIST images as {class_names}. Use the labeled images below "
-            "as in-context examples. Include digit identity, color, and simple "
-            "shape concepts. Return one concept per line and no explanations."
+            "Expand the partial digit and color concept evidence in the "
+            "labeled images below into 12 short visual concepts useful for "
+            f"classifying ColorMNIST images as {class_names}. Include digit "
+            "identity, color, and broader simple shape properties. Return one "
+            "concept per line and no explanations."
         ),
     }]
     for index in example_indices:
         sample = dataset[index]
         native = sample["concepts"]["native"]
-        digit = int(native[metadata_dataset.concept_names.index("digit")])
-        color_id = int(native[metadata_dataset.concept_names.index("color")])
+        native_names = metadata_dataset.native_concepts.annotation.labels
+        digit = int(native[native_names.index("digit")])
+        color_id = int(native[native_names.index("color")])
         color = ("red", "green")[color_id]
         content.extend([
             {
@@ -252,15 +264,14 @@ def main():
         _print_generated(generated)
         return
 
-    # Save the native task labels before generated concepts are selected as
-    # ground truth below. That selection changes ``concept_names`` to the
-    # generated vocabulary.
-    parity_index = dataset.concept_names.index("parity")
-    train_labels = dataset.concepts[
+    # Generated concepts are the classifier inputs; parity remains the
+    # supervised downstream task target in the persistent native source.
+    parity_index = dataset.native_concepts.annotation.labels.index("parity")
+    train_labels = dataset.native_concepts[
         train_indices,
         parity_index,
     ].long()
-    val_labels = dataset.concepts[
+    val_labels = dataset.native_concepts[
         val_indices,
         parity_index,
     ].long()
@@ -279,10 +290,8 @@ def main():
     train_concepts = generated[train_indices].float()
     val_concepts = generated[val_indices].float()
 
-    # These calibrated values are probabilities, so a filtered annotation
-    # means that the concept is absent from that sample.
-    train_concepts = torch.nan_to_num(train_concepts, nan=0.0)
-    val_concepts = torch.nan_to_num(val_concepts, nan=0.0)
+    # These calibrated values are soft probabilities; filtering has already
+    # set below-threshold (absent) concepts to zero.
     mean = train_concepts.mean(dim=0, keepdim=True)
     std = train_concepts.std(
         dim=0,
