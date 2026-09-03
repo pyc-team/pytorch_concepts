@@ -342,18 +342,8 @@ class BaseLearner(pl.LightningModule):
                     "Only a PyCLoss (e.g. ConceptLoss) is supported; a plain "
                     "loss(input, target) is not."
                 )
-            # A CompositeLoss's `forward` IS `sum(breakdown(...).values())`, so
-            # taking the addends and summing them costs nothing and lets each be
-            # logged: a total hides an ELBO whose KL has collapsed.
-            breakdown = getattr(self.loss, "breakdown", None)
-            terms = breakdown(out, target) if breakdown is not None else None
-            loss = sum(terms.values()) if terms else self.loss(out, target)
+            loss = self.loss(out, target)
             self.log_loss(step, loss, batch_size=batch_size)
-            if terms:
-                self.log_metrics(
-                    {f"{step}_{name}": v.detach() for name, v in terms.items()},
-                    batch_size=batch_size,
-                )
 
         # --- Update and log metrics (original scale) ---
         out = self.unscale_output(out, transforms)

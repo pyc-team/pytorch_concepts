@@ -19,7 +19,7 @@ PROJECT_NAME = "conceptarium"
 
 # W&B entity/username for experiment tracking
 # Set this to your W&B username or team name
-WANDB_ENTITY = "francescothesantis-politecnico-di-torino" 
+WANDB_ENTITY = "" 
 
 # Cache directory for artifacts, embeddings, and checkpoints
 # Can be overridden with CONCEPTARIUM_CACHE environment variable
