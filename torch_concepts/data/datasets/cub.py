@@ -954,6 +954,21 @@ class CUBDataset(ConceptDataset):
             for index, img_path in enumerate(self.input_data)
         ]
 
+    def _subset_rows(self, indices) -> None:
+        """Subset CUB rows while keeping class metadata aligned."""
+        row_indices = (
+            indices.tolist()
+            if hasattr(indices, "tolist")
+            else list(indices)
+        )
+        subset_class_labels = [
+            self._class_labels[index]
+            for index in row_indices
+        ]
+        super()._subset_rows(row_indices)
+        self._class_labels = subset_class_labels
+        self.data = self._make_data()
+
     def __getitem__(self, item: int) -> dict:
         sample = super().__getitem__(item)
         if self.embs_precomputed:

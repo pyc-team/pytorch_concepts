@@ -677,6 +677,17 @@ class ConceptDataset(Dataset):
         )
         if (
             selects_generated
+            and generated_gt_name is None
+            and len(normalized) > 1
+        ):
+            available = ", ".join(normalized)
+            raise ValueError(
+                "generated_gt_name must be specified when selecting from "
+                f"multiple generated concept sources. Available sources: "
+                f"{available}."
+            )
+        if (
+            selects_generated
             and generated_gt_name is not None
             and generated_gt_name not in normalized
         ):
@@ -718,6 +729,13 @@ class ConceptDataset(Dataset):
         if not self.generated_concepts:
             raise ValueError("No generated concepts are available.")
         if self.generated_gt_name is None:
+            if len(self.generated_concepts) > 1:
+                available = ", ".join(self.generated_concepts)
+                raise ValueError(
+                    "generated_gt_name must be specified when selecting from "
+                    "multiple generated concept sources. Available sources: "
+                    f"{available}."
+                )
             return next(iter(self.generated_concepts))
         if self.generated_gt_name not in self.generated_concepts:
             available = ", ".join(self.generated_concepts)
