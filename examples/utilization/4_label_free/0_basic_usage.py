@@ -7,7 +7,7 @@ This example uses:
   probabilities and filter uncertain sample-level annotations.
 - ConceptSupervisionPipeline, whose concept-discovery and annotation targets
   can be chosen independently.
-- A tiny concept bottleneck classifier trained on the generated concepts.
+- A PyC concept bottleneck model supervised by the generated concepts.
 
 ColorMNIST supplies native ``digit`` and ``color`` annotations for a small set
 of training examples used in the LLM prompt. This demonstrates partial concept
@@ -56,13 +56,14 @@ For another LiteLLM provider, set the API key expected by that provider, e.g.
 
 import argparse
 import base64
+import math
 from io import BytesIO
 
 import torch
+from pytorch_lightning import Trainer
 from torch import nn
-from torch.utils.data import Subset
+from torch.utils.data import DataLoader, Subset
 from PIL import Image
-from tqdm import tqdm
 
 from torch_concepts.data.generation import ConceptSupervisionPipeline
 from torch_concepts.data.generation.annotators import CLIPAnnotator
@@ -72,6 +73,7 @@ from torch_concepts.data.generation.filters import (
 )
 from torch_concepts.data.generation.generators import LiteLLMBackend, LLMConceptGenerator
 from torch_concepts.data import ColorMNISTDataModule
+from torch_concepts.nn import ConceptBottleneckModel, ConceptLoss
 
 
 def _image_data_url(image: torch.Tensor) -> str:
@@ -170,6 +172,12 @@ def main():
     parser.add_argument("--llm-temperature", type=float, default=1.0)
     parser.add_argument("--llm-timeout", type=float, default=120.0)
     parser.add_argument(
+        "--train-epochs",
+        type=int,
+        default=5,
+        help="Number of CBM training epochs for the train-to-full mode.",
+    )
+    parser.add_argument(
         "--data-mode",
         choices=(
             "full",
@@ -264,18 +272,6 @@ def main():
         _print_generated(generated)
         return
 
-    # Generated concepts are the classifier inputs; parity remains the
-    # supervised downstream task target in the persistent native source.
-    parity_index = dataset.native_concepts.annotation.labels.index("parity")
-    train_labels = dataset.native_concepts[
-        train_indices,
-        parity_index,
-    ].long()
-    val_labels = dataset.native_concepts[
-        val_indices,
-        parity_index,
-    ].long()
-
     generated_name = "CLIPAnnotator"
     datamodule.generate_concepts(
         pipeline,
@@ -286,45 +282,83 @@ def main():
     )
 
     generated = dataset.generated_concepts[generated_name]
-    concept_axis = generated.annotation
-    train_concepts = generated[train_indices].float()
-    val_concepts = generated[val_indices].float()
+    generated_annotation = generated.annotation
+    if "parity" in generated_annotation.labels:
+        raise ValueError(
+            "The generated vocabulary contains 'parity', which collides with "
+            "the downstream task name. Regenerate concepts without that label."
+        )
 
-    # These calibrated values are soft probabilities; filtering has already
-    # set below-threshold (absent) concepts to zero.
-    mean = train_concepts.mean(dim=0, keepdim=True)
-    std = train_concepts.std(
-        dim=0,
-        keepdim=True,
-        unbiased=False,
-    ).clamp_min(1e-6)
-    train_concepts = (train_concepts - mean) / std
-    val_concepts = (val_concepts - mean) / std
+    parity_annotation = dataset._all_concept_annotation.subset(["parity"])
+    model_annotations = generated_annotation.union_with(parity_annotation)
 
-    model = nn.Linear(train_concepts.shape[1], 2)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=0.05, weight_decay=1e-3)
-    loss_fn = nn.CrossEntropyLoss()
+    def cbm_collate(samples):
+        batch = dataset.collate(samples)
+        generated_target = batch["concepts"]["generated"][generated_name]
+        parity_target = batch["concepts"]["native"][["parity"]]
+        batch["concepts"]["c"] = generated_target.union_with(parity_target)
+        return batch
 
-    progress = tqdm(range(200), desc="Training CBM")
-    for _ in progress:
-        optimizer.zero_grad()
-        loss = loss_fn(model(train_concepts), train_labels)
-        loss.backward()
-        optimizer.step()
-        progress.set_postfix(loss=f"{loss.item():.4f}")
+    train_loader = DataLoader(
+        datamodule.trainset,
+        batch_size=datamodule.batch_size,
+        shuffle=True,
+        drop_last=True,
+        num_workers=datamodule.workers,
+        pin_memory=datamodule.pin_memory,
+        collate_fn=cbm_collate,
+    )
+    val_loader = DataLoader(
+        datamodule.valset,
+        batch_size=datamodule.batch_size,
+        shuffle=False,
+        num_workers=datamodule.workers,
+        pin_memory=datamodule.pin_memory,
+        collate_fn=cbm_collate,
+    )
 
+    model = ConceptBottleneckModel(
+        input_size=datamodule.n_features,
+        annotations=model_annotations,
+        task_names=["parity"],
+        backbone=nn.Flatten(),
+        latent_size=math.prod(datamodule.n_features),
+        lightning=True,
+        loss=ConceptLoss(binary=nn.BCEWithLogitsLoss()),
+        optim_class=torch.optim.AdamW,
+        optim_kwargs={"lr": 0.01, "weight_decay": 1e-3},
+    )
+    trainer = Trainer(
+        max_epochs=args.train_epochs,
+        logger=False,
+        enable_checkpointing=False,
+        enable_model_summary=False,
+    )
+    trainer.fit(
+        model,
+        train_dataloaders=train_loader,
+        val_dataloaders=val_loader,
+    )
+
+    correct = 0
+    total = 0
+    model.eval()
     with torch.no_grad():
-        train_acc = (
-            model(train_concepts).argmax(1) == train_labels
-        ).float().mean().item()
-        val_acc = (
-            model(val_concepts).argmax(1) == val_labels
-        ).float().mean().item()
+        for batch in val_loader:
+            inputs = batch["inputs"]["x"].to(model.device)
+            output = model(query=["parity"], input=inputs)
+            prediction = (
+                output.logits["parity"].tensor.squeeze(-1) >= 0
+            ).long().cpu()
+            target = (
+                batch["concepts"]["c"]["parity"].tensor.squeeze(-1).long()
+            )
+            correct += (prediction == target).sum().item()
+            total += target.numel()
+    val_acc = correct / total
 
-    print("Generated concepts:", concept_axis.labels)
-    print("Train annotation tensor shape:", tuple(train_concepts.shape))
-    print("Validation annotation tensor shape:", tuple(val_concepts.shape))
-    print(f"Train accuracy: {train_acc:.3f}")
+    print("Generated concepts:", generated_annotation.labels)
+    print("Model concepts:", model_annotations.labels)
     print(f"Validation accuracy: {val_acc:.3f}")
 
 
