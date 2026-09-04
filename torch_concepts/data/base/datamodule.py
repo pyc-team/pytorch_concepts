@@ -177,12 +177,7 @@ class ConceptDataModule(LightningDataModule):
             if max_samples < n:
                 generator = torch.Generator().manual_seed(seed) if seed is not None else None
                 idx = torch.randperm(n, generator=generator)[:max_samples]
-                # File-list datasets (e.g., CelebA, CUB).
-                if isinstance(dataset.input_data, list):
-                    dataset.input_data = [dataset.input_data[i] for i in idx.tolist()]
-                else:
-                    dataset.input_data = dataset.input_data[idx]
-                dataset.concepts = dataset.concepts[idx]
+                dataset._subset_rows(idx)
                 # Record this so any cache can be keyed to them (see ``precompute_embeddings``).
                 dataset.is_subset, dataset.subset_seed = True, seed
                 if isinstance(splitter, FixedIndicesSplitter):
@@ -445,8 +440,8 @@ class ConceptDataModule(LightningDataModule):
 
         This is an explicit preprocessing step, parallel to
         :meth:`precompute_embeddings`. All keyword arguments are forwarded to
-        :meth:`ConceptDataset.generate_concepts`, including named datasets to
-        annotate and the generated source selected as ``concepts['c']``.
+        :meth:`ConceptDataset.generate_concepts`, including generation options
+        and the generated source selected as ``concepts['c']``.
         """
         return self.dataset.generate_concepts(concept_pipeline, **kwargs)
 
@@ -485,6 +480,12 @@ class ConceptDataModule(LightningDataModule):
 
                 # Get the training data for the specified key (e.g., 'concepts' or 'input')
                 train_data = getattr(self.dataset, attr_name)
+                if key == 'concepts' and train_data is None:
+                    warnings.warn(
+                        "A 'concepts' scaler was configured but the dataset has "
+                        "no concept supervision; concept scaling is skipped."
+                    )
+                    continue
                 if isinstance(self.trainset, Subset):
                     train_data = train_data[self.trainset.indices]
 

@@ -13,7 +13,7 @@ import torch
 from torch import Tensor
 from torch.utils.data import DataLoader, Dataset, default_collate
 from tqdm import tqdm
-from typing import Any, Dict, List, Mapping, Optional, Union
+from typing import Dict, List, Optional, Union
 import warnings
 
 from ...concept_graph import ConceptGraph
@@ -187,11 +187,15 @@ class ConceptDataset(Dataset):
     def __getitem__(self, item):
         """Return a sample using the common concept-dataset dictionary shape.
 
-        ``concepts['c']`` is the sole learner-facing supervision key. It is the
-        exact same Python object as either ``concepts['native']`` or the selected
-        entry of ``concepts['generated']`` for this sample.
+        ``concepts['c']`` is the sole learner-facing supervision key and is
+        indexed directly from the dataset's currently selected concepts.
         """
         x = self.input_data[item]
+        selected = (
+            self.concepts[item]
+            if self.concepts is not None
+            else None
+        )
         native = (
             self.native_concepts[item]
             if self.native_concepts is not None
@@ -201,12 +205,6 @@ class ConceptDataset(Dataset):
             name: values[item]
             for name, values in self.generated_concepts.items()
         }
-        if self.concepts is self.native_concepts and self.concepts is not None:
-            selected = native
-        elif self._ground_truth_source is not None:
-            selected = generated[self._ground_truth_source]
-        else:
-            selected = None
 
         return {
             "inputs": {"x": x},
@@ -552,38 +550,74 @@ class ConceptDataset(Dataset):
         finally:
             backbone.train(was_training)
         return torch.cat(embeddings_list, dim=0)
+
+    def _subset_rows(self, indices) -> None:
+        """Subset every row-aligned source and rebuild selected supervision."""
+        row_indices = (
+            indices.tolist()
+            if hasattr(indices, "tolist")
+            else list(indices)
+        )
+        n_samples = len(self)
+
+        sources = []
+        if self.native_concepts is not None:
+            sources.append(("native", self.native_concepts))
+        sources.extend(
+            (f"generated:{name}", values)
+            for name, values in self.generated_concepts.items()
+        )
+        for name, values in sources:
+            if values.shape[0] != n_samples:
+                raise RuntimeError(
+                    f"Concept source {name!r} has {values.shape[0]} rows, "
+                    f"but input_data has {n_samples}."
+                )
+
+        if isinstance(self.input_data, list):
+            subset_input_data = [self.input_data[index] for index in row_indices]
+        else:
+            subset_input_data = self.input_data[row_indices]
+
+        def subset_concepts(values: AnnotatedTensor) -> AnnotatedTensor:
+            return AnnotatedTensor(
+                values.tensor[row_indices],
+                values.annotation,
+                axis=1,
+            )
+
+        subset_native = (
+            subset_concepts(self.native_concepts)
+            if self.native_concepts is not None
+            else None
+        )
+        subset_generated = {
+            name: subset_concepts(values)
+            for name, values in self.generated_concepts.items()
+        }
+
+        self.input_data = subset_input_data
+        self.native_concepts = subset_native
+        self.generated_concepts = subset_generated
+        self._resolve_ground_truth()
     
     def generate_concepts(
         self,
         concept_pipeline: ConceptSupervisionPipeline,
         class_names: Optional[List[str]] = None,
-        datasets_to_annotate: Optional[Mapping[str, Any]] = None,
-        self_annotation_name: Optional[str] = None,
         use_as_gt: bool = False,
         generated_gt_name: Optional[str] = None,
         **kwargs,
     ) -> Dict[str, AnnotatedTensor]:
-        """Run a concept-supervision pipeline explicitly on this dataset.
+        """Generate concepts aligned one-to-one with and attach them to this dataset.
 
-        Concepts are generated from ``self``. ``datasets_to_annotate`` only
-        controls which datasets are annotated with those generated concepts.
-        If no extra datasets are provided, only ``self`` is annotated.
-
-        ``self_annotation_name`` lets the current dataset be included in named
-        annotation outputs alongside additional datasets. For example, a
-        training dataset can pass ``self_annotation_name="train"`` and
-        ``datasets_to_annotate={"val": val_dataset}``.
+        Call :class:`ConceptSupervisionPipeline` directly for split-specific
+        tensors or annotation of multiple target datasets.
 
         Args:
             concept_pipeline: Pipeline that generates and annotates concepts.
             class_names: Optional task or class names forwarded to the concept
                 generator prompt.
-            datasets_to_annotate: Optional mapping from output names to datasets
-                that should be annotated with the concepts generated from this
-                dataset, in addition to ``self`` when
-                ``self_annotation_name`` is provided.
-            self_annotation_name: Optional output name used to include ``self``
-                in the annotation outputs when annotating multiple partitions.
             use_as_gt: Select generated concepts as learner supervision.
             generated_gt_name: Generated output name selected when
                 ``use_as_gt=True``.
@@ -595,12 +629,6 @@ class ConceptDataset(Dataset):
         """
         if not callable(concept_pipeline):
             raise TypeError("concept_pipeline must be callable.")
-        if self_annotation_name is not None or datasets_to_annotate is not None:
-            datasets = {}
-            if self_annotation_name is not None:
-                datasets[self_annotation_name] = self
-            datasets.update(dict(datasets_to_annotate or {}))
-            kwargs["annotation_datasets"] = datasets
 
         generated_concepts = concept_pipeline(
             self,

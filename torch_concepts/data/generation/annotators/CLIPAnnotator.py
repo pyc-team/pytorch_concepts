@@ -17,6 +17,11 @@ BinaryPromptFormatter = Callable[[str], str]
 StatePromptFormatter = Callable[[str, str], str]
 
 
+def _identity_collate(batch):
+    """Return a sample list unchanged for CLIP image preprocessing."""
+    return batch
+
+
 def resolve_device(device: str | torch.device | None = None) -> torch.device:
     """Resolve an explicit device or prefer CUDA, then MPS, then CPU."""
     if device is not None:
@@ -140,7 +145,7 @@ class CLIPAnnotator(Annotator):
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
-            collate_fn=lambda batch: batch,
+            collate_fn=_identity_collate,
         )
 
         concept_batches = []
