@@ -15,6 +15,17 @@ defaults:
   - _commons
   - _self_
 
+# CEM's RandInt, applied to the TRAIN engine only; eval stays at 0.0. A named
+# knob here so a sweep can vary it as `model.p_int: 0.0, 0.5, 1.0` rather than
+# reaching into `model.model_cls.train_inference.p_int`.
+p_int: 0.25
+
+# Width of the bottleneck the decoder reads: one `embedding_size`-wide context
+# per concept, plus one for the unsupervised context when `use_unknown`.
+# `data_dims` is published by update_config_from_data, since a `concept_subset`
+# can shrink the concept count at runtime.
+decoder_in_features: ${math:"(${data_dims.n_concepts} + (1 if ${model.model_cls.use_unknown} else 0)) * ${model.model_cls.embedding_size}"}
+
 model_cls:
   _target_: "torch_concepts.nn.ConceptBottleneckGenerativeModel"
 
@@ -55,7 +66,7 @@ model_cls:
   # There is consequently no sigma to set. That is deliberate: sigma was a
   # reconstruction weight in disguise (the Gaussian NLL's gradient carries
   # 1/sigma^2), and a learned one silently annealed the KL away. The trade-off now
-  # lives entirely in `recon` vs `kl` in conf/cbgm.yaml, where it is visible.
+  # lives entirely in `recon` vs `kl` in the loss weights, where it is visible.
   # ReconstructionLoss scores a Delta as 0.5 * ||x - v||^2 summed over pixels and
   # averaged over the batch — the same convention KLDivergenceLoss uses, and
   # identical to the CVAE's, so the two models' losses and FIDs are comparable.
@@ -108,7 +119,7 @@ model_cls:
   #   0<p<1  per-sample, per-concept coin flip between the two. The decoder is
   #        trained on concept values it did not itself predict, which is exactly
   #        what an intervention hands it. This is the steerability knob; sweep it
-  #        from conf/cbgm.yaml.
+  #        from your sweep.
   #
   # Eval stays at 0.0 so metrics measure the model unaided.
   inference:
@@ -126,39 +137,54 @@ model_cls:
     annealing: ${model.model_cls.inference.annealing}
     annealing_rate: ${model.model_cls.inference.annealing_rate}
     final_temperature: ${model.model_cls.inference.final_temperature}
-    p_int: ${p_int}
+    p_int: ${model.p_int}
 
-  # Bottleneck (k concept contexts + 1 unsupervised) -> pixels, through
-  # transposed convolutions rather than a dense head: a flat decoder to
-  # CelebA's 12,288 pixels is ~6M parameters against ~0.6M here.
+  # ---------------------------------------------------------------------
+  # Bottleneck -> `input`. The MLP is ACTIVE; comment it out and uncomment the
+  # ConvDecoder below to switch to images. Exactly one may be uncommented.
+  #
+  # MLP: for TABULAR data, where `input_size` is a single int. A ConvDecoder
+  # cannot be used there at all -- it iterates `out_shape` and raises
+  # `'int' object is not iterable`.
+  #
+  # Raw output either way: the observation is a Delta, whose `value` takes no
+  # activation, so this output IS the reconstruction and must not be squashed
+  # here. `n_layers` counts HIDDEN layers.
+  decoder:
+    _target_: "torch_concepts.nn.MLP"
+    input_size: ${model.decoder_in_features}
+    output_size: ${model.model_cls.input_size}
+    hidden_size: 256
+    n_layers: 2
+    activation: leaky_relu
+    dropout: 0.
+
+  # ConvDecoder: for IMAGES, where `input_size` is a shape (C, H, W). Transposed
+  # convolutions rather than a dense head -- a flat decoder to CelebA's 12,288
+  # pixels is ~6M parameters against ~0.6M here.
   #
   # `hidden_channels` as an int is the NARROWEST stage; ConvDecoder picks the
   # depth from the image size (28 -> 2 stages, 64 -> 3) and widths double
-  # upward, so one value serves every dataset in a sweep.
-  #
-  # Raw: the observation is a Delta, whose `value` takes no activation, so this
-  # stack's output already IS the reconstruction. Squashing it here would only
-  # shrink the range, not "activate" it.
+  # upward, so one value serves every image dataset in a sweep.
   #
   # `norm: group` rather than the default BatchNorm2d. BatchNorm's running
-  # statistics are accumulated from bottlenecks driven by q(z|x) and then used to
-  # normalise at eval(); decoding a PRIOR sample presents a differently
+  # statistics are accumulated from bottlenecks driven by q(z|x) and then used
+  # to normalise at eval(); decoding a PRIOR sample presents a differently
   # distributed input, so generations are normalised by statistics that do not
   # describe them while reconstructions are fine. GroupNorm keeps no running
   # statistics and cannot develop that split.
   #
   # `refine: true` inserts a same-resolution 3x3 conv block after the projection
-  # and after each upsample. Without it this stack has exactly ONE activation
-  # (Linear -> ConvT -> BN -> LeakyReLU -> ConvT on colormnist) -- see
-  # `context_hidden_size` above for why that is the problem rather than a
-  # detail. Costs ~25% more parameters.
-  decoder:
-    _target_: "torch_concepts.nn.ConvDecoder"
-    in_features: ${math:"(${data_dims.n_concepts} + (1 if ${model.model_cls.use_unknown} else 0)) * ${model.model_cls.embedding_size}"}
-    out_shape: ${model.model_cls.input_size}
-    hidden_channels: 32
-    norm: group
-    refine: true
+  # and after each upsample. Without it the stack has exactly ONE activation on
+  # colormnist, leaving z -> pixels very nearly affine. Costs ~25% more params.
+  # decoder:
+  #   _target_: "torch_concepts.nn.ConvDecoder"
+  #   in_features: ${model.decoder_in_features}
+  #   out_shape: ${model.model_cls.input_size}
+  #   hidden_channels: 32
+  #   norm: group
+  #   refine: true
+  # ---------------------------------------------------------------------
 
 # The encoder side of the guide. attach_latent_encoder composes this with
 # the dataset's backbone into one extractor and stamps `out_features` on

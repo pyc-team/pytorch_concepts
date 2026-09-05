@@ -9,9 +9,10 @@
 #   orthogonality   pushes the unsupervised context away from the
 #                   supervised ones, so concepts stay steerable
 #
-# The weights below are the defaults; `weights` here is OVERRIDDEN by
-# conf/cbgm.yaml, which exposes each entry as a named, sweepable key
-# (recon/kl/alpha/beta) — edit the numbers there, not here.
+# The weights below are the defaults, in term order:
+# [recon, kl, alpha (concept), beta (orthogonality)]. A sweep
+# varies them without editing this file, e.g.
+# `loss.weights.2: 1, 5, 9` for the concept weight.
 #
 # CBGM sets `param_for_discrete_var = "probs"`, so the concept
 # term must read `probs` — hence NLLProbLoss / BCELoss rather than

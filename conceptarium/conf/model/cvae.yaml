@@ -19,6 +19,11 @@ defaults:
   - _commons
   - _self_
 
+# Width the decoder reads: z concatenated with one `embedding_size`-wide block
+# per concept. `data_dims` is published by update_config_from_data, since a
+# `concept_subset` can shrink the concept count at runtime.
+decoder_in_features: ${math:"${model.model_cls.latent_size} + ${data_dims.n_concepts} * ${model.model_cls.embedding_size}"}
+
 model_cls:
   _target_: "torch_concepts.nn.ConditionalVariationalAutoencoder"
 
@@ -78,8 +83,8 @@ model_cls:
   #
   # An MLP rather than a bare readout because a linear map off the embedding makes
   # `loc` ADDITIVE across concepts — the prior could then not tell "digit 7 in red"
-  # from digit-7 plus red. `hidden_size` is the prior's capacity, swept from
-  # conf/cvae.yaml; with `output_size` unset, out_features == hidden_size.
+  # from digit-7 plus red. `hidden_size` is the prior's capacity; with
+  # `output_size` unset, out_features == hidden_size.
   #
   # CAUTION: the KL's target is now learnable. Because p(z|c) sees only c, the
   # zero-KL solution is q ignoring the image altogether — z carries nothing and the
@@ -108,22 +113,52 @@ model_cls:
     _partial_: true
   train_inference: ${model.model_cls.inference}
 
-  # [z | embedded c] -> pixels. Every concept gets its OWN Linear(size_i, m), so
-  # the condition is `n_concepts * embedding_size` wide however the concepts are
-  # distributed — a binary one and a 10-way categorical contribute m each rather
-  # than 1 and 10, and the decoder can weigh them alike.
+  # ---------------------------------------------------------------------
+  # Bottleneck -> `input`. The MLP is ACTIVE; comment it out and uncomment the
+  # ConvDecoder below to switch to images. Exactly one may be uncommented.
   #
-  # Same ConvDecoder as cbgm.yaml, for the same reasons (see that file): `group`
-  # norm because BatchNorm's running statistics are collected from q(z|x) and
-  # then used to normalise prior samples, and `refine: true` because without it
-  # the path z -> pixels has almost no nonlinearity.
+  # MLP: for TABULAR data, where `input_size` is a single int. A ConvDecoder
+  # cannot be used there at all -- it iterates `out_shape` and raises
+  # `'int' object is not iterable`.
+  #
+  # Raw output either way: the observation is a Delta, whose `value` takes no
+  # activation, so this output IS the reconstruction and must not be squashed
+  # here. `n_layers` counts HIDDEN layers.
   decoder:
-    _target_: "torch_concepts.nn.ConvDecoder"
-    in_features: ${math:"${model.model_cls.latent_size} + ${data_dims.n_concepts} * ${model.model_cls.embedding_size}"}
-    out_shape: ${model.model_cls.input_size}
-    hidden_channels: 32
-    norm: group
-    refine: true
+    _target_: "torch_concepts.nn.MLP"
+    input_size: ${model.decoder_in_features}
+    output_size: ${model.model_cls.input_size}
+    hidden_size: 256
+    n_layers: 2
+    activation: leaky_relu
+    dropout: 0.
+
+  # ConvDecoder: for IMAGES, where `input_size` is a shape (C, H, W). Transposed
+  # convolutions rather than a dense head -- a flat decoder to CelebA's 12,288
+  # pixels is ~6M parameters against ~0.6M here.
+  #
+  # `hidden_channels` as an int is the NARROWEST stage; ConvDecoder picks the
+  # depth from the image size (28 -> 2 stages, 64 -> 3) and widths double
+  # upward, so one value serves every image dataset in a sweep.
+  #
+  # `norm: group` rather than the default BatchNorm2d. BatchNorm's running
+  # statistics are accumulated from bottlenecks driven by q(z|x) and then used
+  # to normalise at eval(); decoding a PRIOR sample presents a differently
+  # distributed input, so generations are normalised by statistics that do not
+  # describe them while reconstructions are fine. GroupNorm keeps no running
+  # statistics and cannot develop that split.
+  #
+  # `refine: true` inserts a same-resolution 3x3 conv block after the projection
+  # and after each upsample. Without it the stack has exactly ONE activation on
+  # colormnist, leaving z -> pixels very nearly affine. Costs ~25% more params.
+  # decoder:
+  #   _target_: "torch_concepts.nn.ConvDecoder"
+  #   in_features: ${model.decoder_in_features}
+  #   out_shape: ${model.model_cls.input_size}
+  #   hidden_channels: 32
+  #   norm: group
+  #   refine: true
+  # ---------------------------------------------------------------------
 
 # The encoder side of the guide. attach_latent_encoder composes this with the
 # dataset's backbone into one extractor and stamps `out_features` on it; the
