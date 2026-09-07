@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Mapping
 from typing import Any, Callable, Literal, Sequence
 
@@ -66,7 +67,7 @@ class ConceptSupervisionPipeline:
     annotators : Annotator or sequence of Annotator
         Annotators that produce raw concept scores.
     generator_filter : FilterGenerator, optional
-        Filter applied to generated concept names before annotation. Defaults
+        Filter applied to generated Annotations axes before annotation. Defaults
         to :class:`DeduplicateConcepts`. For merged routing it is applied after
         merging; for cartesian and zip routing it is applied independently to
         each generator output. Pass ``None`` to disable generator filtering.
@@ -414,10 +415,40 @@ class ConceptSupervisionPipeline:
         Annotations
             The filtered concept axis, or the original object when generator
             filtering is disabled.
+
+        Raises
+        ------
+        TypeError
+            If the filter does not return an Annotations object.
+        ValueError
+            If the filter does more than remove or reorder concept definitions.
         """
         if self.generator_filter is None:
             return concepts
-        return self.generator_filter.filter_annotations(concepts)
+        definitions = Counter(zip(
+            concepts.labels,
+            map(tuple, concepts.states),
+            concepts.cardinalities,
+            concepts.types,
+        ))
+        filtered = self.generator_filter.filter(concepts)
+        if not isinstance(filtered, Annotations):
+            raise TypeError("FilterGenerator.filter must return an Annotations.")
+        filtered_definitions = Counter(zip(
+            filtered.labels,
+            map(tuple, filtered.states),
+            filtered.cardinalities,
+            filtered.types,
+        ))
+        if (
+            filtered.concept_space != concepts.concept_space
+            or filtered_definitions - definitions
+        ):
+            raise ValueError(
+                "Generator filters may only remove or reorder generated "
+                "concept definitions."
+            )
+        return filtered
 
     def _process_annotation_values(
         self,
