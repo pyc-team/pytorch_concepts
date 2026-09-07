@@ -95,7 +95,7 @@ class ConceptDataset(Dataset):
         name: Optional[str] = None,
         # TODO: implement handling of exogenous inputs
     ):
-        Dataset.__init__(self)
+        super(ConceptDataset, self).__init__()
 
         # Set info
         self.name = name if name is not None else self.__class__.__name__
