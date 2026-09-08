@@ -34,6 +34,28 @@ class LLMConceptGenerator(Generator):
         Cleans and deduplicates concept specifications by concept name.
     llm_kwargs : dict, optional
         Additional keyword arguments passed to the LLM callable.
+
+    Examples
+    --------
+    The ``llm`` argument can be a real provider-backed callable. This example
+    uses LiteLLM with OpenAI; set ``OPENAI_API_KEY`` before running it.
+
+    .. code-block:: python
+
+        from torch_concepts.data.generation.generators import (
+            LiteLLMBackend,
+            LLMConceptGenerator,
+        )
+
+        generator = LLMConceptGenerator(
+            llm=LiteLLMBackend(model="openai/gpt-4o-mini"),
+            prompt=(
+                "List concise visual concepts useful for distinguishing "
+                "{class_names}. Return one concept per line."
+            ),
+        )
+        concepts = generator.generate(class_names=["sparrow", "robin"])
+        print(concepts.labels)
     """
 
     def __init__(
