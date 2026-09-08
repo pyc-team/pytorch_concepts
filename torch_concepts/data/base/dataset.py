@@ -50,9 +50,11 @@ class ConceptDataset(Dataset):
 
     Args:
         input_data: Input features as numpy array, pandas DataFrame, or Tensor.
-        concepts: Optional native concept annotations as a numpy array, pandas
-            DataFrame, or Tensor.
-        annotations: Optional annotations for the native concepts.
+        concepts: Optional native concept values as a numpy array, pandas
+            DataFrame, Tensor, or AnnotatedTensor, with shape
+            (n_samples, n_concepts). Categorical values are class indices.
+        annotations: Optional metadata for the native concepts. Defaults to
+            the attached metadata when 'concepts' is an AnnotatedTensor.
         graph: Optional concept graph as pandas DataFrame or tensor.
         concept_names_subset: Optional list to select subset of concepts.
         reorder_by_type: Group same-type concepts contiguously -- binary, then
@@ -74,6 +76,13 @@ class ConceptDataset(Dataset):
         >>> dataset = ConceptDataset(X, C, annotations=annotations)
         >>> len(dataset)
         100
+
+        An AnnotatedTensor can supply both values and metadata:
+
+        >>> annotated_concepts = AnnotatedTensor(C, annotations, axis=1)
+        >>> dataset = ConceptDataset(X, concepts=annotated_concepts)
+        >>> dataset.concept_names
+        ['c1', 'c2', 'c3', 'c4', 'c5']
     """
 
     # Set by ``ConceptDataModule(max_samples=...)``: the rows are a random draw,
@@ -84,7 +93,7 @@ class ConceptDataset(Dataset):
     def __init__(
         self,
         input_data: Union[np.ndarray, pd.DataFrame, Tensor],
-        concepts: Optional[Union[np.ndarray, pd.DataFrame, Tensor]] = None,
+        concepts: Optional[Union[np.ndarray, pd.DataFrame, Tensor, AnnotatedTensor]] = None,
         annotations: Optional[Annotations] = None,
         graph: Optional[pd.DataFrame] = None,
         concept_names_subset: Optional[List[str]] = None,
@@ -109,6 +118,14 @@ class ConceptDataset(Dataset):
         self._ground_truth_source: Optional[str] = None
 
         # sanity check on concept annotations and metadata
+        if isinstance(concepts, AnnotatedTensor):
+            if concepts.dim() != 2 or concepts.axis not in (1, -1):
+                raise ValueError(
+                    "Annotated concepts must be two-dimensional with "
+                    "metadata on the concept columns (axis 1 or -1)."
+                )
+            if annotations is None:
+                annotations = concepts.annotation
         if annotations is None and concepts is not None:
             warnings.warn("No concept annotations provided. These will be set to default numbered "
                          "concepts 'concept_{i}'. All concepts will be treated as binary.")
