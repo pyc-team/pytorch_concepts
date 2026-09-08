@@ -86,6 +86,43 @@ class ConceptSupervisionPipeline:
         above.
     name : str, optional
         Name of the pipeline. If None, the class name is used.
+
+    Examples
+    --------
+    Generate visual concepts for an existing image ``dataset``, score them
+    with two CLIP models, and average the filtered, calibrated scores.
+
+    .. code-block:: python
+
+        def average_scores(outputs):
+            values = list(outputs.values())
+            return AnnotatedTensor(
+                torch.stack([value.tensor for value in values]).mean(dim=0),
+                values[0].annotation,
+                axis=1,
+            )
+
+        pipeline = ConceptSupervisionPipeline(
+            generators=LLMConceptGenerator(
+                llm=LiteLLMBackend(model="openai/gpt-4o"),
+                prompt=(
+                    "List 12 visible binary attributes useful for distinguishing "
+                    "{class_names}. Return one attribute per line."
+                ),
+            ),
+            annotators=[
+                CLIPAnnotator(model_name="openai/clip-vit-base-patch32"),
+                CLIPAnnotator(model_name="openai/clip-vit-base-patch16"),
+            ],
+            generator_filter=DeduplicateConcepts(),
+            raw_annotation_filter=ThresholdAnnotationFilter(threshold=0.2),
+            calibrator=SigmoidCalibrator(scale=10.0, bias=-2.5),
+            calibrated_annotation_filter=ThresholdAnnotationFilter(threshold=0.5),
+            aggregator=average_scores,
+            routing="merged",
+        )
+        outputs = pipeline(dataset, class_names=["sparrow", "robin", "crow"])
+        concepts = outputs["aggregated"]
     """
 
     def __init__(
@@ -188,7 +225,8 @@ class ConceptSupervisionPipeline:
             Class names forwarded to concept generators.
         generation_indices : sequence of int, optional
             Rows exposed to concept generation through the ``indices`` keyword.
-            The generator still receives the original ``dataset`` object.
+            If only this parameter is set, the annotator still annotates the
+            full ``dataset`` object.
         annotation_datasets : mapping of str to Dataset, optional
             Named datasets to annotate with the concepts generated from
             ``dataset``. Output keys are prefixed with each mapping key, e.g.
@@ -206,6 +244,22 @@ class ConceptSupervisionPipeline:
         dict[str, AnnotatedTensor]
             Sample-level concept values carrying their concept-axis metadata.
             With named annotation datasets, keys are split-prefixed.
+
+        Examples
+        --------
+        Using the pipeline configured in the class example, annotate existing
+        training and validation row indices with the same generated concepts.
+        Output keys automatically include the split name.
+
+        .. code-block:: python
+
+            outputs = pipeline(
+                dataset,
+                class_names=["sparrow", "robin", "crow"],
+                annotation_indices={"train": train_indices, "val": val_indices},
+            )
+            train_concepts = outputs["train_aggregated"]
+            val_concepts = outputs["val_aggregated"]
         """
         datasets_to_annotate, prefix_outputs = self._annotation_dataset_map(
             dataset,
