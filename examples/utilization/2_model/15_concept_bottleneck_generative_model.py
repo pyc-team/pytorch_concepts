@@ -185,7 +185,7 @@ def main():
     c = batch["concepts"]["c"][:8]
     with torch.no_grad():
         out = model(query=var_list, input=x)
-    save_grid(x, out.value["input"].clamp(0, 1), "cbgm_colormnist_reconstruction.png")
+    save_grid(x, out.value["input"].clamp(0, 1), "cbvae_colormnist_reconstruction.png")
 
     # Generate from concepts alone.
     # generate a green 7.
@@ -201,7 +201,7 @@ def main():
                       'digit': torch.tensor([[0,0,0,0,0,0,0,1,0,0]]), # 7 
                       'color': torch.tensor([[0,1]])} # green
         )
-    save_image(out.value["input"], "cbgm_colormnist_green_seven.png")
+    save_image(out.value["input"], "cbvae_colormnist_green_seven.png")
 
 
 if __name__ == "__main__":
