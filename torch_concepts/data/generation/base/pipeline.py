@@ -87,6 +87,18 @@ class ConceptSupervisionPipeline:
     name : str, optional
         Name of the pipeline. If None, the class name is used.
 
+    Output names
+    ------------
+    Pipeline results are returned as a dictionary. Component names come from
+    a component's non-empty ``name`` attribute, or its class name otherwise;
+    repeated names receive ``_1``, ``_2``, and so on. With merged routing,
+    annotator names are used as result keys. With cartesian or zip routing,
+    keys combine the generator and annotator names as
+    ``"<generator>_<annotator>"``. If an aggregator is configured, its result
+    is stored under ``"aggregated"`` (with a numeric suffix if that name is
+    already used). Named annotation datasets prefix every key, such as
+    ``"train_aggregated"``.
+
     Examples
     --------
     Generate visual concepts for an existing image ``dataset``, score them

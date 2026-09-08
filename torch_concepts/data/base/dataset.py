@@ -635,9 +635,18 @@ class ConceptDataset(Dataset):
             concept_pipeline: Pipeline that generates and annotates concepts.
             class_names: Optional task or class names forwarded to the concept
                 generator prompt.
-            use_as_gt: Select generated concepts as learner supervision.
-            generated_gt_name: Generated output name selected when
-                ``use_as_gt=True``.
+            use_as_gt: Select generated concepts as the learner-facing
+                ``dataset.concepts``. If ``True`` and the pipeline returns
+                multiple named sources, ``generated_gt_name`` is required.
+            generated_gt_name: Name of the generated source to use as
+                ``dataset.concepts`` when ``use_as_gt=True``. A pipeline can
+                return several sources, for example one output per annotator
+                plus an aggregated output; this argument chooses exactly one.
+                It must exactly match one key in the dictionary returned by
+                the pipeline. Inspect ``generated.keys()`` to see the valid
+                names (for example, ``"aggregated"`` or
+                ``"train_aggregated"``). Omit it when there is only one
+                generated source.
             **kwargs: Additional keyword arguments forwarded to
                 ``concept_pipeline``.
 
