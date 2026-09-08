@@ -83,8 +83,9 @@ def _normalize_loss_terms(terms, weights):
         )
     if weights is None:
         weights = [1.0] * len(terms)
+    terms = [t for t in terms if t is not None]
     if len(weights) != len(terms):
-        raise ValueError(
+         raise ValueError(
             f"Number of weights ({len(weights)}) must match "
             f"number of loss terms ({len(terms)})."
         )
