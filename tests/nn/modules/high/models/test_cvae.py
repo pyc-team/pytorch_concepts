@@ -1,7 +1,7 @@
 """Smoke tests for the Conditional Variational Autoencoder.
 
 The CVAE is the generative baseline for
-:class:`~torch_concepts.nn.ConceptBottleneckGenerativeModel`: same variational
+:class:`~torch_concepts.nn.ConceptBottleneckVAE`: same variational
 machinery, but the concepts are *given* to the decoder rather than predicted from
 ``z``. Three things follow, and they are what these tests pin:
 
@@ -28,10 +28,10 @@ from torch_concepts.nn import (
     AncestralSamplingInference,
     CompositeLoss,
     ConceptLoss,
-    ConditionalVariationalAutoencoder,
+    ConditionalVAE,
     KLDivergenceLoss,
     MLP,
-    ReconstructionLoss,
+    MSEReconstructionLoss,
 )
 from torch_concepts.distributions import Delta
 
@@ -49,7 +49,7 @@ def build_model(annotations, plate=None, input_size=INPUT_SIZE, **kwargs):
     """
     condition_size = len(annotations.labels) * EMBEDDING_SIZE
     flat_input = input_size if isinstance(input_size, int) else int(torch.tensor(input_size).prod())
-    return ConditionalVariationalAutoencoder(
+    return ConditionalVAE(
         input_size=input_size,
         annotations=annotations,
         encoder=MLP(flat_input, 16, LATENT_SIZE),
@@ -80,7 +80,7 @@ def binary_query(model, batch=5):
     return model.default_query(torch.randint(0, 2, (batch, 2)).float())
 
 
-class TestConditionalVariationalAutoencoder:
+class TestConditionalVAE:
     def test_binary_concepts_are_probabilities(self, binary_annotations):
         model = build_model(binary_annotations, plate=False)
         out = model(query=binary_query(model), input=torch.rand(5, INPUT_SIZE))
@@ -348,7 +348,7 @@ class TestGuideSharesOneBackbonePass:
 
     def _model(self, annotations, backbone):
         condition_size = len(annotations.labels) * EMBEDDING_SIZE
-        return ConditionalVariationalAutoencoder(
+        return ConditionalVAE(
             input_size=INPUT_SIZE,
             annotations=annotations,
             backbone=backbone,
@@ -412,13 +412,13 @@ class TestDeltaObservation:
         assert sum(m is model.condition_embedding for m in head.modules()) == 1
 
     def test_reconstruction_loss_is_the_squared_error(self, binary_annotations):
-        """0.5 * ||x - v||^2 is the sigma=1 Gaussian NLL minus its constant, so
-        the switch off `Normal` leaves the tuned loss weights meaning the same."""
+        """||x - v||^2 summed over the event, as in test_cbgm, so the two models'
+        reconstruction terms stay on the same scale."""
         model = build_model(binary_annotations, plate=False)
         x = torch.rand(5, INPUT_SIZE)
         out = model(query=binary_query(model), input=x)
-        loss = ReconstructionLoss(variable="input")(out)
-        expected = (0.5 * (out.value["input"] - x).pow(2).sum(-1)).mean()
+        loss = MSEReconstructionLoss(variable="input")(out)
+        expected = (out.value["input"] - x).pow(2).sum(-1).mean()
         assert torch.isfinite(loss)
         assert torch.allclose(loss, expected)
 
@@ -426,15 +426,15 @@ class TestDeltaObservation:
         model = build_model(binary_annotations, plate=False)
         x = torch.rand(5, INPUT_SIZE)
         out = model(query=binary_query(model), input=x)
-        mean = ReconstructionLoss(variable="input")(out)
-        total = ReconstructionLoss(variable="input", reduction="sum")(out)
+        mean = MSEReconstructionLoss(variable="input")(out)
+        total = MSEReconstructionLoss(variable="input", reduction="sum")(out)
         assert torch.allclose(total, mean * 5)
 
 
 class TestTrainingAndGeneration:
     def test_default_extra_publishes_the_evidence(self, binary_annotations):
         """`BaseModel.forward` fills `out.extra` from this hook, and it is the only
-        way `ReconstructionLoss` ever sees the observed image."""
+        way `MSEReconstructionLoss` ever sees the observed image."""
         model = build_model(binary_annotations, plate=False)
         x = torch.rand(5, INPUT_SIZE)
         out = model(query=binary_query(model), input=x)
@@ -448,7 +448,7 @@ class TestTrainingAndGeneration:
         model = build_model(binary_annotations, plate=False)
         loss_fn = CompositeLoss(
             terms=[
-                ReconstructionLoss(variable="input"),
+                MSEReconstructionLoss(variable="input"),
                 KLDivergenceLoss(latents=["z"]),
                 # The model reports `probs`, so the binary term scores
                 # probabilities rather than logits.

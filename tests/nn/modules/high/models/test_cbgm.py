@@ -18,9 +18,9 @@ import torch.nn.functional as F
 from torch_concepts.annotations import Annotations
 from torch_concepts.nn import (
     AncestralSamplingInference,
-    ConceptBottleneckGenerativeModel,
+    ConceptBottleneckVAE,
     MLP,
-    ReconstructionLoss,
+    MSEReconstructionLoss,
 )
 from torch_concepts.distributions import Delta
 
@@ -31,7 +31,7 @@ INPUT_SIZE, LATENT_SIZE, EMBEDDING_SIZE = 24, 8, 4
 
 def build_model(annotations, plate=None, use_unknown=True, **kwargs):
     n_contexts = len(annotations.labels) + (1 if use_unknown else 0)
-    return ConceptBottleneckGenerativeModel(
+    return ConceptBottleneckVAE(
         input_size=INPUT_SIZE,
         annotations=annotations,
         encoder=MLP(INPUT_SIZE, 16, LATENT_SIZE),
@@ -58,7 +58,7 @@ def categorical_annotations():
     )
 
 
-class TestConceptBottleneckGenerativeModel:
+class TestConceptBottleneckVAE:
     def test_binary_concepts_and_observation_are_probabilities(self, binary_annotations):
         model = build_model(binary_annotations)
         out = model(query=list(model.pgm.variables), input=torch.rand(6, INPUT_SIZE))
@@ -142,7 +142,7 @@ class TestGuideSharesOneBackbonePass:
 
     def _model(self, annotations, backbone):
         n_contexts = len(annotations.labels) + 1
-        return ConceptBottleneckGenerativeModel(
+        return ConceptBottleneckVAE(
             input_size=INPUT_SIZE,
             annotations=annotations,
             backbone=backbone,
@@ -267,34 +267,46 @@ class TestUseUnknownAblation:
 
 
 class TestContextNetwork:
-    """``context_hidden_size`` swaps the ``z -> embeddings`` heads from
-    :class:`LinearEmbeddingEncoder` to :class:`MLPEmbeddingEncoder`;
-    ``context_norm`` only makes sense alongside it."""
+    """``z -> embeddings`` heads: an ``MLPEmbeddingEncoder`` by default,
+    configured by ``context_net_kwargs``."""
 
-    def test_context_norm_without_hidden_size_raises(self, binary_annotations):
-        with pytest.raises(ValueError):
-            build_model(binary_annotations, plate=False, context_norm="layer")
+    def test_the_default_is_an_mlp_encoder(self, binary_annotations):
+        from torch_concepts.nn import MLPEmbeddingEncoder
 
-    def test_context_hidden_size_swaps_in_the_mlp_encoder(self, binary_annotations):
-        """`context_hidden_size` alone (default `context_norm=None`) must
-        build without error."""
-        from torch_concepts.nn import MLPEmbeddingEncoder, LinearEmbeddingEncoder
-
-        model = build_model(binary_annotations, plate=False, context_hidden_size=8)
+        model = build_model(binary_annotations, plate=False)
         assert any(isinstance(m, MLPEmbeddingEncoder) for m in model.modules())
-        assert not any(isinstance(m, LinearEmbeddingEncoder) for m in model.modules())
 
-    def test_context_hidden_size_and_norm_forward_and_backward(self, binary_annotations):
-        model = build_model(
-            binary_annotations, plate=False,
-            context_hidden_size=8, context_norm="layer",
-        )
+    def test_kwargs_reach_the_encoder(self, binary_annotations):
+        model = build_model(binary_annotations, plate=False,
+                            context_net_kwargs={"hidden_size": 8})
+        head = model.pgm.factors["a_embedding"].parametrization["value"]
+        linears = [m for m in head.modules() if isinstance(m, torch.nn.Linear)]
+        assert linears[0].out_features == 8
+
+
+class TestUseUnknownAblation:
+    """``use_unknown=False`` is Table 3's ablation: the unsupervised context is
+    left out of the graph entirely, shrinking the bottleneck from ``(k+1)*m`` to
+    ``k*m``."""
+
+    def test_unknown_variable_is_absent_from_the_graph(self, binary_annotations):
+        model = build_model(binary_annotations, plate=False, use_unknown=False)
+        assert "unknown" not in model.pgm.variables
+        assert "unknown" not in model.pgm.factors
+
+    def test_mixing_stays_k_wide_without_the_unknown_context(self, binary_annotations):
+        model = build_model(binary_annotations, plate=False, use_unknown=False)
+        n_concepts = len(binary_annotations.labels)
+        assert tuple(model.pgm.variables["mixing"].shape) == (n_concepts, EMBEDDING_SIZE)
+
+    def test_forward_and_backward_through_the_shrunk_bottleneck(self, binary_annotations):
+        """A decoder sized for k*m (not (k+1)*m) must still receive a
+        matching-width bottleneck, and gradients must still reach it."""
+        model = build_model(binary_annotations, plate=False, use_unknown=False)
         out = model(query=list(model.pgm.variables), input=torch.rand(6, INPUT_SIZE))
         assert out.value["input"].shape == (6, INPUT_SIZE)
         out.value["input"].sum().backward()
-        emb_cpd = model.pgm.factors["a_embedding"]
-        grads = [p.grad for p in emb_cpd.parameters()]
-        assert grads and all(g is not None for g in grads)
+        assert any(p.grad is not None for p in model.decoder.parameters())
 
 
 class TestDeltaObservation:
@@ -313,7 +325,7 @@ class TestDeltaObservation:
         if not isinstance(input_size, int):
             for d in input_size:
                 flat_size *= d
-        return ConceptBottleneckGenerativeModel(
+        return ConceptBottleneckVAE(
             input_size=input_size,
             annotations=binary_annotations,
             encoder=MLP(flat_size, 16, LATENT_SIZE),
@@ -335,14 +347,13 @@ class TestDeltaObservation:
         assert set(cpd.parametrization) == {"value"}
 
     def test_reconstruction_loss_is_the_squared_error(self, binary_annotations):
-        """`ReconstructionLoss` scores a Delta as 0.5 * ||x - v||^2, which is the
-        sigma=1 Gaussian NLL minus its constant — so a model moved off `Normal`
-        keeps the reconstruction weight it was tuned with."""
+        """A Delta observation is scored as ||x - v||^2 summed over the event;
+        half of it is the sigma=1 Gaussian NLL minus its constant."""
         model = self._model(binary_annotations)
         x = torch.rand(6, INPUT_SIZE)
         out = model(query=list(model.pgm.variables), input=x)
-        loss = ReconstructionLoss(variable="input")(out)
-        expected = (0.5 * (out.value["input"] - x).pow(2).sum(-1)).mean()
+        loss = MSEReconstructionLoss(variable="input")(out)
+        expected = (out.value["input"] - x).pow(2).sum(-1).mean()
         assert torch.isfinite(loss)
         assert torch.allclose(loss, expected)
 
@@ -428,7 +439,7 @@ class TestTeacherForcingRate:
     def _model(self, annotations, p_int):
         n_contexts = len(annotations.labels) + 1
         engine = {"p_int": p_int}
-        return ConceptBottleneckGenerativeModel(
+        return ConceptBottleneckVAE(
             input_size=INPUT_SIZE,
             annotations=annotations,
             encoder=MLP(INPUT_SIZE, 16, LATENT_SIZE),
@@ -459,7 +470,7 @@ class TestTeacherForcingRate:
         model.zero_grad()
         out = model(query=query, input=x)
         out.extra = {"evidence": {"input": x}}
-        ReconstructionLoss(variable="input")(out).backward()
+        MSEReconstructionLoss(variable="input")(out).backward()
 
         rows = weight.shape[0] // 2
         return weight.grad[:rows].norm(), weight.grad[rows:].norm()
@@ -553,7 +564,7 @@ class TestTemperatureAnnealing:
             else {"inference_kwargs": dict(engine),
                   "train_inference_kwargs": dict(engine)}
         )
-        return ConceptBottleneckGenerativeModel(
+        return ConceptBottleneckVAE(
             input_size=INPUT_SIZE,
             annotations=annotations,
             encoder=MLP(INPUT_SIZE, 16, LATENT_SIZE),
