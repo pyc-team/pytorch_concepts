@@ -3,7 +3,21 @@ from torch_concepts.data.generation.base.filter_generator import FilterGenerator
 
 
 class DeduplicateConcepts(FilterGenerator):
-    """Deduplicate a generated concept axis, preserving order and metadata."""
+    """Deduplicate generated concept definitions, preserving order and metadata.
+
+    Examples
+    --------
+    >>> concepts = Annotations(
+    ...     labels=["color", "shape", "color"],
+    ...     states=[["red", "blue"], ["circle", "square"], ["red", "blue"]],
+    ...     types=["categorical", "categorical", "categorical"],
+    ... )
+    >>> filtered = DeduplicateConcepts().filter(concepts)
+    >>> filtered.labels
+    ['color', 'shape']
+    >>> filtered.states
+    [['red', 'blue'], ['circle', 'square']]
+    """
 
     def filter(self, concepts: Annotations) -> Annotations:
         """Keep one occurrence per label, rejecting incompatible definitions."""
