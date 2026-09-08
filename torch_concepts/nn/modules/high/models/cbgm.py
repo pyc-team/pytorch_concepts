@@ -36,7 +36,7 @@ import torch_concepts as pyc
 from .....annotations import Annotations
 from .....concept_graph import ConceptGraph
 from .....distributions import Delta
-from ...low.dense_layers import LinearEmbeddingEncoder, MLPEmbeddingEncoder
+from ...low.dense_layers import MLPEmbeddingEncoder
 from ...low.encoders.linear import LinearEmbeddingToConcept
 from ...low.predictors.mix import MixConceptEmbeddings
 from ...low.priors import FixedPrior
@@ -71,9 +71,7 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
     decoder : nn.Module
         The post-concept-bottleneck network, mapping the flattened bottleneck
         (``embedding_size * (n_concepts + 1)``) to ``input_size`` values. The
-        observation is a ``Delta``, whose ``value`` takes no activation, so this
-        output **is** the reconstruction: a decoder for images in ``[0, 1]`` has
-        to land there itself.
+        observation is a ``Delta``.
     latent_size : int, default 64
         Dimensionality of ``z``.
     embedding_size : int, default 16
@@ -82,30 +80,12 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         Whether the bottleneck carries the *unsupervised* context. ``True`` is
         the paper's ``w = [w_1, ..., w_k, w_{k+1}]``. ``False`` removes the slot
         entirely, shrinking the bottleneck to ``m * k`` and making the
-        orthogonality penalty vacuous — the ablation in Table 3 of the paper,
-        where it costs both steerability and sample quality.
-
-        The unsupervised context is always ``embedding_size`` wide: the
-        orthogonality penalty is a cosine similarity against the concept
-        contexts (Eq. 5), which is undefined between vectors of different widths.
-    context_hidden_size : int or None, default None
-        Width of a hidden layer in the context networks ``z -> w``. ``None``
-        builds them as :class:`~torch_concepts.nn.LinearEmbeddingEncoder`, which
-        is the reference's layout — but the reference is a VAE-*GAN*, whose
-        discriminator supplies the missing nonlinearity elsewhere. In the pure
-        VAE built here a linear context network plus a shallow decoder makes the
-        whole path ``z -> pixels`` close to affine, and an affine generator
-        reproduces the data mean near the codes it was trained on and diverges
-        away from them — sharp reconstructions, incoherent prior samples. Set it
-        to swap in :class:`~torch_concepts.nn.MLPEmbeddingEncoder`.
-    context_norm : str or None, default None
-        Normalisation on the context embeddings: ``'layer'``, ``'batch'`` or
-        ``None`` for none. Only meaningful alongside ``context_hidden_size`` —
-        passing it alone raises rather than being dropped, since a
-        ``LinearEmbeddingEncoder`` takes no normalisation. The reference uses
-        ``BatchNorm1d``, which bounds the embeddings when ``z`` wanders off the
-        posterior; ``'layer'`` does the same without depending on the batch, so
-        a single generated sample decodes the way a batch of them does.
+        orthogonality penalty vacuous.
+    context_net_kwargs : dict, optional
+        Arguments for the default ``MLPEmbeddingEncoder`` context network
+        mapping 'z' to the context embeddings — ``hidden_size``
+        (defaults to ``latent_size``//2), ``n_layers``, ``activation``,
+        ``norm``, ``dropout``.
     inference, inference_kwargs, train_inference, train_inference_kwargs
         Inference engine configuration. Defaults to
         :class:`~torch_concepts.nn.VariationalInference`, with the guide on
@@ -127,10 +107,13 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
 
     * The decoder input is the paper's ``m(k + 1)`` bottleneck; the code also
       prepends the concept probabilities.
-    * The reference context generators end in ``BatchNorm1d``. Here they default
-      to a bare :class:`~torch_concepts.nn.LinearEmbeddingEncoder`; set
-      ``context_hidden_size`` and ``context_norm='batch'`` to approach it, or
-      ``'layer'`` for the batch-independent equivalent.
+    * The reference context generators are a bare linear map ending in
+      ``BatchNorm1d``, which works there because the discriminator supplies the
+      nonlinearity. In this pure VAE a linear context plus a shallow decoder
+      leaves ``z -> pixels`` close to affine — reproducing the data mean near the
+      training codes and diverging away from them — so the default is an MLP
+      with ``norm='layer'``. Pass ``context_net_kwargs={'norm': 'batch'}`` to
+      approach the reference.
     * The reference concept head is a per-concept ``Linear(bins * m, bins)``.
       Every concept here keeps the CEM head instead — a ``Linear(m, 1)`` shared
       across state embeddings — including a binary one, whose second state
@@ -192,8 +175,7 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         latent_size: int = 64,
         embedding_size: int = 16,
         use_unknown: bool = True,
-        context_hidden_size: Optional[int] = None,
-        context_norm: Optional[str] = None,
+        context_net_kwargs: Optional[dict] = None,
         inference: Optional[BaseInference] = VariationalInference,
         inference_kwargs: Optional[dict] = None,
         train_inference: Optional[BaseInference] = None,
@@ -212,15 +194,7 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         )
         self.embedding_size = embedding_size
         self.use_unknown = bool(use_unknown)
-        self.context_hidden_size = context_hidden_size
-        self.context_norm = context_norm
-        if context_hidden_size is None and context_norm is not None:
-            raise ValueError(
-                f"{type(self).__name__}: `context_norm={context_norm!r}` needs "
-                "`context_hidden_size` too. Without it the context networks are "
-                "LinearEmbeddingEncoders, which take no normalisation — the "
-                "setting would be silently dropped."
-            )
+        self.context_net_kwargs = dict(context_net_kwargs or {})
         self.encoder = encoder if encoder is not None else nn.Identity()
         self.decoder = decoder if decoder is not None else nn.Identity()
 
@@ -265,13 +239,6 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         and the generative loss terms need the ones it would otherwise leave out:
         ``input`` for the reconstruction and ``mixing``/``unknown`` for the
         orthogonality penalty.
-
-        The ground truth is always supplied; how often it is actually used is the
-        engine's ``p_int``. Always supplying it is what gives RandInt a target to
-        force *to* — a query that dropped the concepts could only ever sample
-        them. Their supervision is unaffected either way: the concept loss scores
-        the reported ``probs``, which are the CPD's predictions no matter which
-        value propagates.
         """
         return {
             **{name: None for name in self.pgm.variables},
@@ -279,7 +246,7 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
         }
 
     def default_extra(self, evidence, query=None):
-        """Publish the evidence so :class:`~torch_concepts.nn.ReconstructionLoss`
+        """Publish the evidence so :class:`~torch_concepts.nn.MSEReconstructionLoss`
         can score the observed variable (e.g. ``input``) against it."""
         return {"evidence": evidence}
 
@@ -377,29 +344,17 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
                 "scale": FixedPrior(torch.ones(self.latent_size)),
             },
         )
-        # z -> embeddings: one batched encoder per group, plus the unsupervised
-        # one. Linear is the reference's layout; `context_hidden_size` swaps in
-        # the non-linear encoder instead (see the class docstring for when).
-        def context_network(n_embeddings: int) -> nn.Module:
-            if self.context_hidden_size is None:
-                return LinearEmbeddingEncoder(
-                    in_features=self.latent_size,
-                    out_features=self.embedding_size,
-                    n_embeddings=n_embeddings,
-                )
-            return MLPEmbeddingEncoder(
-                in_features=self.latent_size,
-                out_features=self.embedding_size,
-                n_embeddings=n_embeddings,
-                hidden_size=self.context_hidden_size,
-                norm=self.context_norm,
-            )
-
+        # z -> embeddings: one context network per group.
         emb_encoders = ParametricCPD(
             variable=[*embeddings, *unknowns],
             parents=[latent],
             parametrization=[
-                {"value": context_network(e.shape[0])}
+                {"value": MLPEmbeddingEncoder(
+                    in_features=self.latent_size,
+                    out_features=self.embedding_size,
+                    n_embeddings=e.shape[0],
+                    **{'hidden_size': self.latent_size // 2, **self.context_net_kwargs},
+                )}
                 for e in [*embeddings, *unknowns]
             ],
         )
@@ -424,13 +379,6 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
             for cvar, evar in zip(concepts, embeddings)
         ]
 
-        # Embeddings concatenate along the *states* axis,
-        def mix_parents(concepts, embeddings):
-            return {
-                "concepts": torch.cat(list(concepts.values()), dim=-1),
-                "embeddings": torch.cat(list(embeddings.values()), dim=-2),
-            }
-
         mixing_cpd = ParametricCPD(
             variable=mixing,
             parents=[*concepts, *embeddings],
@@ -439,25 +387,25 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
                     in_concepts=reordered_axis, # require Annotations as in_concepts
                     in_embeddings=self.embedding_size,
             )},
-            aggregate=mix_parents,
+            # Default concatenation is along dim=-1; embeddings need dim=-2
+            aggregate=lambda concepts, embeddings: {
+                "concepts": torch.cat(list(concepts.values()), dim=-1),
+                "embeddings": torch.cat(list(embeddings.values()), dim=-2),
+            },
         )
-
-        def cat_embeddings(embeddings):
-            return torch.cat(list(embeddings.values()), dim=-2)
-        
-        def decoder_head(decoder):
-            return pyc.nn.Sequential(nn.Flatten(start_dim=-2), decoder)
 
         decoder_cpd = ParametricCPD(
             variable=observed,
             parents=[mixing, *unknowns],
-            # A Delta has a single `value` parameter, so `second` is not needed:
-            # the decoder's output IS the reconstruction.
             parametrization=self._flexible_parametrization(
                 variable=observed,
-                first=decoder_head(self.decoder),
+                first=pyc.nn.Sequential(
+                    nn.Flatten(start_dim=-2), 
+                    self.decoder
+                ),
             ),
-            aggregate=cat_embeddings,
+            # Default concatenation is along dim=-1; embeddings need dim=-2
+            aggregate=lambda embeddings: torch.cat(list(embeddings.values()), dim=-2),
         )
 
         return BayesianNetwork(
