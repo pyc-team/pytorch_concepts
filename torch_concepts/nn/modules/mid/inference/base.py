@@ -121,8 +121,10 @@ class BaseInference(nn.Module):
             f.name
             for f in pgm.factors.values()
             if getattr(f, "is_root", False)
-            # the library's own root priors are ``Sequential(LearnablePrior, 
-            # activation)``, which takes no input despite its ``*args`` signature.
+            # ``_module_input_names`` unwraps a Sequential and ignores
+            # ``*args``/``**kwargs``: a root prior is ``Sequential(LearnablePrior,
+            # activation)``, whose ``forward(*args, **kwargs)`` would otherwise
+            # count as two parameters and warn about a prior that takes no input.
             and any(_module_input_names(mod) for mod in f.parametrization.values())
         ]
         if roots_needing_input:
