@@ -314,9 +314,7 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
             plate_name="embeddings",
         )
         # The pre-defined concepts are incomplete in a generative setting, so the
-        # bottleneck carries one extra, unsupervised context embedding. Held as a
-        # list -- empty under the `use_unknown=False` ablation -- so each of the
-        # places it participates can splat it and stay branch-free.
+        # bottleneck carries one extra, unsupervised context embedding.
         unknowns = [
             EmbeddingVariable(
                 "unknown",
