@@ -19,6 +19,11 @@ ConceptSpec = dict[str, Any]
 
 class LLMConceptGenerator(Generator):
     """Generate concept-axis annotations using an arbitrary LLM or VLM.
+    
+    The generator does not receive a dataset in its constructor. To provide
+    dataset-level information or samples to a callable prompt, pass the
+    dataset to :meth:`generate` instead (i.e.,
+    ``generator.generate(dataset=dataset)``).
 
     Parameters
     ----------
