@@ -94,6 +94,22 @@ class ConceptSupervisionPipeline:
 
     .. code-block:: python
 
+        import torch
+        from torch_concepts import AnnotatedTensor
+        from torch_concepts.data.generation.base.pipeline import (
+            ConceptSupervisionPipeline,
+        )
+        from torch_concepts.data.generation.annotators import CLIPAnnotator
+        from torch_concepts.data.generation.calibrators import SigmoidCalibrator
+        from torch_concepts.data.generation.filters import (
+            DeduplicateConcepts,
+            ThresholdAnnotationFilter,
+        )
+        from torch_concepts.data.generation.generators import (
+            LiteLLMBackend,
+            LLMConceptGenerator,
+        )
+
         def average_scores(outputs):
             values = list(outputs.values())
             return AnnotatedTensor(
@@ -253,6 +269,8 @@ class ConceptSupervisionPipeline:
 
         .. code-block:: python
 
+            # ``pipeline`` and ``dataset`` are the objects configured above;
+            # ``train_indices`` and ``val_indices`` are row selections.
             outputs = pipeline(
                 dataset,
                 class_names=["sparrow", "robin", "crow"],

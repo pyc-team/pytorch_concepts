@@ -10,6 +10,9 @@ class SigmoidCalibrator(Calibrator):
 
     Examples
     --------
+    >>> import torch
+    >>> from torch_concepts import Annotations
+    >>> from torch_concepts.tensor import AnnotatedTensor
     >>> scores = AnnotatedTensor(
     ...     torch.tensor([[-1.0], [0.0], [1.0]]),
     ...     Annotations(labels=["is_red"]),

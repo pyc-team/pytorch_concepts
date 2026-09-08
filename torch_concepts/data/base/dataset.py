@@ -70,6 +70,9 @@ class ConceptDataset(Dataset):
         NotImplementedError: If continuous concepts or exogenous variables are used.
 
     Example:
+        >>> import torch
+        >>> from torch_concepts import Annotations, AnnotatedTensor
+        >>> from torch_concepts.data.base.dataset import ConceptDataset
         >>> X = torch.randn(100, 28, 28)  # 100 images
         >>> C = torch.randint(0, 2, (100, 5))  # 5 binary concepts
         >>> annotations = Annotations(labels=['c1', 'c2', 'c3', 'c4', 'c5'])

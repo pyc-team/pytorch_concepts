@@ -7,6 +7,9 @@ class ThresholdAnnotationFilter(FilterAnnotator):
 
     Examples
     --------
+    >>> import torch
+    >>> from torch_concepts import Annotations
+    >>> from torch_concepts.tensor import AnnotatedTensor
     >>> scores = AnnotatedTensor(
     ...     torch.tensor([[0.2, 0.8], [0.6, 0.4]]),
     ...     Annotations(labels=["color", "shape"]),

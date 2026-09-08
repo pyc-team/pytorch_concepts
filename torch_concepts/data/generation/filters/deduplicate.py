@@ -7,6 +7,7 @@ class DeduplicateConcepts(FilterGenerator):
 
     Examples
     --------
+    >>> from torch_concepts import Annotations
     >>> concepts = Annotations(
     ...     labels=["color", "shape", "color"],
     ...     states=[["red", "blue"], ["circle", "square"], ["red", "blue"]],
