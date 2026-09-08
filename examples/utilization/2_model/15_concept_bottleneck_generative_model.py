@@ -20,7 +20,7 @@ Experiment settings:
   (``digit`` 10-way, ``color`` 2-way), images flattened to 3x28x28 = 2352
   pixels, decoded deterministically (a ``Delta`` observation scored by
   squared error).
-- Model: ``ConceptBottleneckGenerativeModel`` with MLP encoder/decoder.
+- Model: ``ConceptBottleneckVAE`` with MLP encoder/decoder.
 - Inference engine: Pyro ``VariationalInference`` with a guide on ``z``.
 - Loss: a ``CompositeLoss`` of ``recon + kl + alpha * concept + beta * orthogonality``.
 
@@ -41,118 +41,39 @@ import torch
 from torch_concepts import seed_everything
 from torch_concepts.data import ColorMNISTDataModule
 from torch_concepts.nn import (
+    AncestralSamplingInference,
     CompositeLoss,
-    ConceptBottleneckGenerativeModel,
+    ConceptBottleneckVAE,
     ConceptLoss,
     KLDivergenceLoss,
     MLP,
     NLLProbLoss,
     OrthogonalityLoss,
-    ReconstructionLoss,
+    MSEReconstructionLoss,
 )
 
-LATENT_SIZE = 32     # dim(z)
-EMBEDDING_SIZE = 16  # m, the width of one context embedding
-ALPHA = 5.0          # concept loss weight
-BETA = 1.0           # orthogonality loss weight
-# This example used to carry a Gaussian likelihood at sigma=0.3, whose NLL
-# weighted the reconstruction gradient by 1/sigma**2. A Delta observation has no
-# sigma, so the same reconstruction-to-KL balance is now stated outright.
-RECON = 1 / 0.3 ** 2  # 11.11
+# data hparams
+MAX_SAMPLES = 30000
+BATCH_SIZE = 1024
 
+# model hparams
+LATENT_SIZE = 32      # dim(z)
+EMBEDDING_SIZE = 8    # dim of one concept embedding
+ENCODER_HIDDEN = 256  # hidden size of the encoder MLP
+ENCODER_LAYERS = 2    # number of layers in the encoder MLP
+DECODER_HIDDEN = 256  # hidden size of the decoder MLP
+DECODER_LAYERS = 2    # number of layers in the decoder MLP
+USE_UNKNOWN = True    # whether to include the residual
 
-def concept_accuracy(output, concepts, names):
-    return {
-        name: (output.probs[name].argmax(-1) == concepts[:, i]).float().mean().item()
-        for i, name in enumerate(names)
-    }
+# loss hparams
+RECON_WEIGHT = 1.0      # reconstruction loss weight
+KL_WEIGHT = 1.0         # KL loss weight
+FREE_BITS = 0.5         # KL free bits (nats) per latent dimension
+CONC_WEIGHT = 10.0      # concept loss weight
+ORT_WEIGHT = 1.0       # orthogonality loss weight
 
-
-def main():
-    seed_everything(42)
-
-    # `parity` is left out: it is a deterministic function of `digit`, so it adds
-    # a redundant bottleneck slot without anything new to steer.
-    datamodule = ColorMNISTDataModule(
-        root="./data/mnist",
-        concept_subset=["digit", "color"],
-        max_samples=30000,
-        batch_size=256,
-        seed=42,
-    )
-    datamodule.setup()
-    dataset = datamodule.dataset
-    concept_names = dataset.concept_names
-
-    # The PGM keeps every variable on a single feature axis, so the image is a
-    # flat vector of pixels rather than a (3, 28, 28) tensor.
-    n_pixels = math.prod(dataset.n_features)
-    context_size = (len(concept_names) + 1) * EMBEDDING_SIZE
-
-    model = ConceptBottleneckGenerativeModel(
-        input_size=n_pixels,
-        annotations=dataset.annotations,
-        encoder=MLP(n_pixels, 256, LATENT_SIZE),
-        latent_size=LATENT_SIZE,
-        embedding_size=EMBEDDING_SIZE,
-        # The observation is a Delta, so the decoder's output IS the
-        # reconstruction — no activation is composed on top, and the network
-        # learns to land in [0, 1] itself.
-        decoder=MLP(context_size, 256, n_pixels, n_layers=2, activation="leaky_relu"),
-    )
-    print(model)
-
-    # The ELBO, as four independent terms. This model reports `probs`
-    # (`param_for_discrete_var`), which the concept term picks up on its own — it
-    # only needs a term that scores probabilities rather than logits.
-    loss_fn = CompositeLoss(
-        terms=[
-            ReconstructionLoss(variable="input"),
-            KLDivergenceLoss(latents=["z"]),
-            ConceptLoss(categorical=NLLProbLoss()),
-            OrthogonalityLoss(variables=["mixing", "unknown"]),
-        ],
-        weights=[RECON, 1.0, ALPHA, BETA],
-    )
-
-    # Every PGM variable is queried: the observed image arrives as `input`
-    # (evidence), everything else is latent and reported by the engine.
-    query = list(model.pgm.variables)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-    loader = datamodule.train_dataloader()
-
-    for epoch in range(30):
-        totals = torch.zeros(4)
-        for batch in loader:
-            x = batch["inputs"]["x"].flatten(1)
-            c = batch["concepts"]["c"]
-            # ReconstructionLoss scores the observed image; the model's
-            # `default_extra` publishes it to `out.extra` on every forward call.
-            out = model(query=query, input=x)
-
-            # `breakdown` is `loss_fn(out, c)` with the addends kept apart, so the
-            # per-term values can be tracked — an ELBO whose KL has collapsed
-            # looks fine in the total.
-            terms = loss_fn.breakdown(out, c)
-            loss = sum(terms.values())
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            totals += torch.tensor([t.item() for t in terms.values()])
-
-        totals /= len(loader)
-        print(f"epoch {epoch:03d} | " + " | ".join(
-            f"{name} {value:.4f}" for name, value in zip(loss_fn.term_names, totals)))
-
-    # Reconstruct a held-out batch: q(z|x) -> concepts -> context -> x.
-    model.eval()
-    batch = next(iter(datamodule.test_dataloader()))
-    x = batch["inputs"]["x"].flatten(1)[:8]
-    c = batch["concepts"]["c"][:8]
-    with torch.no_grad():
-        out = model(query=query, input=x)
-    print("concept accuracy:", concept_accuracy(out, c, concept_names))
-    save_grid(x, out.value["input"].clamp(0, 1), "cbgm_colormnist_reconstruction.png")
+# training hparams
+N_EPOCHS = 100
 
 
 def save_grid(original, reconstruction, path):
@@ -170,6 +91,117 @@ def save_grid(original, reconstruction, path):
     plt.tight_layout()
     plt.savefig(path, dpi=150)
     print(f"reconstruction grid saved to {path}")
+
+
+def save_image(image, path):
+    """Write a single generated image, if matplotlib is around."""
+    try:
+        from matplotlib import pyplot as plt
+    except ImportError:
+        print("matplotlib not installed; skipping the generated image.")
+        return
+    plt.figure(figsize=(1.5, 1.5))
+    # A Delta observation is unbounded, so clamp before imshow.
+    plt.imshow(image.reshape(3, 28, 28).clamp(0, 1).permute(1, 2, 0).detach().numpy())
+    plt.axis("off")
+    plt.tight_layout()
+    plt.savefig(path, dpi=150)
+    print(f"generated image saved to {path}")
+
+
+def main():
+    seed_everything(42)
+
+    # `parity` is left out: it is a deterministic function of `digit`, so it adds
+    # a redundant bottleneck slot without anything new to steer.
+    datamodule = ColorMNISTDataModule(
+        root="./data/mnist",
+        concept_subset=["digit", "color"],
+        max_samples=MAX_SAMPLES,
+        batch_size=BATCH_SIZE,
+        seed=42,
+    )
+    datamodule.setup()
+    dataset = datamodule.dataset
+    concept_names = dataset.concept_names
+
+    n_pixels = math.prod(dataset.n_features)
+    context_size = (len(concept_names) + 1) * EMBEDDING_SIZE if USE_UNKNOWN else len(concept_names) * EMBEDDING_SIZE
+
+    model = ConceptBottleneckVAE(
+        input_size=n_pixels,
+        annotations=dataset.annotations,
+        latent_size=LATENT_SIZE,
+        embedding_size=EMBEDDING_SIZE,
+        encoder=MLP(n_pixels, ENCODER_HIDDEN, LATENT_SIZE, n_layers=ENCODER_LAYERS),
+        decoder=MLP(context_size, DECODER_HIDDEN, n_pixels, n_layers=DECODER_LAYERS),
+        use_unknown=USE_UNKNOWN
+    )
+    print(model)
+
+    loss_fn = CompositeLoss(
+        terms=[
+            MSEReconstructionLoss(variable="input"),
+            KLDivergenceLoss(latents=["z"], free_bits=FREE_BITS),
+            ConceptLoss(categorical=NLLProbLoss()),
+            OrthogonalityLoss("mixing", "unknown", len(concept_names)) if USE_UNKNOWN else None
+        ],
+        weights=[RECON_WEIGHT, KL_WEIGHT, CONC_WEIGHT, ORT_WEIGHT] if USE_UNKNOWN 
+        else [RECON_WEIGHT, KL_WEIGHT, CONC_WEIGHT]
+    )
+
+    # Every PGM variable is queried: the observed image arrives as `input`
+    # (evidence), everything else is latent and reported by the engine.
+    var_list = list(model.pgm.variables)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+    loader = datamodule.train_dataloader()
+
+    for epoch in range(N_EPOCHS):
+        totals = torch.zeros(len(loss_fn.terms))
+        for batch in loader:
+            x = batch["inputs"]["x"].flatten(1)
+            c = batch["concepts"]["c"]
+
+            # p(var_list | x)
+            # equivalent to inference.query(query=var_list, evidence={"input": x})
+            out = model(query=var_list, input=x)
+
+            # 'breakdown' returns a dict of the individual loss terms
+            terms = loss_fn.breakdown(out, c)
+            loss = sum(terms.values())
+            optimizer.zero_grad()
+            loss.backward()
+            optimizer.step()
+            totals += torch.tensor([t.item() for t in terms.values()])
+
+        print(f"epoch {epoch:03d} | " + " | ".join(
+            f"{name} {value / len(loader):.4f}"
+            for name, value in zip(loss_fn.term_names, totals)))
+
+    # Reconstruct a held-out batch: q(z|x) -> concepts -> context -> x.
+    model.eval()
+    batch = next(iter(datamodule.test_dataloader()))
+    x = batch["inputs"]["x"].flatten(1)[:8]
+    c = batch["concepts"]["c"][:8]
+    with torch.no_grad():
+        out = model(query=var_list, input=x)
+    save_grid(x, out.value["input"].clamp(0, 1), "cbgm_colormnist_reconstruction.png")
+
+    # Generate from concepts alone.
+    # generate a green 7.
+    generator = AncestralSamplingInference(model.pgm)
+    with torch.no_grad():
+        sampled_z = generator.query(
+            query=['z'], 
+            evidence={}
+        ).samples['z']
+        out = generator.query(
+            query=['input'], 
+            evidence={'z': sampled_z.tensor, 
+                      'digit': torch.tensor([[0,0,0,0,0,0,0,1,0,0]]), # 7 
+                      'color': torch.tensor([[0,1]])} # green
+        )
+    save_image(out.value["input"], "cbgm_colormnist_green_seven.png")
 
 
 if __name__ == "__main__":
