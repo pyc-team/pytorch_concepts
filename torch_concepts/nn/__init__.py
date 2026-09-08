@@ -49,7 +49,7 @@ from .modules.low.graph.wanda import WANDAGraphLearner
 # Loss functions
 from .modules.loss import PyCLoss, ConceptLoss, ConceptSubset, WeightedConceptLoss, \
     DepthWeightedConceptLoss, L1LogitRegularizer, CompositeLoss, \
-    ReconstructionLoss, KLDivergenceLoss, OrthogonalityLoss, NLLProbLoss
+    MSEReconstructionLoss, KLDivergenceLoss, OrthogonalityLoss, NLLProbLoss
 
 # Training callbacks
 from .modules.callbacks import LossWeightWarmup
@@ -173,7 +173,7 @@ __all__ = [
     "WeightedConceptLoss",
     "DepthWeightedConceptLoss",
     "L1LogitRegularizer",
-    "ReconstructionLoss",
+    "MSEReconstructionLoss",
     "KLDivergenceLoss",
     "OrthogonalityLoss",
     "NLLProbLoss",

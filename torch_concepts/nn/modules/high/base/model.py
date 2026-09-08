@@ -593,7 +593,7 @@ class BaseModel(nn.Module, ABC):
         """Extra context merged into ``out.extra`` for loss terms that need more
         than params/target. ``None`` by default (nothing merged); override in a
         model whose loss needs it, e.g. ``{'evidence': evidence}`` for
-        :class:`~torch_concepts.nn.ReconstructionLoss`.
+        :class:`~torch_concepts.nn.MSEReconstructionLoss`.
         """
         return None
 
