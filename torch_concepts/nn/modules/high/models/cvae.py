@@ -1,31 +1,19 @@
 """Conditional Variational Autoencoder (CVAE), conditioned on a set of concepts.
 
-CVAE conditions a VAE on an observed variable ``c``: ``q(z | x, c)`` encodes, ``p(x | z, c)`` decodes.
-In the concept-based setting, the concepts are the condition, and the CVAE 
-is a generative model that factorizes the joint as follows
-``p(c) p(z | c) p(x | z, c)``.
+A VAE conditioned on an observed ``c``: here the concepts are the condition, and
+the joint factorises as ``p(c) p(z | c) p(x | z, c)``. The guide is always
+``q(z | x, c)``, the paper's recognition network.
 
-The prior defaults to the paper's **conditional** ``p(z | c)``: ``z`` is drawn per
-condition rather than from a fixed ``N(0, I)``, so the latent only has to carry
-what ``c`` does not. It reads the concepts through the same embedding the guide
-and the decoder use, so ``c`` has one learned representation across the whole
-model. ``conditional_prior=False`` swaps in a plain ``N(0, I)`` instead — the
-ablation, and the setting under which the KL target is fixed.
+The prior defaults to the paper's conditional ``p(z | c)``, read through the same
+concept embedding the guide and the decoder use, so ``c`` has one learned
+representation across the model; ``conditional_prior=False`` swaps in a fixed
+``N(0, I)``, under which the KL target is constant.
 
-The guide is always ``q(z | x, c)``, the paper's recognition network.
-
-One deviation from the paper remains, in the direction of the simpler
-formulation the practitioner's version uses:
-
-* No GSNN / hybrid objective (paper Sec. 4.2): those address the train/test
-  mismatch of a *predictive* CVAE, whose condition is an input image. Here the
-  condition is a low-dimensional concept vector supplied identically at training
-  and at generation, so the mismatch does not arise.
-
-The guide needs no matching branch either. The reference's ``guide`` falls back
-to its ``prior_net`` when the output is unavailable at test time; here ``c`` is
-always supplied as evidence and the unknown quantity is ``input``, which
-generation draws from the model rather than from the guide.
+Deviation from the paper: no GSNN / hybrid objective (Sec. 4.2). That addresses
+the train/test mismatch of a *predictive* CVAE whose condition is an image; here
+the condition is a concept vector supplied identically at training and at
+generation, so the mismatch does not arise — and for the same reason the guide
+needs no ``prior_net`` fallback.
 
 References
 ----------
@@ -55,19 +43,19 @@ from ..base.graph import DirectedGraphModel
 
 
 class ConceptEmbedding(nn.Module):
-    """One learnable embedding per concept: ``k`` separate ``Linear(size_i, m)``.
-    Takes the concepts concatenated on the last axis and returns a tensor of 
-    shape ``[..., n_concepts * m]``.
+    """One learnable ``Linear(size_i, m)`` per concept.
+
+    Concepts arrive concatenated on the last axis; the result is
+    ``[..., n_concepts * m]``.
 
     Parameters
     ----------
     sizes : list of int
-        Width of each concept's value, in the order they are concatenated —
-        ``1`` for a binary or continuous concept, ``cardinality`` for a
-        categorical one. Per *member*, so a plate contributes one entry per
-        member rather than one for the whole plate.
+        Width of each concept's value in concatenation order — ``1`` for binary
+        or continuous, ``cardinality`` for categorical. Per *member*, so a plate
+        contributes one entry per member.
     embedding_size : int
-        Width ``m`` of every concept's embedding.
+        Width ``m`` of every embedding.
     """
 
     def __init__(self, sizes: List[int], embedding_size: int):
@@ -101,7 +89,7 @@ class ConditionedInput(nn.Module):
         return torch.cat([features, self.embedder(concepts)], dim=-1)
 
 
-class ConditionalVariationalAutoencoder(DirectedGraphModel):
+class ConditionalVAE(DirectedGraphModel):
     """Conditional VAE whose condition is the concept set.
 
     Generative process ``p(c) p(z | c) p(input | z, c)`` — or ``p(z)`` in place of
@@ -117,40 +105,36 @@ class ConditionalVariationalAutoencoder(DirectedGraphModel):
         Concept annotations (labels, cardinalities, types). Every concept is a
         conditioning variable; there are no task variables.
     encoder : nn.Module
-        The guide's feature extractor, mapping an observation to a vector. It
-        runs after ``backbone`` and must declare ``out_features`` (an
-        :class:`~torch_concepts.nn.MLP` or ``nn.Linear`` does); the embedded
-        concepts are appended to its output and two linear readouts produce
-        ``loc`` and ``scale``.
+        The guide's feature extractor, run after ``backbone``. Must declare
+        ``out_features``. The embedded concepts are appended to its output, and
+        two linear readouts give ``loc``/``scale``.
     decoder : nn.Module
-        The generative network, mapping ``latent_size + condition_size`` values
-        to ``input_size`` values. The observation is a ``Delta``, whose ``value``
-        takes no activation, so this output **is** the reconstruction: a decoder
-        for images in ``[0, 1]`` has to land there itself.
+        Maps ``latent_size + condition_size`` to ``input_size``. The observation
+        is a ``Delta``, so this output **is** the reconstruction — nothing is
+        composed on top and it must not be squashed here.
     latent_size : int, default 64
         Dimensionality of ``z``.
     embedding_size : int, default 16
-        Width ``m`` of one concept's embedding. Every concept gets its own
-        ``Linear(size_i, m)`` (:class:`ConceptEmbedding`), so the condition the
-        decoder reads is ``n_concepts * m`` wide however the concepts are
-        distributed — one binary and one 100-way categorical contribute ``m``
-        each, not 1 and 100.
+        Width ``m`` of one concept's embedding (:class:`ConceptEmbedding`). The
+        condition is ``n_concepts * m`` wide however the concepts are
+        distributed: a binary and a 100-way concept contribute ``m`` each.
     conditional_prior : bool, default True
-        Which prior over ``z``. ``True`` is the paper's ``p(z | c)``, built over
-        ``prior_encoder``: ``z`` is drawn per condition, so it only has to carry
-        what ``c`` does not. ``False`` is a fixed ``p(z) = N(0, I)`` — the plain
-        VAE prior, the ablation that shows what conditioning buys, and the way to
-        remove the collapse mode the Notes describe, since the KL then has a
-        constant target. The guide is ``q(z | input, c)`` either way.
+        ``True`` is the paper's ``p(z | c)`` over ``prior_encoder``, so ``z``
+        carries only what ``c`` does not. ``False`` is a fixed ``N(0, I)``: the
+        ablation, and the way to remove the collapse mode in the Notes. The guide
+        is ``q(z | input, c)`` either way.
     prior_encoder : nn.Module, optional
-        The conditional prior's feature extractor, mapping the embedded condition
-        (``condition_size``) to a vector; two linear readouts over it produce
-        ``p(z | c)``'s ``loc`` and ``scale``. Must declare ``out_features`` (an
-        :class:`~torch_concepts.nn.MLP` or ``nn.Linear`` does). Defaults to
-        ``MLP(condition_size, latent_size)``. The hidden layer is the point: read
-        linearly, ``loc`` would be a *sum* of per-concept contributions, so the
-        prior could not tell "digit 7 in red" from digit-7 plus red. Unused when
-        ``conditional_prior`` is False.
+        Pre-built trunk for ``p(z | c)``, mapping the embedded condition
+        (``condition_size``) to a vector two linear readouts turn into
+        ``loc``/``scale``. Must declare ``out_features``. Defaults to an ``MLP``
+        configured by ``prior_net_kwargs``. Unused when ``conditional_prior`` is
+        False.
+    prior_net_kwargs : dict, optional
+        Arguments for that default ``MLP`` — ``hidden_size`` (defaults to
+        ``latent_size``), ``n_layers``, ``activation``, ``dropout``. Its hidden
+        layer is the point: read linearly, ``loc`` would be a *sum* of
+        per-concept contributions, so the prior could not tell "digit 7 in red"
+        from digit-7 plus red.
     inference, inference_kwargs, train_inference, train_inference_kwargs
         Inference engine configuration. Defaults to
         :class:`~torch_concepts.nn.VariationalInference`, with the guide on
@@ -158,57 +142,49 @@ class ConditionalVariationalAutoencoder(DirectedGraphModel):
     lightning : bool, default False
         If True, adds Lightning training capabilities.
     plate : bool or None, default None
-        Per-level plate preference (see :class:`BaseModel`). ``None``/``True``
-        group homogeneous concepts into the minimum number of plates; ``False``
-        gives one variable per concept, which is what per-concept interventions
-        (and the steerability metric) address.
+        Per-level plate preference (see :class:`BaseModel`). ``False`` gives one
+        variable per concept, which is what per-concept interventions (and the
+        steerability metric) address.
     **kwargs
         Forwarded to :class:`BaseModel`.
 
     Attributes
     ----------
     condition_size : int
-        Width of the condition the decoder reads,
         ``n_concepts * embedding_size``. Known from the annotations alone, so the
         decoder can be sized before construction.
     condition_embedding : ConceptEmbedding
-        The per-concept embedding layers, shared by the decoder, the guide and the
-        conditional prior.
+        The per-concept embeddings, shared by decoder, guide and prior.
 
     Notes
     -----
-    The concept loss trains the **marginal** ``p(c)``, not a concept predictor:
-    this model reads its concepts and never infers them from the observation.
-    Concept accuracy is therefore at the majority-class rate by construction, and
-    is not a number to compare against a CBM/CBGM's. What *is* comparable is the
-    steerability of the generations and their FID.
+    The concept loss fits the **marginal** ``p(c)``, not a concept predictor: this
+    model reads its concepts and never infers them. Concept accuracy is therefore
+    at the majority-class rate by construction and is not comparable to a
+    CBM/CBGM's; steerability and FID are.
 
-    With ``conditional_prior`` the prior is learned, so the KL has no fixed target:
-    ``KL(q(z | x, c) ‖ p(z | c))`` can be driven to zero by ``p`` drifting toward
-    ``q`` rather than by ``q`` becoming informative. Because ``p`` sees only ``c``, the zero-KL solution
-    is ``q`` ignoring ``input`` altogether — ``z`` then carries nothing and the
-    model degenerates into a ``c → input`` map that reconstructs the conditional
-    mean. Watch the KL term; ``KLDivergenceLoss(latents=['z'], free_bits=...)``
-    puts a floor under each latent dimension if it collapses, and
+    With ``conditional_prior`` the KL has no fixed target, so it can be driven to
+    zero by ``p`` drifting toward ``q`` instead of ``q`` becoming informative.
+    Since ``p`` sees only ``c``, that solution is ``q`` ignoring ``input``: ``z``
+    carries nothing and the model degenerates into a ``c → input`` map.
+    ``KLDivergenceLoss(free_bits=...)`` floors each latent dimension against it;
     ``conditional_prior=False`` removes the mode outright.
 
-    Any registered distribution family works for a concept, via
-    ``variable_distributions``: the plain discrete families (the defaults), their
-    relaxed and straight-through variants — the latter making a *sampled* concept
-    an exact bit / one-hot row rather than a soft Concrete draw — ``Normal``, and
-    ``MultivariateNormal`` for a vector-valued continuous concept (which needs
-    ``plate=False``, since a Cholesky factor is not a per-element parameter).
+    Any registered family works for a concept via ``variable_distributions``: the
+    plain discrete ones (the defaults), their relaxed and straight-through
+    variants, ``Normal``, and ``MultivariateNormal`` (which needs ``plate=False``,
+    a Cholesky factor not being a per-element parameter).
 
     Examples
     --------
     >>> import torch
     >>> from torch_concepts.annotations import Annotations
-    >>> from torch_concepts.nn import ConditionalVariationalAutoencoder, MLP
+    >>> from torch_concepts.nn import ConditionalVAE, MLP
     >>>
     >>> ann = Annotations(labels=['digit', 'color'], cardinalities=[10, 2],
     ...                   types=['categorical', 'categorical'])
     >>> condition = len(ann.labels) * 8  # n_concepts * embedding_size
-    >>> model = ConditionalVariationalAutoencoder(
+    >>> model = ConditionalVAE(
     ...     input_size=784, annotations=ann,
     ...     encoder=MLP(784, 128, 32),
     ...     # The decoder's output is the reconstruction, unactivated.
@@ -221,7 +197,7 @@ class ConditionalVariationalAutoencoder(DirectedGraphModel):
 
     See Also
     --------
-    torch_concepts.nn.ConceptBottleneckGenerativeModel : the model this baselines
+    torch_concepts.nn.ConceptBottleneckVAE : the model this baselines
     """
 
     supported_concept_types = frozenset({"binary", "categorical", "continuous"})
@@ -247,6 +223,7 @@ class ConditionalVariationalAutoencoder(DirectedGraphModel):
         embedding_size: int = 16,
         conditional_prior: bool = True,
         prior_encoder: nn.Module = None,
+        prior_net_kwargs: Optional[dict] = None,
         inference: Optional[BaseInference] = VariationalInference,
         inference_kwargs: Optional[dict] = None,
         train_inference: Optional[BaseInference] = None,
@@ -269,15 +246,13 @@ class ConditionalVariationalAutoencoder(DirectedGraphModel):
         self.decoder = decoder if decoder is not None else nn.Identity()
 
         self.condition_size = len(self.concept_names) * embedding_size
-        # p(z | c)'s trunk, over the *embedded* condition. The default is an MLP
-        # rather than a bare readout because a linear map off the embedding makes
-        # `loc` additive across concepts — the prior could then not tell "digit 7
-        # in red" from digit-7 plus red. Sized from what the model already knows.
+        # p(z | c)'s trunk, over the *embedded* condition. An MLP rather than a
+        # bare readout: read linearly, `loc` would be additive across concepts.
         self.prior_encoder = None
         if self.conditional_prior:
-            self.prior_encoder = (
-                prior_encoder if prior_encoder is not None
-                else MLP(self.condition_size, self.latent_size)
+            self.prior_encoder = prior_encoder or MLP(
+                self.condition_size,
+                **{"hidden_size": self.latent_size, **(prior_net_kwargs or {})},
             )
 
         self.pgm = self._build_model()
@@ -323,39 +298,13 @@ class ConditionalVariationalAutoencoder(DirectedGraphModel):
         }
 
     def default_extra(self, evidence, query=None):
-        """Publish the evidence so :class:`~torch_concepts.nn.ReconstructionLoss`
+        """Publish the evidence so :class:`~torch_concepts.nn.MSEReconstructionLoss`
         can score the observed variable (e.g. ``input``) against it."""
         return {"evidence": evidence}
 
     # ------------------------------------------------------------------
     # Model assembly
     # ------------------------------------------------------------------
-    def _concept_variables(self) -> List:
-        """The condition's variables, in the order they are concatenated."""
-        return [v for v in self.pgm.variables.values() if v.variable_type == "concept"]
-
-    @staticmethod
-    def _prior_heads(variable) -> dict:
-        """``first``/``second`` :class:`LearnablePrior` heads for a marginal ``p(v)``.
-
-        Sized from the variable's own ``param_sizes`` rather than from its
-        ``size``, because the two differ: a ``MultivariateNormal``'s
-        ``scale_tril`` needs the ``size * (size + 1) // 2`` free entries of a
-        Cholesky factor, not ``size``. Everything else here is one scalar per
-        event element, so this reduces to ``size`` for the discrete families, a
-        ``Delta``'s ``value`` and a ``Normal``'s ``loc``/``scale``.
-        """
-        sizes = variable.param_sizes
-        if "loc" not in sizes:
-            # Discrete (probs/logits) or Delta (value) — a single head, and every
-            # candidate parameter has the same width.
-            return {"first": LearnablePrior(variable.size), "second": None}
-        scale_param = next(param for param in sizes if param != "loc")
-        return {
-            "first": LearnablePrior(sizes["loc"]),
-            "second": LearnablePrior(sizes[scale_param]),
-        }
-
     @staticmethod
     def _readout_width(width, what: str, culprit: str) -> int:
         """Validate a trunk's declared output width, or say which module lacks it.
@@ -366,7 +315,7 @@ class ConditionalVariationalAutoencoder(DirectedGraphModel):
         """
         if width is None:
             raise ValueError(
-                f"ConditionalVariationalAutoencoder: cannot size {what} — "
+                f"ConditionalVAE: cannot size {what} — "
                 f"neither {culprit} `out_features`. Set that attribute, or pass a "
                 "module that declares it (e.g. MLP, nn.Linear)."
             )
@@ -396,7 +345,9 @@ class ConditionalVariationalAutoencoder(DirectedGraphModel):
             "the guide's readout",
             "`encoder` nor `backbone` declares",
         )
-        conditioning = self._concept_variables()
+        # The condition's variables, in the order they are concatenated.
+        conditioning = [v for v in self.pgm.variables.values()
+                        if v.variable_type == "concept"]
         width = int(width) + self.condition_size
         return ParametricCPD(
             variable=z,
@@ -474,25 +425,32 @@ class ConditionalVariationalAutoencoder(DirectedGraphModel):
         # softmax for a categorical, softplus on a continuous concept's scale.
         # Unused while the concepts are observed; fitted by the concept loss so
         # that an *unconditional* draw produces a plausible condition.
+        # Heads are sized from `param_sizes`, not `size`: a MultivariateNormal's
+        # `scale_tril` needs the Cholesky factor's size*(size+1)//2 entries, while
+        # everything else is one scalar per event element.
+        def prior_heads(variable) -> dict:
+            sizes = variable.param_sizes
+            if "loc" not in sizes:
+                # Discrete (probs/logits) or Delta (value) — a single head, and
+                # every candidate parameter has the same width.
+                return {"first": LearnablePrior(variable.size), "second": None}
+            scale_param = next(param for param in sizes if param != "loc")
+            return {
+                "first": LearnablePrior(sizes["loc"]),
+                "second": LearnablePrior(sizes[scale_param]),
+            }
+
         concept_cpds = [
             ParametricCPD(
                 variable=cvar,
                 parents=[],
                 parametrization=self._flexible_parametrization(
                     variable=cvar,
-                    **self._prior_heads(cvar),
+                    **prior_heads(cvar),
                 ),
             )
             for cvar in concepts
         ]
-
-        # The parents reach the head as `z` (an embedding) and the raw concepts,
-        # split by type — so the head embeds the concepts and concatenates,
-        # producing the [z | embedded c] layout `condition_size` documents.
-        def decoder_head(decoder: nn.Module) -> nn.Module:
-            return pyc.nn.Sequential(
-                ConditionedInput(self.condition_embedding), decoder
-            )
 
         decoder_cpd = ParametricCPD(
             variable=observed,
@@ -501,7 +459,11 @@ class ConditionalVariationalAutoencoder(DirectedGraphModel):
             # the decoder's output IS the reconstruction.
             parametrization=self._flexible_parametrization(
                 variable=observed,
-                first=decoder_head(self.decoder),
+                # ConditionedInput embeds the concepts and concatenates, giving
+                # the [z | embedded c] layout `condition_size` documents.
+                first=pyc.nn.Sequential(
+                    ConditionedInput(self.condition_embedding), self.decoder
+                ),
             ),
         )
 

@@ -49,7 +49,7 @@ from ...mid.distributions import DEFAULT_DIST_KWARGS
 from ..base.graph import DirectedGraphModel
 
 
-class ConceptBottleneckGenerativeModel(DirectedGraphModel):
+class ConceptBottleneckVAE(DirectedGraphModel):
     """Concept Bottleneck Generative Model (VAE variant).
 
     Generative process ``z → concepts → input``, trained as a VAE through a
@@ -135,11 +135,11 @@ class ConceptBottleneckGenerativeModel(DirectedGraphModel):
     --------
     >>> import torch
     >>> from torch_concepts.annotations import Annotations
-    >>> from torch_concepts.nn import ConceptBottleneckGenerativeModel, MLP
+    >>> from torch_concepts.nn import ConceptBottleneckVAE, MLP
     >>>
     >>> ann = Annotations(labels=['digit', 'color'], cardinalities=[10, 2],
     ...                   types=['categorical', 'categorical'])
-    >>> model = ConceptBottleneckGenerativeModel(
+    >>> model = ConceptBottleneckVAE(
     ...     input_size=784, annotations=ann,
     ...     encoder=MLP(784, 128, 32),
     ...     # The decoder's output is the reconstruction, unactivated.
