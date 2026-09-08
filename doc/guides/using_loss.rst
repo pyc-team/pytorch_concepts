@@ -37,7 +37,7 @@ How the output reaches a loss
         │
         ▼
     CompositeLoss           each term sees the whole ModelOutput
-      ├── ReconstructionLoss / KLDivergenceLoss / OrthogonalityLoss / ...
+      ├── MSEReconstructionLoss / KLDivergenceLoss / OrthogonalityLoss / ...
       ├── ConceptSubset     narrows the output to a named group of concepts
       └── ConceptLoss       routes by concept type:
               binary       ← params['logits'|'probs'].binary()
@@ -101,7 +101,7 @@ runs, the annotation has already done its job of aligning to the target.
 A term that needs the *whole* output rather than one type's slice — to read a
 guide's latents, or the evidence — subclasses
 :class:`~torch_concepts.nn.PyCLoss` instead and takes ``(output, target=None)``.
-That is what :class:`~torch_concepts.nn.ReconstructionLoss` and
+That is what :class:`~torch_concepts.nn.MSEReconstructionLoss` and
 :class:`~torch_concepts.nn.KLDivergenceLoss` do; add it to a ``CompositeLoss``,
 not to a per-type list.
 
@@ -205,7 +205,7 @@ total is not enough — an ELBO whose KL has collapsed still looks fine summed:
 
    for name, value in loss_fn.breakdown(out, c).items():
        print(f"{name:24s} {value.item():.4f}")
-   # ReconstructionLoss       412.8317
+   # MSEReconstructionLoss    412.8317
    # KLDivergenceLoss          18.4402
    # ConceptLoss                0.9137
    # OrthogonalityLoss          0.0521
@@ -255,7 +255,7 @@ exceptions. In most cases there is nothing to do:
 
    class MyGenerativeModel(...):
        def default_extra(self, evidence):
-           # ReconstructionLoss reads out.extra['evidence'][variable].
+           # The reconstruction terms read out.extra['evidence'][variable].
            return {"evidence": evidence}
 
 The learner merges this into ``out.extra`` on every step. Outside |pytorch_logo|
@@ -283,12 +283,12 @@ Built-in terms
    * - :class:`~torch_concepts.nn.DepthWeightedConceptLoss`
      - One ``ConceptSubset`` group per depth level of a
        :class:`~torch_concepts.ConceptGraph`, weighted by ``depth_decay ** d``.
-   * - :class:`~torch_concepts.nn.ReconstructionLoss`
-     - Negative log-likelihood of an observed variable under its own CPD.
+   * - :class:`~torch_concepts.nn.MSEReconstructionLoss`
+     - Squared error against an observed variable, for a ``Delta`` observation.
    * - :class:`~torch_concepts.nn.KLDivergenceLoss`
      - ``KL(q ‖ p)`` per latent, with optional ``free_bits``.
    * - :class:`~torch_concepts.nn.OrthogonalityLoss`
-     - Pushes concept contexts away from the unsupervised one.
+     - Pushes each concept context away from a supervised residual.
    * - :class:`~torch_concepts.nn.NLLProbLoss`
      - Categorical NLL for a head that emits ``probs`` rather than logits.
    * - :class:`~torch_concepts.nn.L1LogitRegularizer`

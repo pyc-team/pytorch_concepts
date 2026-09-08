@@ -14,7 +14,7 @@ import torch
 from torch import nn
 from torch_concepts.nn.modules.loss import (ConceptLoss, WeightedConceptLoss,
                                             DepthWeightedConceptLoss, L1LogitRegularizer,
-                                            ReconstructionLoss)
+                                            MSEReconstructionLoss)
 from torch_concepts.nn.modules.outputs import ModelOutput
 from torch_concepts.annotations import Annotations
 from torch_concepts.tensor import AnnotatedTensor
@@ -1389,61 +1389,64 @@ class TestContinuousQuantityResolution:
                                  continuous_param="value")(out)) == pytest.approx(16.0)
 
 
-class TestReconstructionLossDelta:
-    """``ReconstructionLoss`` over a ``Delta`` observation.
+def _observation_output(quantity, tensor, observed):
+    """A one-variable output reporting ``quantity``, with ``observed`` as evidence."""
+    annotations = Annotations(
+        labels=["input"], cardinalities=[tensor.shape[-1]], types=["continuous"]
+    )
+    return ModelOutput(
+        **{quantity: AnnotatedTensor(tensor, annotations, axis=-1)},
+        extra={"evidence": {"input": observed}},
+    )
 
-    A point mass has no spread to score, and ``Delta.log_prob`` is a
-    gradient-free constant 0, so the family gets its own branch: the squared
-    error. The factor of 0.5 is not cosmetic — it makes the term the sigma=1
-    Gaussian NLL minus its (decoder-independent) constant, so a model moved from
-    ``Normal`` to ``Delta`` keeps the reconstruction weight it was tuned with.
+
+class TestMSEReconstructionLoss:
+    """The term for a ``Delta`` observation, which has no likelihood to score.
+
+    Its reduction is the point: summed over the event, averaged over the batch,
+    matching ``KLDivergenceLoss`` so the two are comparable. ``MSELoss``'s own
+    ``'mean'`` would divide by the event size as well.
     """
 
-    @staticmethod
-    def _output(value, observed):
-        annotations = Annotations(
-            labels=["input"], cardinalities=[value.shape[-1]], types=["continuous"]
-        )
-        return ModelOutput(
-            value=AnnotatedTensor(value, annotations, axis=-1),
-            extra={"evidence": {"input": observed}},
-        )
-
-    def test_the_family_is_inferred_from_a_lone_value_quantity(self):
-        """No `distribution=` needed: `{'value'}` names Delta on its own."""
-        value = torch.zeros(4, 3)
-        loss = ReconstructionLoss(variable="input")(self._output(value, torch.ones(4, 3)))
-        # 0.5 * ||1 - 0||^2 summed over 3 elements = 1.5, the same for every row.
-        assert float(loss) == pytest.approx(1.5)
-
-    def test_it_equals_half_the_summed_squared_error(self):
+    def test_it_sums_the_event_and_averages_the_batch(self):
         value, observed = torch.randn(6, 5), torch.randn(6, 5)
-        loss = ReconstructionLoss(variable="input")(self._output(value, observed))
-        expected = (0.5 * (value - observed).pow(2).sum(-1)).mean()
-        assert torch.allclose(loss, expected)
+        loss = MSEReconstructionLoss(variable="input")(
+            _observation_output("value", value, observed))
+        assert torch.allclose(loss, (value - observed).pow(2).sum(-1).mean())
 
-    def test_it_matches_the_sigma_one_gaussian_nll_up_to_a_constant(self):
-        """The identity the switch off `Normal` rests on."""
+    def test_half_of_it_is_the_sigma_one_gaussian_nll_up_to_a_constant(self):
+        """Why a weight of 0.5 recovers the Gaussian NLL's gradients."""
         value, observed = torch.randn(6, 5), torch.randn(6, 5)
-        delta = ReconstructionLoss(variable="input")(self._output(value, observed))
+        mse = MSEReconstructionLoss(variable="input")(
+            _observation_output("value", value, observed))
         normal = -torch.distributions.Independent(
             torch.distributions.Normal(value, torch.ones_like(value)), 1
         ).log_prob(observed).mean()
         constant = 5 * 0.5 * math.log(2 * math.pi)
-        assert torch.allclose(normal - delta, torch.tensor(constant))
+        assert torch.allclose(normal - 0.5 * mse, torch.tensor(constant))
 
-    def test_the_reduction_still_applies_to_the_batch(self):
-        value, observed = torch.randn(6, 5), torch.randn(6, 5)
-        out = self._output(value, observed)
-        mean = ReconstructionLoss(variable="input")(out)
-        total = ReconstructionLoss(variable="input", reduction="sum")(out)
+    def test_the_reduction_applies_to_the_batch(self):
+        out = _observation_output("value", torch.randn(6, 5), torch.randn(6, 5))
+        mean = MSEReconstructionLoss(variable="input")(out)
+        total = MSEReconstructionLoss(variable="input", reduction="sum")(out)
         assert torch.allclose(total, mean * 6)
 
     def test_it_carries_a_gradient(self):
-        """`Delta.log_prob` returns a detached CPU scalar; the squared error must
-        not, or the decoder would train on nothing."""
+        """`Delta.log_prob` is a detached constant; this must not be."""
         value = torch.randn(4, 3, requires_grad=True)
-        ReconstructionLoss(variable="input")(
-            self._output(value, torch.randn(4, 3))
-        ).backward()
+        MSEReconstructionLoss(variable="input")(
+            _observation_output("value", value, torch.randn(4, 3))).backward()
         assert value.grad is not None and bool((value.grad != 0).any())
+
+    def test_a_non_delta_observation_is_refused(self):
+        """It reads `value`, so a Normal reporting loc/scale has nothing to score."""
+        annotations = Annotations(labels=["input"], cardinalities=[3],
+                                  types=["continuous"])
+        out = ModelOutput(
+            loc=AnnotatedTensor(torch.randn(4, 3), annotations, axis=-1),
+            scale=AnnotatedTensor(torch.rand(4, 3) + 1, annotations, axis=-1),
+            extra={"evidence": {"input": torch.randn(4, 3)}},
+        )
+        with pytest.raises(KeyError, match="neither a reported quantity"):
+            MSEReconstructionLoss(variable="input")(out)
+
