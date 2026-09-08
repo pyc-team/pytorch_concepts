@@ -1,0 +1,63 @@
+# =============================================================
+# Concept Bottleneck Generative Model (VAE variant).
+# =============================================================
+defaults:
+  - _commons
+  - _self_
+
+# Filled in by update_config_from_data, not read from the dataset config,
+# because a `concept_subset` shrinks `n_concepts` at runtime.
+data_dims:
+  n_pixels: ???
+  n_concepts: ???
+
+model_cls:
+  _target_: "torch_concepts.nn.ConceptBottleneckVAE"
+
+  latent_size: 32
+  embedding_size: 16
+  plate: false
+
+  use_unknown: true # 'false' also nullify the orthogonality loss term
+
+  # The z -> context networks are MLPEmbeddingEncoders; hidden defaults to
+  # latent_size // 2, widened here.
+  context_net_kwargs:
+    hidden_size: 256
+
+  # Variational for BOTH train and eval
+  inference:
+    _target_: "torch_concepts.nn.VariationalInference"
+    _partial_: true
+    initial_temperature: 1.0
+    annealing: exponential
+    annealing_rate: 0.001
+    final_temperature: 0.1
+    p_int: 0.0
+
+  # Same engine, teacher-forcing rate aside: `*_kwargs` is applied on top of the
+  # partial, so only the difference is spelled out and one temperature override
+  # reaches both engines.
+  train_inference: ${model.model_cls.inference}
+  train_inference_kwargs:
+    p_int: 0.25
+
+  # `n_pixels` rather than `input_size`, which is a shape on image data.
+  decoder:
+    _target_: "torch_concepts.nn.MLP"
+    input_size: ${math:"(${model.data_dims.n_concepts} + (1 if ${model.model_cls.use_unknown} else 0)) * ${model.model_cls.embedding_size}"}
+    output_size: ${model.data_dims.n_pixels}
+    hidden_size: 256
+    n_layers: 2
+    activation: leaky_relu
+    dropout: 0.
+
+# Composed with the dataset's backbone by attach_latent_encoder and used as the
+# guide's shared trunk, so `output_size` must be reachable from the backbone.
+latent_encoder:
+  _target_: torch_concepts.nn.MLP
+  hidden_size: 256
+  output_size: 128
+  n_layers: 1
+  activation: leaky_relu
+  dropout: 0.

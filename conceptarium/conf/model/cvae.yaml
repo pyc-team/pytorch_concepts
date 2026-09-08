@@ -1,169 +1,57 @@
 # =============================================================
-# Conditional Variational Autoencoder, conditioned on the concepts.
-#
-# The baseline for conf/model/cbgm.yaml: same generative
-# direction (a latent -> an image), same guide, same metrics —
-# but the concepts are GIVEN to the decoder rather than
-# predicted from z, so there is no bottleneck and no
-# orthogonality term.
-#
-# Unlike the discriminative models there are no tasks: every
-# concept is a conditioning variable, so `task_names` must NOT
-# be set.
-#
-# `input_size` is injected by update_config_from_data, and
-# `annotations` / `graph` / `backbone` / `loss` / `metrics` are
-# passed by run_experiment.py — none of them belong here.
+# Conditional VAE, conditioned on the concepts.
+# The baseline for conf/model/cbvae.yaml.
 # =============================================================
 defaults:
   - _commons
   - _self_
 
-# Width the decoder reads: z concatenated with one `embedding_size`-wide block
-# per concept. `data_dims` is published by update_config_from_data, since a
-# `concept_subset` can shrink the concept count at runtime.
-decoder_in_features: ${math:"${model.model_cls.latent_size} + ${data_dims.n_concepts} * ${model.model_cls.embedding_size}"}
+# Filled in by update_config_from_data, not read from the dataset config,
+# because a `concept_subset` shrinks `n_concepts` at runtime.
+data_dims:
+  n_pixels: ???
+  n_concepts: ???
 
 model_cls:
-  _target_: "torch_concepts.nn.ConditionalVariationalAutoencoder"
+  _target_: "torch_concepts.nn.ConditionalVAE"
 
-  latent_size: 32      # dim(z)
-  embedding_size: 16   # m, width of ONE concept's embedding
-  plate: false         # one variable per concept, so each can be intervened on
+  latent_size: 32
+  embedding_size: 16
+  plate: false
 
-  # Which prior over z: p(z | c), the paper's conditional one (its trunk is
-  # `prior_encoder` below), or a fixed N(0, I). true is the paper; false is the
-  # ablation, and the only setting whose KL target is constant — see the CAUTION
-  # on `prior_encoder`. The guide is q(z | x, c) either way: that one is
-  # hard-coded, since z only carries what the condition does not, which is what
-  # stops the decoder learning to ignore c and losing steerability.
+  # true makes the KL's target learnable, which opens a collapse mode: watch the
+  # `kl` term, not val_loss (see the class Notes).
   conditional_prior: true
 
-  # The observation is a point mass the model hard-codes: `input` is a Delta whose
-  # single `value` parameter IS the decoder's raw output. No activation is
-  # composed on top, so the decoder must not squash it either. Identical to
-  # cbgm.yaml, so the two models' reconstruction terms are on the same scale and
-  # their FIDs are comparable.
-  #
-  # A Delta rather than a Gaussian because a Gaussian needs a sigma nothing
-  # estimates, and sigma is really a reconstruction weight in disguise: the NLL
-  # gradient carries 1/sigma^2. Pinning it at 1 to recover plain MSE also drags in
-  # a constant 0.5*D*log(2*pi) = 2161 nats (D=2352), which is ~99% of the reported
-  # loss and defeats ReduceLROnPlateau's relative threshold — the LR gets cut long
-  # before convergence. A point mass has neither problem.
-  #
-  # NOTE this makes the objective MSE + beta*KL — a regularised autoencoder rather
-  # than a likelihood model. Both models use it, so the comparison is unaffected,
-  # but `reconstruction_mse` is not a log-likelihood.
-
-  # Plain (non-relaxed) families, overriding the relaxed ones `_commons` sets
-  # for the discriminative models — same as cbgm.yaml. The concepts are observed
-  # during training, so the relaxation only ever applies to an UNCONDITIONAL
-  # draw from the learned marginal p(c) (generation, and FID).
-  variable_distributions:
-    binary:
-      _target_: hydra.utils.get_class
-      path: torch.distributions.Bernoulli
-    categorical:
-      _target_: hydra.utils.get_class
-      path: torch.distributions.OneHotCategorical
-    continuous:
-      _target_: hydra.utils.get_class
-      path: torch.distributions.Normal
-  variable_dist_kwargs:
-    binary: null
-    categorical: null
-    continuous: null
-
-  # p(z | c) — the paper's CONDITIONAL prior, replacing a fixed N(0, I). This is
-  # its trunk: the concepts are read through the model's shared ConceptEmbedding
-  # (so `c` has one learned representation across guide, prior and decoder) and
-  # this maps that `n_concepts * embedding_size` condition to features, off which
-  # two linear heads read `loc` and `scale`.
-  #
-  # An MLP rather than a bare readout because a linear map off the embedding makes
-  # `loc` ADDITIVE across concepts — the prior could then not tell "digit 7 in red"
-  # from digit-7 plus red. `hidden_size` is the prior's capacity; with
-  # `output_size` unset, out_features == hidden_size.
-  #
-  # CAUTION: the KL's target is now learnable. Because p(z|c) sees only c, the
-  # zero-KL solution is q ignoring the image altogether — z carries nothing and the
-  # model degenerates into a c -> image map. `free_bits` in conf/loss/cvae.yaml is
-  # the floor; watch the KL term, not val_loss. Unused when conditional_prior=false.
-  prior_encoder:
-    _target_: torch_concepts.nn.MLP
-    input_size: ${math:"${data_dims.n_concepts} * ${model.model_cls.embedding_size}"}
+  # p(z|c)'s trunk; input width is derived from the condition, so only the
+  # hidden layer needs stating. Pass `prior_encoder` for a pre-built module.
+  prior_net_kwargs:
     hidden_size: 256
-    n_layers: 1
     activation: leaky_relu
-    dropout: 0.
 
-  # Variational inference for BOTH train and eval: the guide q(z | x, c) is what
-  # makes a reconstruction possible. Ancestral sampling (which draws z from the
-  # prior instead) is swapped in by the analysis script.
-  #
-  # NOTE `p_int` is deliberately absent, i.e. left at its default of 1.0, which
-  # the engine treats as "the query's values are observations" and never
-  # consults the rate at all. There is no RandInt knob here: the concepts ARE
-  # the condition. Setting it below 1.0 would make the engine sample them from
-  # p(c) and blend the ground truth in per row, training the decoder on
-  # conditions it was not handed — a different model, not a tuning knob.
+  # Variational for BOTH train and eval; the analysis script swaps in ancestral
+  # sampling. `p_int` is absent (i.e. 1.0): the concepts ARE the condition, so
+  # there is no RandInt knob here.
   inference:
     _target_: "torch_concepts.nn.VariationalInference"
     _partial_: true
   train_inference: ${model.model_cls.inference}
 
-  # ---------------------------------------------------------------------
-  # Bottleneck -> `input`. The MLP is ACTIVE; comment it out and uncomment the
-  # ConvDecoder below to switch to images. Exactly one may be uncommented.
-  #
-  # MLP: for TABULAR data, where `input_size` is a single int. A ConvDecoder
-  # cannot be used there at all -- it iterates `out_shape` and raises
-  # `'int' object is not iterable`.
-  #
-  # Raw output either way: the observation is a Delta, whose `value` takes no
-  # activation, so this output IS the reconstruction and must not be squashed
-  # here. `n_layers` counts HIDDEN layers.
+  # Same as cbvae.yaml, so the two models' losses and FIDs are comparable.
+  # `n_pixels` rather than `input_size`, which is a shape on image data. The Delta
+  # observation makes the objective MSE + beta*KL, so `reconstruction_mse` is not
+  # a log-likelihood.
   decoder:
     _target_: "torch_concepts.nn.MLP"
-    input_size: ${model.decoder_in_features}
-    output_size: ${model.model_cls.input_size}
+    input_size: ${math:"${model.model_cls.latent_size} + ${model.data_dims.n_concepts} * ${model.model_cls.embedding_size}"}
+    output_size: ${model.data_dims.n_pixels}
     hidden_size: 256
     n_layers: 2
     activation: leaky_relu
     dropout: 0.
 
-  # ConvDecoder: for IMAGES, where `input_size` is a shape (C, H, W). Transposed
-  # convolutions rather than a dense head -- a flat decoder to CelebA's 12,288
-  # pixels is ~6M parameters against ~0.6M here.
-  #
-  # `hidden_channels` as an int is the NARROWEST stage; ConvDecoder picks the
-  # depth from the image size (28 -> 2 stages, 64 -> 3) and widths double
-  # upward, so one value serves every image dataset in a sweep.
-  #
-  # `norm: group` rather than the default BatchNorm2d. BatchNorm's running
-  # statistics are accumulated from bottlenecks driven by q(z|x) and then used
-  # to normalise at eval(); decoding a PRIOR sample presents a differently
-  # distributed input, so generations are normalised by statistics that do not
-  # describe them while reconstructions are fine. GroupNorm keeps no running
-  # statistics and cannot develop that split.
-  #
-  # `refine: true` inserts a same-resolution 3x3 conv block after the projection
-  # and after each upsample. Without it the stack has exactly ONE activation on
-  # colormnist, leaving z -> pixels very nearly affine. Costs ~25% more params.
-  # decoder:
-  #   _target_: "torch_concepts.nn.ConvDecoder"
-  #   in_features: ${model.decoder_in_features}
-  #   out_shape: ${model.model_cls.input_size}
-  #   hidden_channels: 32
-  #   norm: group
-  #   refine: true
-  # ---------------------------------------------------------------------
-
-# The encoder side of the guide. attach_latent_encoder composes this with the
-# dataset's backbone into one extractor and stamps `out_features` on it; the
-# model uses that extractor as its guide's trunk, appends the concepts to its
-# output, and reads `loc`/`scale` off the result with two linear heads.
+# Composed with the dataset's backbone by attach_latent_encoder and used as the
+# guide's trunk, so `output_size` must be reachable from the backbone.
 latent_encoder:
   _target_: torch_concepts.nn.MLP
   hidden_size: 256

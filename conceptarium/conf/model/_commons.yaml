@@ -12,27 +12,6 @@ model_cls:
   train_inference: ${model.model_cls.inference}
 
   # =============================================================
-  # Concept distribution configs
-  # =============================================================
-  variable_distributions:
-    binary:
-      _target_: hydra.utils.get_class
-      path: torch.distributions.RelaxedBernoulli
-    categorical:
-      _target_: hydra.utils.get_class
-      path: torch.distributions.RelaxedOneHotCategorical
-    continuous:
-      _target_: hydra.utils.get_class
-      path: torch.distributions.Normal
-
-  variable_dist_kwargs:
-    binary:
-      temperature: 0.5
-    categorical:
-      temperature: 0.5
-    continuous: null
-
-  # =============================================================
   # Lightning settings
   # =============================================================
   lightning: true

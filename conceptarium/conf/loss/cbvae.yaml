@@ -1,0 +1,40 @@
+# =============================================================
+# ELBO for a concept bottleneck generative model. Four terms:
+#
+#   reconstruction  -log p(input | bottleneck)
+#   KL              KL( q(z|input) || p(z) )
+#   concept         supervision on the bottleneck's concepts
+#   orthogonality   pushes the unsupervised context away from the
+#                   supervised ones, keeping concepts steerable
+#
+# `weights` is in that order: [recon, kl, alpha, beta]. Sweep it
+# without editing this file, e.g. `loss.weights.2: 1, 5, 9`.
+# =============================================================
+_target_: "torch_concepts.nn.CompositeLoss"
+
+weights: [1.0, 1.0, 5.0, 1.0]
+
+terms:
+  # Delta observation: 0.5*||x - v||^2 summed over pixels, averaged over the
+  # batch — the KL's convention too, so the two are comparable.
+  - _target_: "torch_concepts.nn.MSEReconstructionLoss"
+    variable: input
+
+  - _target_: "torch_concepts.nn.KLDivergenceLoss"
+    latents: [z]
+
+  # The model reports `probs`, so BCELoss / NLLProbLoss, not the logit versions.
+  - _target_: "torch_concepts.nn.ConceptLoss"
+    binary_param: probs
+    categorical_param: probs
+    binary:
+      _target_: "torch.nn.BCELoss"
+    categorical:
+      _target_: "torch_concepts.nn.NLLProbLoss"
+
+  # Drop this term under `use_unknown: false` -- there is no residual context to
+  # push against, and the loss raises rather than quietly scoring 0.
+  - _target_: "torch_concepts.nn.OrthogonalityLoss"
+    variable: mixing
+    residual: unknown
+    n_concepts: ${model.data_dims.n_concepts}

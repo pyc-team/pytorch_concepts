@@ -412,7 +412,7 @@ class TestDeltaObservation:
         assert sum(m is model.condition_embedding for m in head.modules()) == 1
 
     def test_reconstruction_loss_is_the_squared_error(self, binary_annotations):
-        """||x - v||^2 summed over the event, as in test_cbgm, so the two models'
+        """||x - v||^2 summed over the event, as in test_cbvae, so the two models'
         reconstruction terms stay on the same scale."""
         model = build_model(binary_annotations, plate=False)
         x = torch.rand(5, INPUT_SIZE)

@@ -621,7 +621,7 @@ class TestTemperatureAnnealing:
         assert float(fresh.eval_inference.temperature) == pytest.approx(0.1)
 
     def test_the_default_schedule_is_still_constant(self, binary_annotations):
-        """Library default unchanged; only conf/model/cbgm.yaml opts in."""
+        """Library default unchanged; only conf/model/cbvae.yaml opts in."""
         model = self._model(binary_annotations, schedule=False)
         self._train_batches(model, 10)
         assert float(model.train_inference.temperature) == pytest.approx(1.0)
