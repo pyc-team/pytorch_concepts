@@ -633,8 +633,10 @@ class ConceptDataset(Dataset):
 
         Args:
             concept_pipeline: Pipeline that generates and annotates concepts.
-            class_names: Optional task or class names forwarded to the concept
-                generator prompt.
+            class_names: Optional task labels forwarded to the concept
+                generator prompt. For example, an LLM generator can use
+                ``["cat", "dog"]`` to discover properties that distinguish
+                cats from dogs. Annotators do not use these labels.
             use_as_gt: Select generated concepts as the learner-facing
                 ``dataset.concepts``. If ``True`` and the pipeline returns
                 multiple named sources, ``generated_gt_name`` is required.
@@ -652,6 +654,34 @@ class ConceptDataset(Dataset):
 
         Returns:
             Generated annotated concept tensors keyed by pipeline output name.
+
+        Example:
+            This pipeline asks an LLM for properties that distinguish cats
+            from dogs, then scores those properties with two CLIP annotators.
+            It returns one source per annotator and a third, averaged source.
+
+            .. code-block:: python
+
+                generator = LLMConceptGenerator(
+                    llm=llm_backend,
+                    prompt=(
+                        "List visual properties that distinguish {class_names}."
+                    ),
+                )
+                pipeline = ConceptSupervisionPipeline(
+                    generators=generator,
+                    annotators=[clip_annotator_a, clip_annotator_b],
+                    aggregator=average_scores,
+                )
+                generated = dataset.generate_concepts(
+                    concept_pipeline=pipeline,
+                    class_names=["cat", "dog"],
+                    use_as_gt=True,
+                    generated_gt_name="aggregated",
+                )
+                print(generated.keys())
+                # CLIPAnnotator, CLIPAnnotator_1, aggregated
+                # dataset.concepts is now generated["aggregated"]
         """
         if not callable(concept_pipeline):
             raise TypeError("concept_pipeline must be callable.")

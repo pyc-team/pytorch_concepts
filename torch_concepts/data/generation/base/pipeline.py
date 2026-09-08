@@ -250,7 +250,10 @@ class ConceptSupervisionPipeline:
             Dataset used by concept generators. If no annotation targets are
             supplied, this dataset is also annotated.
         class_names : list[str], optional
-            Class names forwarded to concept generators.
+            Labels of the task classes, such as ``["cat", "dog"]``. These
+            are forwarded to concept generators so they can include the task
+            classes in their prompts. They are not generated concept names,
+            and the pipeline does not otherwise interpret them.
         generation_indices : sequence of int, optional
             Rows exposed to concept generation through the ``indices`` keyword.
             If only this parameter is set, the annotator still annotates the

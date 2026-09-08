@@ -91,7 +91,9 @@ class LLMConceptGenerator(Generator):
         dataset : Dataset, optional
             Dataset-level context supplied to callable prompts.
         class_names : list[str], optional
-            Class names supplied to the prompt renderer.
+            Task class labels, such as ``["cat", "dog"]``, supplied to the
+            prompt renderer. They provide context for discovering concepts and
+            are distinct from the concepts returned by the generator.
         prompt : Prompt, optional
             Per-call prompt override. If omitted, the constructor prompt is
             used.
