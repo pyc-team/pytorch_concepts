@@ -41,7 +41,6 @@ from .modules.low.predictors.mix import MixConceptEmbeddingToConcept, \
 
 # Dense layers
 from .modules.low.dense_layers import Dense, ResidualMLP, MLP, LinearEmbeddingEncoder, MLPEmbeddingEncoder, SelectorEmbeddingEncoder
-from .modules.low.conv import ConvDecoder
 from .modules.low.sequential import Sequential
 
 # Graph learner
@@ -162,7 +161,6 @@ __all__ = [
     "LinearEmbeddingEncoder",
     "MLPEmbeddingEncoder",
     "SelectorEmbeddingEncoder",
-    "ConvDecoder",
 
     # COSMO
     "WANDAGraphLearner",
