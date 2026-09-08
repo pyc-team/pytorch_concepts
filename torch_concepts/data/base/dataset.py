@@ -869,6 +869,8 @@ class ConceptDataset(Dataset):
                 :attr:`concept_names_all`, the declared annotation order.
         """
         if self._annotations is None:
+            # TODO: Is this too strong to assume at this stage? We want to support 
+            # arbitrary leading soon
             raise ValueError(
                 "Native concepts cannot be set without native concept annotations."
             )
