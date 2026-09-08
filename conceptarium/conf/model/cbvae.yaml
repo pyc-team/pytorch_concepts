@@ -26,21 +26,21 @@ model_cls:
     hidden_size: 256
 
   # Variational for BOTH train and eval
-  inference:
+  train_inference:
     _target_: "torch_concepts.nn.VariationalInference"
     _partial_: true
     initial_temperature: 1.0
     annealing: exponential
     annealing_rate: 0.001
     final_temperature: 0.1
-    p_int: 0.0
+    p_int: 0.25
 
   # Same engine, teacher-forcing rate aside: `*_kwargs` is applied on top of the
   # partial, so only the difference is spelled out and one temperature override
   # reaches both engines.
-  train_inference: ${model.model_cls.inference}
+  train_inference: ${model.model_cls.train_inference}
   train_inference_kwargs:
-    p_int: 0.25
+    p_int: 0.0
 
   # `n_pixels` rather than `input_size`, which is a shape on image data.
   decoder:

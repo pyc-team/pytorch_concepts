@@ -170,10 +170,12 @@ def attach_latent_encoder(cfg: DictConfig, backbone: nn.Module) -> nn.Module:
 def update_config_from_data(cfg: DictConfig, dm: ConceptDataModule) -> DictConfig:
     """Update model configuration from datamodule properties.
 
-    Sets ``model.input_size`` and publishes ``data_dims`` (``n_pixels``,
-    ``n_concepts``) for configs to interpolate. A generative decoder is sized
-    from both, and neither is known before the datamodule is built:
-    ``n_concepts`` in particular cannot come from the dataset config, because a
+    Always sets ``model.model_cls.input_size``. ``model.data_dims`` is filled in
+    only for a config that asks for it by declaring the block mandatory
+    (``data_dims: {n_pixels: ???, n_concepts: ???}``), which keeps it out of
+    every other model's config. A generative decoder is sized from those two
+    numbers and neither is known before the datamodule is built -- ``n_concepts``
+    in particular cannot come from the dataset config, because a
     ``concept_subset`` shrinks it at runtime.
 
     Args:
@@ -187,8 +189,9 @@ def update_config_from_data(cfg: DictConfig, dm: ConceptDataModule) -> DictConfi
         cfg.model.model_cls.update(
             input_size = dm.n_features[-1] if len(dm.n_features)==1 else dm.n_features,
         )
-        cfg.data_dims = {
-            "n_pixels": int(math.prod(dm.n_features)),
-            "n_concepts": len(dm.annotations.labels),
-        }
+        if "data_dims" in cfg.model:
+            cfg.model.data_dims = {
+                "n_pixels": int(math.prod(dm.n_features)),
+                "n_concepts": len(dm.annotations.labels),
+            }
     return cfg
