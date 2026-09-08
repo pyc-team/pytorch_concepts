@@ -47,8 +47,6 @@ class ConceptDataset(Dataset):
             selected for model training.
         generated_concepts (dict[str, AnnotatedTensor]): Generated sample-level
             concept values and metadata keyed by pipeline output name.
-        ground_truth (AnnotatedTensor, optional): Concept supervision selected
-            for model training.
 
     Args:
         input_data: Input features as numpy array, pandas DataFrame, or Tensor.
@@ -107,7 +105,6 @@ class ConceptDataset(Dataset):
         self.use_as_gt = False
         self.generated_gt_name: Optional[str] = None
         self.generated_concepts: Dict[str, AnnotatedTensor] = {}
-        self.ground_truth: Optional[AnnotatedTensor] = None
         self._ground_truth_annotation: Optional[Annotations] = None
         self._ground_truth_source: Optional[str] = None
 
@@ -719,7 +716,6 @@ class ConceptDataset(Dataset):
             selected = None
             self._ground_truth_source = None
         self.concepts = selected
-        self.ground_truth = selected
         self._ground_truth_annotation = (
             selected.annotation if selected is not None else None
         )
