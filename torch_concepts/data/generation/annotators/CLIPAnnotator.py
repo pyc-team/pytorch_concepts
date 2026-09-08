@@ -85,6 +85,54 @@ class CLIPAnnotator(Annotator):
     show_progress : bool, optional
         Whether to show progress bars while encoding text concepts and image
         batches. Default is False.
+
+    Examples
+    --------
+    Annotate a small image dataset with binary and categorical concepts.
+    Constructing the annotator downloads the Hugging Face model on first use.
+    This example exercises every constructor option; ``input_getter`` is only
+    needed because this dataset stores images under a custom ``"image"`` key.
+    For datasets returning ``{"inputs": {"x": image}}``, ``{"x": image}``,
+    tuples, or images directly, the default getter is sufficient.
+
+    .. code-block:: python
+
+        import torch
+        from torch.utils.data import Dataset
+
+        from torch_concepts import Annotations
+        from torch_concepts.data.generation.annotators import CLIPAnnotator
+
+        class ImageDataset(Dataset):
+            def __init__(self):
+                self.images = torch.rand(4, 3, 224, 224)
+
+            def __len__(self):
+                return len(self.images)
+
+            def __getitem__(self, index):
+                return {"image": self.images[index]}
+
+        dataset = ImageDataset()
+        concepts = Annotations(
+            labels=["has feathers", "color"],
+            states=[["0"], ["red", "blue"]],
+            types=["binary", "categorical"],
+        )
+        annotator = CLIPAnnotator(
+            # Hugging Face model identifier.
+            model_name="openai/clip-vit-base-patch32",
+            # Encode two images per CLIP batch.
+            batch_size=2,
+            # Extract images from this dataset's custom sample dictionary.
+            input_getter=lambda sample: sample["image"],
+            # Add the same text prompt template to every concept/state prompt.
+            prompt_template="a photo of {}",
+            binary_prompt_formatter=lambda name: name,
+            state_prompt_formatter=lambda name, state: f"{state} {name}",
+        )
+        scores = annotator.annotate(dataset, concepts)
+        print(scores.shape)  # torch.Size([4, 3])
     """
 
     def __init__(
