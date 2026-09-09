@@ -545,6 +545,13 @@ class BaseInference(nn.Module):
             params = per_variable.get(var.name)
             if params is None:
                 continue  # fully observed, or not computed by this engine
+            if len(var.shape) > 1:
+                # Parameters live on the annotated axis as (*leading, width). A
+                # multi-dimensional variable — an image observation, whose CPD
+                # is a conv decoder — emits (*leading, *event) instead, which
+                # neither concatenates with the other quantities nor slices by
+                # column, so normalise it the way _assemble_samples does.
+                params = {q: flatten_event(var, t) for q, t in params.items()}
             if chunk == var.members:
                 # Whole variable (a non-plate, or a plate queried by name):
                 # the factor's stacked output is used as-is — no per-member

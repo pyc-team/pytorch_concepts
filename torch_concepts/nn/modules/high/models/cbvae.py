@@ -66,8 +66,10 @@ class ConceptBottleneckVAE(DirectedGraphModel):
         Concept annotations (labels, cardinalities, types). Every concept is
         supervised; there are no task variables.
     encoder : nn.Module
-        The guide's location head, mapping an observation (``input_size``) to
-        ``latent_size`` values: the mean of ``q(z | input)``.
+        The guide's trunk, mapping an observation (``input_size``) to the
+        features its ``loc``/``scale`` readouts share. Any feature extractor
+        goes here — this model takes no ``backbone``, since the guide reads the
+        raw observation.
     decoder : nn.Module
         The post-concept-bottleneck network, mapping the flattened bottleneck
         (``embedding_size * (n_concepts + 1)``) to ``input_size`` values. The
@@ -155,9 +157,7 @@ class ConceptBottleneckVAE(DirectedGraphModel):
     """
 
     supported_concept_types = frozenset({"binary", "categorical", "continuous"})
-    # The reference mixes the state embeddings by the concept *probabilities*,
-    # so the bottleneck reads a normalised score rather than a raw logit.
-    param_for_discrete_var = "probs"
+    param_for_discrete_var = "logits"
 
     variable_distributions = {
         'binary': Bernoulli,
@@ -184,6 +184,12 @@ class ConceptBottleneckVAE(DirectedGraphModel):
         plate: Optional[bool] = None,
         **kwargs,
     ):
+        if kwargs.pop("backbone", None) is not None:
+            raise TypeError(
+                f"{type(self).__name__} does not accept a `backbone` parameter. "
+                "The guide reads the raw observation directly, so any feature "
+                "extractor belongs in `encoder`."
+            )
         super().__init__(
             input_size=input_size,
             annotations=annotations,
@@ -267,20 +273,18 @@ class ConceptBottleneckVAE(DirectedGraphModel):
         z = self.pgm.variables["z"]
         observed = self.pgm.variables["input"]
 
-        # Width of the trunk's output: the encoder's if it declares one (MLP,
-        # nn.Linear), else the backbone's — `encoder` defaults to nn.Identity.
-        width = (getattr(self.encoder, "out_features", None)
-                 or getattr(self.backbone, "out_features", None))
+        # Width of the trunk's output: declared when the encoder exposes it
+        # (MLP, nn.Linear), else measured with a dry run — the trick
+        # `backbone.py` uses for torchvision models.
+        width = getattr(self.encoder, "out_features", None)
         if width is None:
-            raise ValueError(
-                f"{type(self).__name__}: cannot size the guide's readout — neither "
-                "`encoder` nor `backbone` declares `out_features`. Set that attribute "
-                "on one of them, or pass an encoder that does (e.g. MLP, nn.Linear)."
-            )
+            with torch.no_grad():
+                width = self.encoder(torch.zeros(1, *observed.shape)).shape[-1]
+
         return ParametricCPD(
             variable=z,
             parents=[observed],
-            trunk=nn.Sequential(self.backbone, self.encoder),
+            trunk=self.encoder,
             parametrization=self._flexible_parametrization(
                 variable=z,
                 first=nn.Linear(width, z.size),
