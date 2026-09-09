@@ -201,10 +201,7 @@ class ConditionalVAE(DirectedGraphModel):
     """
 
     supported_concept_types = frozenset({"binary", "categorical", "continuous"})
-    # The concepts are conditioning values, and a value the decoder can read is a
-    # probability (or a one-hot row), not a logit — the same convention CBGM uses,
-    # which also keeps the two models' loss configs interchangeable.
-    param_for_discrete_var = "probs"
+    param_for_discrete_var = "logits"
 
     variable_distributions = {
         'binary': Bernoulli,
