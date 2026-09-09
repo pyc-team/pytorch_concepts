@@ -22,6 +22,7 @@ References:
 import torch
 from torch import nn
 from pytorch_lightning import Trainer
+from pytorch_lightning.callbacks import EarlyStopping
 
 from torch_concepts import seed_everything
 from torch_concepts.data import ColorMNISTDataModule
@@ -34,11 +35,12 @@ from torch_concepts.nn import (
     KLDivergenceLoss,
     OrthogonalityLoss,
     MSEReconstructionLoss,
+    LossWeightWarmup
 )
 
 # data hparams
-MAX_SAMPLES = 30000   # half of MNIST's train split, to keep the demo quick
-BATCH_SIZE = 256      # the CBM/CEM range for MNIST-sized images
+MAX_SAMPLES = 60000
+BATCH_SIZE = 2048      # the CBM/CEM range for MNIST-sized images
 
 # model hparams
 LATENT_SIZE = 32      # dim(z); MNIST VAEs sit in the 20-64 range
@@ -56,7 +58,7 @@ ORT_WEIGHT = 1.0        # orthogonality loss weight
 # inference hparams
 P_INT_TRAIN = 1        # CEM's RandInt rate
 TEMPERATURE = 1.0        # initial Gumbel-Softmax temperature
-TEMPERATURE_FINAL = 0.5  # its floor, as in Jang et al.
+TEMPERATURE_FINAL = 0.5  # its floor
 ANNEALING_RATE = 5e-5    # exponential decay per step, reaching the floor late
 
 # training hparams
@@ -78,11 +80,28 @@ def save_grid(top, bottom, path):
                         bottom.reshape(-1, 3, 28, 28)])
     _, axes = plt.subplots(2, len(top), figsize=(len(top), 2))
     for ax, image in zip(axes.flatten(), images):
-        ax.imshow(image.permute(1, 2, 0).detach().numpy())
+        # A Delta observation is unbounded, so clamp before imshow.
+        ax.imshow(image.clamp(0, 1).permute(1, 2, 0).detach().numpy())
         ax.axis("off")
     plt.tight_layout()
     plt.savefig(path, dpi=150)
     print(f"reconstruction grid saved to {path}")
+
+
+def print_test_metrics(model, datamodule, names):
+    """Squared error per pixel and per-concept accuracy over the test split.
+    """
+    hits, sse, n_images, n_pixels = torch.zeros(len(names)), 0.0, 0, 0
+    with torch.no_grad():
+        for batch in datamodule.test_dataloader():
+            x, c = batch["inputs"]["x"], batch["concepts"]["c"]
+            out = model(query=list(model.pgm.variables), input=x)
+            for i, name in enumerate(names):
+                hits[i] += (out.logits[name].argmax(-1).cpu() == c[:, i].long()).sum()
+            sse += float(((out.value["input"].cpu() - x.flatten(1)) ** 2).sum())
+            n_images, n_pixels = n_images + len(x), n_pixels + x.numel()
+    print(f"test MSE/pixel {sse / n_pixels:.5f} | " + " | ".join(
+        f"{name} accuracy {hit / n_images:.3f}" for name, hit in zip(names, hits)))
 
 
 def save_image(image, path):
@@ -156,6 +175,7 @@ def main():
                 ConceptLoss(categorical=nn.CrossEntropyLoss()),
                 OrthogonalityLoss("mixing", "unknown", len(concept_names)) if USE_UNKNOWN else None
             ],
+            names=["rec", "kl", "conc", "orth"],
             weights=[RECON_WEIGHT, KL_WEIGHT, CONC_WEIGHT, ORT_WEIGHT],
         ),
         optim_class=torch.optim.AdamW,
@@ -169,17 +189,24 @@ def main():
         accelerator="mps",
         enable_checkpointing=False,
         logger=False,
+        callbacks=[
+            EarlyStopping(monitor="val_loss", patience=20),
+            # LossWeightWarmup(term='kl', epochs=20)
+        ]
     )
+    model.train()
     trainer.fit(model, datamodule=datamodule)
 
-    # Reconstruct a held-out batch: q(z|x) -> concepts -> context -> x.
     model.eval()
+    print_test_metrics(model, datamodule, dataset.annotations.labels)
+
+    # Reconstruct a held-out batch: q(z|x) -> concepts -> context -> x.
     batch = next(iter(datamodule.test_dataloader()))
     x = batch["inputs"]["x"][:8]
     c = batch["concepts"]["c"][:8]
     with torch.no_grad():
         out = model(query=list(model.pgm.variables), input=x)
-    save_grid(x, out.value["input"].clamp(0, 1), "cbvae_colormnist_reconstruction.png")
+    save_grid(x, out.value["input"], "cbvae_colormnist_reconstruction.png")
 
     # Generate from concepts alone: every digit in both colours. One shared z,
     # so the only thing varying across the grid is the concept intervention.
