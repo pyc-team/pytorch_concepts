@@ -15,65 +15,54 @@ direction, so the model trains as a VAE with two extra terms — a concept loss
 on the bottleneck's concept probabilities and an orthogonality loss pushing the
 unsupervised context away from the concept contexts.
 
-Experiment settings:
-- Dataset: Color-MNIST via ``ColorMNISTDataModule``, two categorical concepts
-  (``digit`` 10-way, ``color`` 2-way), images flattened to 3x28x28 = 2352
-  pixels, decoded deterministically (a ``Delta`` observation scored by
-  squared error).
-- Model: ``ConceptBottleneckVAE`` with MLP encoder/decoder.
-- Inference engine: Pyro ``VariationalInference`` with a guide on ``z``.
-- Loss: a ``CompositeLoss`` of ``recon + kl + alpha * concept + beta * orthogonality``.
-
-Expected outcome:
-- The ELBO terms go down and both concept accuracies climb well above chance
-  (0.1 for ``digit``, 0.5 for ``color``): about 0.94 and 1.00 after 30 epochs.
-- The reconstruction grid written at the end shows recognisable coloured
-  digits.
-
 References:
     Ismail et al. "Concept Bottleneck Generative Models", ICLR 2024.
     https://openreview.net/forum?id=L9U5MJJleF
 """
-import math
-
 import torch
+from torch import nn
+from pytorch_lightning import Trainer
 
 from torch_concepts import seed_everything
 from torch_concepts.data import ColorMNISTDataModule
 from torch_concepts.nn import (
+    VariationalInference,
     AncestralSamplingInference,
     CompositeLoss,
     ConceptBottleneckVAE,
     ConceptLoss,
     KLDivergenceLoss,
-    MLP,
-    NLLProbLoss,
     OrthogonalityLoss,
     MSEReconstructionLoss,
 )
 
 # data hparams
-MAX_SAMPLES = 30000
-BATCH_SIZE = 1024
+MAX_SAMPLES = 30000   # half of MNIST's train split, to keep the demo quick
+BATCH_SIZE = 256      # the CBM/CEM range for MNIST-sized images
 
 # model hparams
-LATENT_SIZE = 32      # dim(z)
-EMBEDDING_SIZE = 8    # dim of one concept embedding
-ENCODER_HIDDEN = 256  # hidden size of the encoder MLP
-ENCODER_LAYERS = 2    # number of layers in the encoder MLP
-DECODER_HIDDEN = 256  # hidden size of the decoder MLP
-DECODER_LAYERS = 2    # number of layers in the decoder MLP
-USE_UNKNOWN = True    # whether to include the residual
+LATENT_SIZE = 32      # dim(z); MNIST VAEs sit in the 20-64 range
+EMBEDDING_SIZE = 16   # dim of one concept embedding; CEM's default m=16
+CHANNELS = 32         # base channels, DCGAN-style: doubled per stride-2 stage
+USE_UNKNOWN = True    # the paper's w_{k+1}; without it ORT_WEIGHT does nothing
 
 # loss hparams
-RECON_WEIGHT = 1.0      # reconstruction loss weight
-KL_WEIGHT = 1.0         # KL loss weight
+RECON_WEIGHT = 0.5      # a sigma=1 Gaussian NLL is half the squared error
+KL_WEIGHT = 1.0         # plain ELBO: beta = 1
 FREE_BITS = 0.5         # KL free bits (nats) per latent dimension
-CONC_WEIGHT = 10.0      # concept loss weight
-ORT_WEIGHT = 1.0       # orthogonality loss weight
+CONC_WEIGHT = 5.0       # concept supervision, within the CBM lambda sweep
+ORT_WEIGHT = 1.0        # orthogonality loss weight
+
+# inference hparams
+P_INT_TRAIN = 0.5        # CEM's RandInt rate
+TEMPERATURE = 1.0        # initial Gumbel-Softmax temperature
+TEMPERATURE_FINAL = 0.5  # its floor, as in Jang et al.
+ANNEALING_RATE = 5e-5    # exponential decay per step, reaching the floor late
 
 # training hparams
 N_EPOCHS = 100
+LEARNING_RATE = 1e-3      # Adam's usual VAE setting
+CLIP_GRAD_MAX_NORM = 1.0  # max norm for gradient clipping
 
 
 def save_grid(original, reconstruction, path):
@@ -83,7 +72,10 @@ def save_grid(original, reconstruction, path):
     except ImportError:
         print("matplotlib not installed; skipping the reconstruction grid.")
         return
-    images = torch.cat([original, reconstruction]).reshape(-1, 3, 28, 28)
+    # The original keeps its (B, 3, 28, 28) event shape; the reconstruction comes
+    # back flat on the annotated axis, so reshape each before stacking.
+    images = torch.cat([original.reshape(-1, 3, 28, 28),
+                        reconstruction.reshape(-1, 3, 28, 28)])
     _, axes = plt.subplots(2, len(original), figsize=(len(original), 2))
     for ax, image in zip(axes.flatten(), images):
         ax.imshow(image.permute(1, 2, 0).detach().numpy())
@@ -116,7 +108,7 @@ def main():
     # a redundant bottleneck slot without anything new to steer.
     datamodule = ColorMNISTDataModule(
         root="./data/mnist",
-        concept_subset=["digit", "color"],
+        concept_subset=["color", "digit"],
         max_samples=MAX_SAMPLES,
         batch_size=BATCH_SIZE,
         seed=42,
@@ -125,84 +117,87 @@ def main():
     dataset = datamodule.dataset
     concept_names = dataset.concept_names
 
-    n_pixels = math.prod(dataset.n_features)
     context_size = (len(concept_names) + 1) * EMBEDDING_SIZE if USE_UNKNOWN else len(concept_names) * EMBEDDING_SIZE
 
     model = ConceptBottleneckVAE(
-        input_size=n_pixels,
+        input_size=dataset.n_features,
         annotations=dataset.annotations,
         latent_size=LATENT_SIZE,
         embedding_size=EMBEDDING_SIZE,
-        encoder=MLP(n_pixels, ENCODER_HIDDEN, LATENT_SIZE, n_layers=ENCODER_LAYERS),
-        decoder=MLP(context_size, DECODER_HIDDEN, n_pixels, n_layers=DECODER_LAYERS),
-        use_unknown=USE_UNKNOWN
+        encoder=nn.Sequential(
+            nn.Conv2d(3, CHANNELS, 4, stride=2, padding=1), nn.LeakyReLU(),       # 14x14
+            nn.Conv2d(CHANNELS, 2 * CHANNELS, 4, stride=2, padding=1), nn.LeakyReLU(),  # 7x7
+            nn.Flatten(),
+            nn.Linear(2 * CHANNELS * 7 * 7, LATENT_SIZE),
+        ),
+        decoder=nn.Sequential(
+            nn.Linear(context_size, 2 * CHANNELS * 7 * 7), nn.LeakyReLU(),
+            nn.Unflatten(1, (2 * CHANNELS, 7, 7)),
+            nn.ConvTranspose2d(2 * CHANNELS, CHANNELS, 4, stride=2, padding=1), nn.LeakyReLU(),  # 14x14
+            nn.ConvTranspose2d(CHANNELS, 3, 4, stride=2, padding=1),          # 28x28
+        ),
+        use_unknown=USE_UNKNOWN,
+        inference=VariationalInference,
+        inference_kwargs={"p_int": 0.0},
+        train_inference=VariationalInference,
+        train_inference_kwargs={
+            "p_int": P_INT_TRAIN,
+            "initial_temperature": TEMPERATURE,
+            "annealing": "exponential",
+            "annealing_rate": ANNEALING_RATE,
+            "final_temperature": TEMPERATURE_FINAL,
+        },
+        lightning=True,
+        # --- Lightning-specific arguments ---
+        loss=CompositeLoss(
+            terms=[
+                MSEReconstructionLoss(variable="input"),
+                KLDivergenceLoss(latents=["z"], free_bits=FREE_BITS),
+                ConceptLoss(categorical=nn.CrossEntropyLoss()),
+                OrthogonalityLoss("mixing", "unknown", len(concept_names)) if USE_UNKNOWN else None
+            ],
+            weights=[RECON_WEIGHT, KL_WEIGHT, CONC_WEIGHT, ORT_WEIGHT],
+        ),
+        optim_class=torch.optim.AdamW,
+        optim_kwargs={"lr": LEARNING_RATE},
     )
     print(model)
 
-    loss_fn = CompositeLoss(
-        terms=[
-            MSEReconstructionLoss(variable="input"),
-            KLDivergenceLoss(latents=["z"], free_bits=FREE_BITS),
-            ConceptLoss(categorical=NLLProbLoss()),
-            OrthogonalityLoss("mixing", "unknown", len(concept_names)) if USE_UNKNOWN else None
-        ],
-        weights=[RECON_WEIGHT, KL_WEIGHT, CONC_WEIGHT, ORT_WEIGHT] if USE_UNKNOWN 
-        else [RECON_WEIGHT, KL_WEIGHT, CONC_WEIGHT]
+    trainer = Trainer(
+        max_epochs=N_EPOCHS,
+        gradient_clip_val=CLIP_GRAD_MAX_NORM,
+        accelerator="mps",
+        enable_checkpointing=False,
+        logger=False,
     )
-
-    # Every PGM variable is queried: the observed image arrives as `input`
-    # (evidence), everything else is latent and reported by the engine.
-    var_list = list(model.pgm.variables)
-    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
-    loader = datamodule.train_dataloader()
-
-    for epoch in range(N_EPOCHS):
-        totals = torch.zeros(len(loss_fn.terms))
-        for batch in loader:
-            x = batch["inputs"]["x"].flatten(1)
-            c = batch["concepts"]["c"]
-
-            # p(var_list | x)
-            # equivalent to inference.query(query=var_list, evidence={"input": x})
-            out = model(query=var_list, input=x)
-
-            # 'breakdown' returns a dict of the individual loss terms
-            terms = loss_fn.breakdown(out, c)
-            loss = sum(terms.values())
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            totals += torch.tensor([t.item() for t in terms.values()])
-
-        print(f"epoch {epoch:03d} | " + " | ".join(
-            f"{name} {value / len(loader):.4f}"
-            for name, value in zip(loss_fn.term_names, totals)))
+    trainer.fit(model, datamodule=datamodule)
 
     # Reconstruct a held-out batch: q(z|x) -> concepts -> context -> x.
     model.eval()
     batch = next(iter(datamodule.test_dataloader()))
-    x = batch["inputs"]["x"].flatten(1)[:8]
+    x = batch["inputs"]["x"][:8]
     c = batch["concepts"]["c"][:8]
     with torch.no_grad():
-        out = model(query=var_list, input=x)
+        out = model(query=list(model.pgm.variables), input=x)
     save_grid(x, out.value["input"].clamp(0, 1), "cbvae_colormnist_reconstruction.png")
 
     # Generate from concepts alone.
     # generate a green 7.
-    generator = AncestralSamplingInference(model.pgm)
+    model.setup_inference(AncestralSamplingInference)
     with torch.no_grad():
-        sampled_z = generator.query(
-            query=['z'], 
-            evidence={}
-        ).samples['z']
-        out = generator.query(
+        sampled_z = model(query=['z'], evidence={}).samples['z']
+        out = model(
             query=['input'], 
             evidence={'z': sampled_z.tensor, 
-                      'digit': torch.tensor([[0,0,0,0,0,0,0,1,0,0]]), # 7 
-                      'color': torch.tensor([[0,1]])} # green
+                      'color': torch.tensor([[0,1]]), # green
+                      'digit': torch.tensor([[0,0,0,0,0,0,0,1,0,0]])} # 7 
         )
     save_image(out.value["input"], "cbvae_colormnist_green_seven.png")
 
+    # Generate a random sample.
+    with torch.no_grad():
+        out = model(query=['input'], evidence={})
+    save_image(out.value["input"], "cbvae_colormnist_random.png")
 
 if __name__ == "__main__":
     main()
