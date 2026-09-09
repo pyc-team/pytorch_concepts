@@ -66,10 +66,15 @@ def _plain(tensor):
 def _normalize_loss_terms(terms, weights):
     """Normalize loss terms and weights to consistent list form.
     
+    A ``None`` entry in ``terms`` is dropped **together with its weight**, so a
+    term can be switched off in place — ``[recon, kl, ortho if use_unknown else
+    None]``.
+
     Args:
-        terms: A single nn.Module, a list of nn.Module, or None.
-        weights: A list of floats, or None.
-        
+        terms: A single nn.Module, a list of nn.Module (entries may be None),
+            or None.
+        weights: A list of floats, one per entry of ``terms``, or None.
+
     Returns:
         Tuple of (list_of_modules, list_of_weights), or (None, None) if terms is None.
     """
@@ -83,13 +88,13 @@ def _normalize_loss_terms(terms, weights):
         )
     if weights is None:
         weights = [1.0] * len(terms)
-    terms = [t for t in terms if t is not None]
     if len(weights) != len(terms):
          raise ValueError(
             f"Number of weights ({len(weights)}) must match "
             f"number of loss terms ({len(terms)})."
         )
-    return list(terms), list(weights)
+    kept = [(t, w) for t, w in zip(terms, weights) if t is not None]
+    return [t for t, _ in kept], [w for _, w in kept]
 
 
 def subset_output(output: ModelOutput, names: List[str]) -> ModelOutput:
@@ -174,8 +179,10 @@ class CompositeLoss(PyCLoss):
     terms with either signature compose freely.
 
     Args:
-        terms (list of nn.Module): The loss terms to sum.
-        weights (list of float, optional): Per-term weights. Defaults to all
+        terms (list of nn.Module): The loss terms to sum. A ``None`` entry is
+            dropped with its weight, switching that term off in place.
+        weights (list of float, optional): Per-term weights, one per entry of
+            ``terms``. Defaults to all
             ``1.0``. A plain mutable list, so a schedule such as
             :class:`~torch_concepts.nn.LossWeightWarmup` can rewrite one entry
             mid-training.
