@@ -13,8 +13,8 @@ machinery, but the concepts are *given* to the decoder rather than predicted fro
 * the guide and the decoder read the condition through **one**
   :class:`~torch_concepts.nn.modules.high.models.cvae.ConceptEmbedding`, so ``c``
   has a single learned representation;
-* ``param_for_discrete_var = "probs"``, so every discrete head ends in the
-  activation ``_flexible_parametrization`` composes on top of the raw layer;
+* ``param_for_discrete_var = "logits"``, so a discrete head stays raw and the
+  distribution does the normalising;
 * the observation is a ``Delta`` — one ``value`` head, no ``scale``, and a
   generated sample equal to the decoder's output rather than to it plus noise.
 """
@@ -81,26 +81,29 @@ def binary_query(model, batch=5):
 
 
 class TestConditionalVAE:
-    def test_binary_concepts_are_probabilities(self, binary_annotations):
+    def test_binary_concepts_report_logits(self, binary_annotations):
         model = build_model(binary_annotations, plate=False)
         out = model(query=binary_query(model), input=torch.rand(5, INPUT_SIZE))
         for name in ("a", "b"):
-            probs = out.probs[name]
-            assert bool(((probs >= 0) & (probs <= 1)).all())
-        # The observation is a Delta, so it reports `value` rather than `probs`.
-        assert "input" not in out.probs.annotation.labels
+            assert out.logits[name].shape == (5, 1)
+        # The observation is a Delta, so it reports `value` rather than `logits`.
+        assert "input" not in out.logits.annotation.labels
 
     def test_categorical_marginals_normalise_per_concept(self, categorical_annotations):
         model = build_model(categorical_annotations, plate=False)
         for name, cardinality in (("digit", 4), ("color", 3)):
-            probs = model.pgm.factors[name](parent_values={})["probs"]
-            assert probs.shape == (cardinality,)
-            assert torch.allclose(probs.sum(), torch.ones(()))
+            logits = model.pgm.factors[name](parent_values={})["logits"]
+            assert logits.shape == (cardinality,)
+            assert torch.allclose(logits.softmax(-1).sum(), torch.ones(()))
 
     def test_a_categorical_plates_marginal_normalises_each_member(self):
-        """The plate's prior is one flat `LearnablePrior(size)`, so nothing but a
-        per-member softmax keeps each member on its own simplex — a single softmax
-        over the whole parameter would leave every member summing to less than 1."""
+        """The plate's prior is one flat `LearnablePrior(size)`, and each member
+        must land on its *own* simplex — normalising over the whole 8-wide
+        parameter instead would leave every member summing to less than 1.
+
+        With a raw `logits` prior that normalisation belongs to the
+        distribution, so it is asserted on the draw rather than on the head.
+        """
         annotations = Annotations(
             labels=["d1", "d2"], cardinalities=[4, 4],
             types=["categorical", "categorical"],
@@ -108,10 +111,13 @@ class TestConditionalVAE:
         model = build_model(annotations, plate=True)
         assert "concepts" in model.pgm.variables  # one plate, both members
 
-        probs = model.pgm.factors["concepts"](parent_values={})["probs"]
-        assert probs.shape == (8,)
-        assert torch.allclose(probs[:4].sum(), torch.ones(()))
-        assert torch.allclose(probs[4:].sum(), torch.ones(()))
+        assert model.pgm.factors["concepts"](parent_values={})["logits"].shape == (8,)
+        drawn = AncestralSamplingInference(model.pgm).query(
+            query=["concepts"], evidence={}, n_samples=5
+        ).samples["concepts"]
+        assert drawn.shape == (5, 8)
+        per_member = drawn.as_subclass(torch.Tensor).reshape(5, 2, 4)
+        assert torch.allclose(per_member.sum(-1), torch.ones(5, 2))
 
     def test_the_guide_reports_a_positive_scale(self, binary_annotations):
         model = build_model(binary_annotations, plate=False)
@@ -450,9 +456,8 @@ class TestTrainingAndGeneration:
             terms=[
                 MSEReconstructionLoss(variable="input"),
                 KLDivergenceLoss(latents=["z"]),
-                # The model reports `probs`, so the binary term scores
-                # probabilities rather than logits.
-                ConceptLoss(binary=nn.BCELoss()),
+                # The model reports `logits`, so the binary term scores those.
+                ConceptLoss(binary=nn.BCEWithLogitsLoss()),
             ],
             weights=[1.0, 1.0, 1.0],
         )
@@ -462,7 +467,7 @@ class TestTrainingAndGeneration:
         assert all(torch.isfinite(t) for t in terms.values())
 
         sum(terms.values()).backward()
-        prior = model.pgm.factors["a"].parametrization["probs"]
+        prior = model.pgm.factors["a"].parametrization["logits"]
         for module in (model.decoder, model.condition_embedding, prior):
             grads = [p.grad for p in module.parameters() if p.grad is not None]
             assert grads and any(bool((g != 0).any()) for g in grads)
@@ -478,15 +483,15 @@ class TestTrainingAndGeneration:
         engine = AncestralSamplingInference(model.pgm, p_int=1.0)
         out = engine.query(query=["input", "a", "b"], evidence={}, n_samples=3)
         assert out.value["input"].shape == (3, 64)
-        assert out.probs["a"].shape == (3, 1)
+        assert out.logits["a"].shape == (3, 1)
         # The draw IS the decoder output: no `loc + noise` to discard.
         assert torch.allclose(out.samples["input"], out.value["input"])
 
 
 class TestContinuousConcepts:
     def test_a_continuous_concept_reports_loc_and_a_positive_scale(self):
-        """`param_for_discrete_var` is 'probs', which a Normal does not have, so the
-        discrete activation must only be applied to discrete variables."""
+        """`param_for_discrete_var` is 'logits', which a Normal does not have, so
+        the discrete parameter must only be chosen for discrete variables."""
         annotations = Annotations(
             labels=["a", "h"], cardinalities=[1, 1], types=["binary", "continuous"]
         )
@@ -494,7 +499,7 @@ class TestContinuousConcepts:
         c = torch.rand(5, 2)
         out = model(query=model.default_query(c), input=torch.rand(5, INPUT_SIZE))
         assert sorted(out.params["h"]) == ["loc", "scale"]
-        assert sorted(out.params["a"]) == ["probs"]
+        assert sorted(out.params["a"]) == ["logits"]
         assert bool((out.scale["h"] > 0).all())
 
     def test_a_multivariate_normal_concept_sizes_its_cholesky_factor(self):

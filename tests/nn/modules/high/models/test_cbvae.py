@@ -1,10 +1,8 @@
 """Smoke tests for the Concept Bottleneck Generative Model.
 
-CBGM sets ``param_for_discrete_var = "probs"``, so every concept head it builds
-must end in the activation that maps a raw output into ``[0, 1]`` (Bernoulli) or
-onto the simplex (categorical). ``_flexible_parametrization`` composes that
-activation onto every head from the family's ``DistributionSpec``, so the heads
-passed in are raw. These tests pin the resulting parameters to their domains.
+CBGM sets ``param_for_discrete_var = "logits"``, so concept heads stay raw:
+``_flexible_parametrization(activate=True)`` only activates constrained
+parameters, and the concept distribution does the normalising.
 
 The observation is a ``Delta``: one ``value`` head, no ``scale``, and the
 decoder's output taken verbatim — which is what makes a generated sample the
@@ -19,6 +17,7 @@ from torch_concepts.annotations import Annotations
 from torch_concepts.nn import (
     AncestralSamplingInference,
     ConceptBottleneckVAE,
+    DefaultActivation,
     MLP,
     MSEReconstructionLoss,
 )
@@ -59,32 +58,41 @@ def categorical_annotations():
 
 
 class TestConceptBottleneckVAE:
-    def test_binary_concepts_and_observation_are_probabilities(self, binary_annotations):
+    def test_binary_concepts_report_logits_and_the_observation_a_value(
+        self, binary_annotations
+    ):
         model = build_model(binary_annotations)
         out = model(query=list(model.pgm.variables), input=torch.rand(6, INPUT_SIZE))
-        # `probs` is one annotated tensor holding every queried variable that has
-        # them. The observation is a Delta and so reports `value`, not `probs`.
-        assert bool(((out.probs >= 0) & (out.probs <= 1)).all())
-        assert "input" not in out.probs.annotation.labels
+        # `logits` is one annotated tensor holding every queried variable that has
+        # them. The observation is a Delta and so reports `value`, not `logits`.
+        assert "input" not in out.logits.annotation.labels
         assert out.value["input"].shape == (6, INPUT_SIZE)
         for name in ("a", "b"):
-            assert out.probs[name].shape == (6, 1)
+            assert out.logits[name].shape == (6, 1)
+
+    def test_the_concept_head_is_left_raw(self, binary_annotations):
+        """`activate=True` composes nothing onto a `logits` head, so the score
+        reaching the distribution is not squashed twice."""
+        model = build_model(binary_annotations, plate=False)
+        head = model.pgm.factors["a"].parametrization["logits"]
+        assert not isinstance(head[-1], DefaultActivation)
 
     def test_categorical_concepts_normalise_per_concept(self, categorical_annotations):
         model = build_model(categorical_annotations, plate=False)
         out = model(query=list(model.pgm.variables), input=torch.rand(6, INPUT_SIZE))
         for name, cardinality in zip(["digit", "color"], [4, 3]):
-            probs = out.probs[name]
-            assert probs.shape[-1] == cardinality
+            logits = out.logits[name]
+            assert logits.shape[-1] == cardinality
+            # The simplex is the distribution's job now, not the head's.
+            probs = logits.as_subclass(torch.Tensor).softmax(-1)
             assert torch.allclose(probs.sum(-1), torch.ones(probs.shape[:-1]), atol=1e-5)
 
-    def test_a_categorical_plates_cpd_normalises_each_member(self):
-        """The plate's concept CPD emits one simplex per member, not one per row.
+    def test_a_categorical_plates_cpd_emits_one_block_per_member(self):
+        """The plate's concept CPD emits one score block per member.
 
-        Asserted on the CPD's own output rather than on ``out.probs``: the
-        queried tensor for a plate is renormalised downstream over the flattened
-        width, which is a property of the plate query path, not of the head this
-        test covers.
+        Asserted on the CPD's own output: the emitted width is the plate's
+        flattened width, laid out member-major so the distribution can normalise
+        each member's block independently.
         """
         # Same cardinality on both concepts, so they can share one plate.
         annotations = Annotations(
@@ -97,13 +105,14 @@ class TestConceptBottleneckVAE:
 
         emitted = {}
         model.pgm.factors["concepts"].register_forward_hook(
-            lambda mod, inp, out: emitted.update(probs=out["probs"].detach())
+            lambda mod, inp, out: emitted.update(logits=out["logits"].detach())
         )
         model(query=list(model.pgm.variables), input=torch.rand(6, INPUT_SIZE))
 
-        probs = emitted["probs"]
-        assert probs.shape == (6, 6)
-        assert torch.allclose(probs.reshape(6, 2, 3).sum(-1), torch.ones(6, 2), atol=1e-5)
+        logits = emitted["logits"]
+        assert logits.shape == (6, 6)  # 2 members x 3 states, member-major
+        probs = logits.reshape(6, 2, 3).softmax(-1)
+        assert torch.allclose(probs.sum(-1), torch.ones(6, 2), atol=1e-5)
 
     def test_the_latent_prior_and_guide_produce_a_positive_scale(self, binary_annotations):
         model = build_model(binary_annotations)
@@ -115,6 +124,71 @@ class TestConceptBottleneckVAE:
         out = model(query=list(model.pgm.variables), input=torch.rand(6, INPUT_SIZE))
         out.value["input"].sum().backward()
         assert any(p.grad is not None for p in model.decoder.parameters())
+
+
+class TestImageObservation:
+    """A multi-dimensional observation: convolutions on both sides, no flattening.
+
+    The encoder reads ``(B, C, H, W)`` and the decoder writes it, so the guide's
+    readout has to be sized without an ``out_features`` to read (an
+    ``nn.Sequential`` declares none) and the observation's parameter has to reach
+    the annotated axis flattened, alongside the 2D concept parameters.
+    """
+
+    SHAPE = (3, 8, 8)  # 192 pixels
+
+    def _model(self, annotations, channels=4):
+        n_contexts = len(annotations.labels) + 1
+        return ConceptBottleneckVAE(
+            input_size=self.SHAPE,
+            annotations=annotations,
+            encoder=nn.Sequential(
+                nn.Conv2d(3, channels, 4, stride=2, padding=1), nn.ReLU(),  # 4x4
+                nn.Flatten(),
+                nn.Linear(channels * 4 * 4, LATENT_SIZE),
+            ),
+            decoder=nn.Sequential(
+                nn.Linear(n_contexts * EMBEDDING_SIZE, channels * 4 * 4), nn.ReLU(),
+                nn.Unflatten(1, (channels, 4, 4)),
+                nn.ConvTranspose2d(channels, 3, 4, stride=2, padding=1),  # 8x8
+            ),
+            latent_size=LATENT_SIZE,
+            embedding_size=EMBEDDING_SIZE,
+            plate=False,
+        )
+
+    def test_the_reconstruction_is_flat_on_the_annotated_axis(
+        self, categorical_annotations
+    ):
+        model = self._model(categorical_annotations)
+        out = model(query=list(model.pgm.variables), input=torch.rand(6, *self.SHAPE))
+        # 4D from the decoder, flattened to (batch, size) like every other
+        # annotated output — otherwise it cannot share the axis with the concepts.
+        assert out.value["input"].shape == (6, 3 * 8 * 8)
+        for name, cardinality in zip(["digit", "color"], [4, 3]):
+            assert out.logits[name].shape == (6, cardinality)
+
+    def test_the_guide_reads_an_undeclared_conv_encoder(self, categorical_annotations):
+        """No `out_features` anywhere: the readout width is measured, not declared."""
+        model = self._model(categorical_annotations)
+        assert not hasattr(model.encoder, "out_features")
+        out = model(query=list(model.pgm.variables), input=torch.rand(6, *self.SHAPE))
+        assert out.loc["z"].shape == (6, LATENT_SIZE)
+        assert bool((out.scale["z"] > 0).all())
+
+    def test_the_reconstruction_loss_scores_the_image(self, categorical_annotations):
+        model = self._model(categorical_annotations)
+        x = torch.rand(6, *self.SHAPE)
+        out = model(query=list(model.pgm.variables), input=x)
+        # The observation keeps its event shape while the prediction is flat;
+        # the loss reconciles the two rather than broadcasting them.
+        loss = MSEReconstructionLoss("input")(out)
+        expected = F.mse_loss(
+            out.value["input"].as_subclass(torch.Tensor),
+            x.reshape(6, -1),
+            reduction="none",
+        ).sum(-1).mean()
+        assert torch.allclose(loss, expected)
 
 
 class CountingBackbone(nn.Module):
@@ -145,7 +219,8 @@ class TestGuideSharesOneBackbonePass:
         return ConceptBottleneckVAE(
             input_size=INPUT_SIZE,
             annotations=annotations,
-            backbone=backbone,
+            # The model takes no `backbone`: a feature extractor goes in `encoder`.
+            encoder=backbone,
             decoder=MLP(n_contexts * EMBEDDING_SIZE, 16, INPUT_SIZE),
             latent_size=LATENT_SIZE,
             embedding_size=EMBEDDING_SIZE,
@@ -201,13 +276,13 @@ class TestBinaryStateEmbeddings:
         # variable holding both members' rows, member-major.
         assert tuple(model.pgm.variables["embeddings"].shape) == (2, EMBEDDING_SIZE)
 
-    def test_concept_probability_shape_is_unaffected(self, binary_annotations):
+    def test_concept_parameter_shape_is_unaffected(self, binary_annotations):
         """The concept variable itself stays a single Bernoulli — only its
         embedding grew, not its output width."""
         model = build_model(binary_annotations, plate=False)
         out = model(query=list(model.pgm.variables), input=torch.rand(6, INPUT_SIZE))
         for name in ("a", "b"):
-            assert out.probs[name].shape == (6, 1)
+            assert out.logits[name].shape == (6, 1)
 
     def test_mixing_and_bottleneck_width_are_unaffected(self):
         """The bottleneck stays (k+1)*m regardless of how many embedding rows
@@ -385,15 +460,15 @@ class TestDeltaObservation:
 
 class TestContinuousConcepts:
     def test_a_continuous_concept_builds_and_reports_loc_and_scale(self):
-        """`param_for_discrete_var` is 'probs', which a Normal does not have, so
-        the discrete activation must only be applied to discrete variables."""
+        """`param_for_discrete_var` is 'logits', which a Normal does not have, so
+        the discrete parameter must only be chosen for discrete variables."""
         annotations = Annotations(
             labels=["a", "h"], cardinalities=[1, 1], types=["binary", "continuous"]
         )
         model = build_model(annotations)
         out = model(query=list(model.pgm.variables), input=torch.rand(4, INPUT_SIZE))
         assert sorted(out.params["h"]) == ["loc", "scale"]
-        assert sorted(out.params["a"]) == ["probs"]
+        assert sorted(out.params["a"]) == ["logits"]
         assert bool((out.scale["h"] > 0).all())
 
     def test_the_scale_head_is_independent_of_the_location(self):
@@ -512,8 +587,8 @@ class TestTeacherForcingRate:
         assert set(cpd.parametrization) == {"value"}
 
     @pytest.mark.parametrize("p_int", [1.0, 0.5, 0.0])
-    def test_concepts_still_report_probs(self, p_int):
-        """Soft draws must not cost the concepts their reported ``probs``.
+    def test_concepts_still_report_logits(self, p_int):
+        """Soft draws must not cost the concepts their reported ``logits``.
 
         A soft engine builds the plain relaxed families rather than their
         straight-through subclasses. If the parameter harvester only knows the
@@ -530,11 +605,11 @@ class TestTeacherForcingRate:
             query=model.default_query(ground_truth), input=torch.rand(4, INPUT_SIZE)
         )
 
-        assert "probs" in out.params
+        assert "logits" in out.params
         for name in ("a", "d"):
-            assert name in out.params["probs"], f"no probs reported for {name!r}"
-        assert bool(((out.probs["a"] >= 0) & (out.probs["a"] <= 1)).all())
-        assert torch.allclose(out.probs["d"].sum(-1), torch.ones(4), atol=1e-5)
+            assert name in out.params["logits"], f"no logits reported for {name!r}"
+        assert out.logits["a"].shape == (4, 1)
+        assert out.logits["d"].shape == (4, 4)
 
 
 class TestTemperatureAnnealing:

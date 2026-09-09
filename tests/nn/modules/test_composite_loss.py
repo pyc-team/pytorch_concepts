@@ -97,6 +97,14 @@ class TestCompositeLoss:
             atol=1e-5,
         )
 
+    def test_a_none_term_drops_with_its_weight(self, output):
+        """`weights` stays parallel to `terms` as written, so a term can be
+        switched off in place with a conditional expression."""
+        term = OutputOnlyTerm()
+        loss = CompositeLoss(terms=[term, None], weights=[2.0, 3.0])
+        assert loss.weights == [2.0]
+        assert torch.allclose(loss(output), 2.0 * term(output), atol=1e-5)
+
     def test_mismatched_weights_are_rejected(self):
         with pytest.raises(ValueError, match="Number of weights"):
             CompositeLoss(terms=[OutputOnlyTerm()], weights=[1.0, 2.0])
