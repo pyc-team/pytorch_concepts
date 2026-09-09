@@ -87,8 +87,11 @@ class ConceptSupervisionPipeline:
     name : str, optional
         Name of the pipeline. If None, the class name is used.
 
-    Output names
-    ------------
+    Examples
+    --------
+    Generate visual concepts for an existing image ``dataset``, score them
+    with two CLIP models, and average the filtered, calibrated scores.
+    
     Pipeline results are returned as a dictionary. Component names come from
     a component's non-empty ``name`` attribute, or its class name otherwise;
     repeated names receive ``_1``, ``_2``, and so on. With merged routing,
@@ -98,11 +101,6 @@ class ConceptSupervisionPipeline:
     is stored under ``"aggregated"`` (with a numeric suffix if that name is
     already used). Named annotation datasets prefix every key, such as
     ``"train_aggregated"``.
-
-    Examples
-    --------
-    Generate visual concepts for an existing image ``dataset``, score them
-    with two CLIP models, and average the filtered, calibrated scores.
 
     .. code-block:: python
 

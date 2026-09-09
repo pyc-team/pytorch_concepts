@@ -1,15 +1,18 @@
 Concept Generation
 ==================
 
-The :class:`~torch_concepts.data.generation.ConceptSupervisionPipeline` discovers
-concepts and assigns them values for each dataset sample. Use it when you want
-concept supervision without manually labeling every image.
+Concept generation in PyC is built around a simple idea:
 
-A generator returns :class:`~torch_concepts.Annotations`: concept names and their
-definitions, with no sample values. An annotator returns an
-:class:`~torch_concepts.AnnotatedTensor`: sample-level scores with that metadata
-attached to the concept columns. A concept axis is the whole collection of
-concept columns, not one individual concept.
+1. **Discover which concepts are useful** for the task.
+2. **Assign those concepts to the samples** in the dataset.
+
+The pipeline is modular: each step can be replaced or configured independently.
+For example, one component may propose concepts, another may remove unsuitable
+ones, another may score how strongly each concept applies to each sample, and
+optional post-processing stages can refine those scores.
+
+The :class:`~torch_concepts.data.generation.ConceptSupervisionPipeline`
+orchestrates these steps.
 
 .. code-block:: text
 
@@ -17,90 +20,192 @@ concept columns, not one individual concept.
                                                     ↓
    Images ────────────────────────────────────── Annotator
                                                     ↓
-   Raw score filter → Calibrator → Calibrated score filter → Aggregator
+                                             Raw score filter
                                                     ↓
-                                   Named AnnotatedTensor outputs
+                                                Calibrator
+                                                    ↓
+                                          Calibrated score filter
+                                                    ↓
+                                                Aggregator
+                                                    ↓
+                                     Named AnnotatedTensor outputs
 
-Filtering, calibration, and aggregation are configurable stages. Expand the
-sections below for a complete example and the available choices. See the
-:doc:`API reference </modules/generation_api>` for all parameters.
+Pipeline steps
+--------------
 
-.. dropdown:: Discover and annotate image concepts
-   :icon: rocket
-   :open:
+.. dropdown:: 1. Choose what to discover from and what to annotate
+   :icon: database
 
-   Install the data dependencies from the repository root:
+   Concept discovery (i.e., generation) and sample annotation are independent.
 
-   .. code-block:: bash
+   ``dataset`` provides the context for concept generation. Optionally,
+   ``generation_indices`` restricts which rows may influence discovery.
 
-      python -m pip install -e ".[data]"
+   Annotation can target:
 
-   Set ``OPENAI_API_KEY`` in your environment. This example calls an OpenAI model
-   through LiteLLM and downloads a pretrained CLIP model. It uses ColorMNIST,
-   which downloads MNIST if needed. Run the following blocks in order.
+   - the full ``dataset``;
+   - named subsets through ``annotation_indices``;
+   - separate datasets through ``annotation_datasets``.
 
-   .. code-block:: python
+   If only ``generation_indices`` is provided, the full dataset is still
+   annotated. Generators receive the original dataset plus ``indices``;
+   a callable prompt that reads samples must honor those indices.
+   ``annotation_indices`` and ``annotation_datasets`` are mutually exclusive.
 
-      from torch_concepts.data import ColorMNISTDataset
-      from torch_concepts.data.generation import ConceptSupervisionPipeline
-      from torch_concepts.data.generation.generators import (
-          LiteLLMBackend, LLMConceptGenerator,
-      )
-      from torch_concepts.data.generation.annotators import CLIPAnnotator
-      from torch_concepts.data.generation.calibrators import SigmoidCalibrator
-      from torch_concepts.data.generation.filters import (
-          DeduplicateConcepts, ThresholdAnnotationFilter,
-      )
 
-      dataset = ColorMNISTDataset(train=True)
-      generator = LLMConceptGenerator(
-          llm=LiteLLMBackend(model="openai/gpt-4o-mini"),
-          prompt=(
-              "List 6 visible binary properties of handwritten digits useful "
-              "for distinguishing {class_names}. Return one property per line."
-          ),
-      )
-      pipeline = ConceptSupervisionPipeline(
-          generators=generator,
-          annotators=CLIPAnnotator(batch_size=64),
-          generator_filter=DeduplicateConcepts(),
-          calibrator=SigmoidCalibrator(scale=10.0, bias=-2.5),
-          calibrated_annotation_filter=ThresholdAnnotationFilter(threshold=0.5),
-          routing="merged",
-      )
-      outputs = pipeline(dataset, class_names=[str(i) for i in range(10)])
-      scores = outputs["CLIPAnnotator"]
-      print(scores.shape)              # (number of images, discovered concepts)
-      print(scores.annotation.labels)  # the discovered properties
+.. dropdown:: 2. Generate concepts
+   :icon: light-bulb
 
-   ``class_names`` supplies task context for the prompt; it does not prescribe
-   the generated concept names. This string prompt uses class names only.
-   To include dataset samples, supply a callable prompt to the generator; it
-   receives ``dataset`` when ``generate()`` or the pipeline is called. The
-   generator constructor does not receive a dataset.
+   Each :class:`~torch_concepts.data.generation.Generator` produces a concept
+   vocabulary from the available context.
 
-   CLIP's default input getter understands the ``inputs["x"]`` image returned
-   by ConceptDataset. Supply ``input_getter`` for a different sample structure.
-   The sigmoid settings above are illustrative; they do not establish that
-   CLIP similarity scores are calibrated probabilities.
+   Contract::
 
-.. dropdown:: Filters, calibration, and aggregation
-   :icon: gear
+      Dataset context -> Generator -> Annotations
 
-   ``DeduplicateConcepts`` is the default generator filter. It accepts and
-   returns an ``Annotations`` object, keeping the first occurrence of each
-   label. Duplicate definitions with incompatible states, cardinalities, or
-   types raise ``ValueError``. Set ``generator_filter=None`` to disable it.
+   :class:`~torch_concepts.Annotations` describes the concepts and their
+   metadata, but contains no sample-level values.
 
-   After annotation, the pipeline applies ``raw_annotation_filter``, then
-   ``calibrator``, then ``calibrated_annotation_filter``.
-   ``ThresholdAnnotationFilter`` sets scores below the threshold to zero;
-   it preserves columns and leaves scores above the threshold unchanged.
-   ``SigmoidCalibrator`` applies ``sigmoid(scale * scores + bias)``.
+   See :doc:`Annotations and tensors </modules/low_level_api>` and the
+   :doc:`concept generation API </modules/generation_api>`.
 
-   With merged routing, an optional callable can combine multiple annotators.
-   Inputs must have matching rows and concept definitions. Using the generator
-   and dataset above:
+
+.. dropdown:: 3. Filter generated concepts
+   :icon: filter
+
+   A :class:`~torch_concepts.data.generation.FilterGenerator` can remove or
+   reorder generated concept definitions before annotation.
+
+   Contract::
+
+      Annotations -> FilterGenerator -> Annotations
+
+   The default is
+   :class:`~torch_concepts.data.generation.filters.DeduplicateConcepts`.
+   It keeps the first occurrence of each label and raises ``ValueError`` when
+   duplicates have incompatible states, cardinalities, or types.
+   Set ``generator_filter=None`` to disable this stage.
+
+
+.. dropdown:: 4. Route concepts to annotators
+   :icon: workflow
+
+   Routing determines which generated vocabularies are passed to which
+   annotators.
+
+   ``merged``
+      Merge all generator outputs, filter once, and send the resulting
+      vocabulary to every annotator.
+
+   ``cartesian``
+      Filter each generator output independently and send every output to every
+      annotator.
+
+   ``zip``
+      Filter each generator output independently and pair generators and
+      annotators in configuration order.
+
+   ``zip`` requires equal numbers of generators and annotators.
+
+   For example, suppose generator G1 proposes ``[red, round]`` and G2 proposes
+   ``[round, striped]``, with compatible definitions for ``round``, and two
+   annotators A1 and A2. With the default deduplication filter:
+
+   .. list-table:: The same generators and annotators, routed differently
+      :header-rows: 1
+      :widths: 15 60 25
+
+      * - Mode
+        - Annotation jobs
+        - Outputs
+      * - ``merged``
+        - A1 and A2 each score ``[red, round, striped]``.
+        - 2 shared-vocabulary tensors
+      * - ``cartesian``
+        - A1 and A2 each score G1's ``[red, round]`` and, separately,
+          G2's ``[round, striped]``.
+        - 4 tensors, one per pair
+      * - ``zip``
+        - A1 scores ``[red, round]``; A2 scores ``[round, striped]``.
+        - 2 paired tensors
+
+   Use merged routing for a shared vocabulary, cartesian routing to compare
+   every combination, and zip routing for designated generator–annotator pairs.
+
+
+.. dropdown:: 5. Annotate samples
+   :icon: tag
+
+   Each :class:`~torch_concepts.data.generation.Annotator` assigns values for
+   the routed concepts to the selected dataset samples.
+
+   Contract::
+
+      Dataset + Annotations -> Annotator -> AnnotatedTensor
+
+   The resulting :class:`~torch_concepts.AnnotatedTensor` contains the
+   sample-level values together with their concept metadata.
+
+   See :doc:`Annotations and tensors </modules/low_level_api>`.
+
+
+.. dropdown:: 6. Filter raw annotations
+   :icon: filter
+
+   ``raw_annotation_filter`` optionally processes annotator outputs before
+   calibration.
+
+   Contract::
+
+      AnnotatedTensor -> FilterAnnotator -> AnnotatedTensor
+
+   A :class:`~torch_concepts.data.generation.FilterAnnotator` must preserve
+   tensor shape and concept metadata.
+
+   ``ThresholdAnnotationFilter(threshold=0.2)`` sets scores below 0.2 to zero;
+   it does not remove concepts or turn the remaining scores into ones.
+
+
+.. dropdown:: 7. Calibrate annotation scores
+   :icon: sliders
+
+   A :class:`~torch_concepts.data.generation.Calibrator` optionally transforms
+   the raw annotation scores.
+
+   Contract::
+
+      AnnotatedTensor -> Calibrator -> AnnotatedTensor
+
+   Shape and concept metadata are preserved.
+
+   ``SigmoidCalibrator(scale=10.0, bias=-2.5)`` applies
+   ``sigmoid(10 * scores - 2.5)``. These example settings transform scores into
+   the range (0, 1); they do not guarantee calibrated probabilities.
+
+
+.. dropdown:: 8. Filter calibrated annotations
+   :icon: filter
+
+   ``calibrated_annotation_filter`` optionally processes the values after
+   calibration.
+
+   It uses the same
+   :class:`~torch_concepts.data.generation.FilterAnnotator` contract as the raw
+   filter.
+
+   If no calibrator is configured, it receives the raw-filtered values.
+
+
+.. dropdown:: 9. Aggregate outputs
+   :icon: stack
+
+   With ``merged`` routing, an optional ``aggregator`` can combine compatible
+   annotator outputs.
+
+   Individual annotator outputs are preserved; aggregation adds an additional
+   output named ``aggregated`` (with a numeric suffix on a name collision).
+   The callable receives a dictionary of processed tensors with matching rows
+   and concept definitions. For example, average their scores:
 
    .. code-block:: python
 
@@ -115,110 +220,133 @@ sections below for a complete example and the available choices. See the
               axis=1,
           )
 
-      ensemble = ConceptSupervisionPipeline(
-          generators=generator,
-          annotators=[
-              CLIPAnnotator(model_name="openai/clip-vit-base-patch32"),
-              CLIPAnnotator(model_name="openai/clip-vit-base-patch16"),
-          ],
-          calibrator=SigmoidCalibrator(scale=10.0, bias=-2.5),
-          aggregator=average_scores,
-          routing="merged",
-      )
-      ensemble_outputs = ensemble(dataset, class_names=[str(i) for i in range(10)])
-      print(list(ensemble_outputs))
-      # ['CLIPAnnotator', 'CLIPAnnotator_1', 'aggregated']
 
-   Aggregation adds an output; the individual annotator outputs remain available.
-
-.. dropdown:: Routing and output names
-   :icon: workflow
-
-   .. list-table:: Choosing generator–annotator combinations
-      :header-rows: 1
-      :widths: 15 55 30
-
-      * - Routing
-        - Which concepts each annotator receives
-        - Output keys
-      * - ``merged``
-        - All generator outputs combined and filtered once
-        - Annotator name
-      * - ``cartesian``
-        - Every generator output, filtered separately
-        - ``<generator>_<annotator>``
-      * - ``zip``
-        - The corresponding generator output, filtered separately
-        - ``<generator>_<annotator>``
-
-   Zip routing requires equal numbers of generators and annotators. Aggregation
-   is supported only with merged routing.
-
-   Names come from a component's nonempty ``name`` attribute, otherwise its
-   class name. Repeated names receive ``_1``, ``_2``, and so on. An aggregator
-   uses ``aggregated``; collisions also receive a numeric suffix. Named
-   annotation targets prefix these keys, for example ``train_CLIPAnnotator``.
-   Inspect ``outputs.keys()`` for the exact names produced by your configuration.
-
-.. dropdown:: Discover on training data and annotate other splits
-   :icon: database
-
-   Generation and annotation selections are independent. If your prompt uses
-   samples, restrict discovery to training rows. A callable prompt must honor
-   the ``indices`` argument: the generator still receives the full dataset.
-   The class-name-only prompt above does not read any rows.
-
-   .. code-block:: python
-
-      train_indices = list(range(100))
-      val_indices = list(range(100, 120))
-      split_outputs = pipeline(
-          dataset,
-          class_names=[str(i) for i in range(10)],
-          generation_indices=train_indices,
-          annotation_indices={"train": train_indices, "val": val_indices},
-      )
-      train_scores = split_outputs["train_CLIPAnnotator"]
-      val_scores = split_outputs["val_CLIPAnnotator"]
-
-   If only ``generation_indices`` is supplied, annotation still covers the full
-   dataset. For separate dataset objects, use
-   ``annotation_datasets={"train": train_dataset, "val": val_dataset}``
-   instead of ``annotation_indices``. Both targets share the vocabulary
-   generated in that pipeline call. The caller defines the splits.
-
-.. dropdown:: Attach generated supervision to ConceptDataset
+.. dropdown:: 10. Return generated supervision
    :icon: package
 
-   To generate and attach full-dataset outputs in one call:
+   The pipeline returns a dictionary of named
+   :class:`~torch_concepts.AnnotatedTensor` objects.
+
+   For two samples, two binary concepts, and two annotators with mean
+   aggregation, an example output is:
 
    .. code-block:: python
 
-      generated = dataset.generate_concepts(
-          pipeline,
-          class_names=[str(i) for i in range(10)],
-          use_as_gt=True,
-      )
-      assert dataset.concepts is generated["CLIPAnnotator"]
-      # Original labels remain in dataset.native_concepts.
+      import torch
+      from torch_concepts import Annotations, AnnotatedTensor
 
-   A single source is selected automatically. With multiple sources, choose
-   an exact output key. To reuse the ensemble outputs already computed above:
+      concepts = Annotations(labels=["round", "striped"], cardinalities=[1, 1])
+      outputs = {
+          "CLIPAnnotator": AnnotatedTensor(
+              torch.tensor([[0.8, 0.2], [0.4, 0.6]]), concepts, axis=1,
+          ),
+          "CLIPAnnotator_1": AnnotatedTensor(
+              torch.tensor([[0.6, 0.4], [0.2, 0.8]]), concepts, axis=1,
+          ),
+          "aggregated": AnnotatedTensor(
+              torch.tensor([[0.7, 0.3], [0.3, 0.7]]), concepts, axis=1,
+          ),
+      }
 
-   .. code-block:: python
+   Rows follow sample order; columns follow ``concepts.labels``.
 
-      dataset.set_generated_concepts(
-          ensemble_outputs, use_as_gt=True, generated_gt_name="aggregated",
-      )
+   Names depend on the routing mode and configured component names. Named
+   annotation targets also prefix the corresponding output keys.
 
-   ``use_as_gt=False`` keeps native concepts selected when they exist. A dataset
-   with no native concepts selects generated supervision automatically; multiple
-   sources still require ``generated_gt_name``. Generated concepts replace the
-   selected supervision as a whole: they do not automatically append native
-   task labels. Preserve or combine task supervision explicitly when preparing
-   a training experiment.
+   See :doc:`concept generation API </modules/generation_api>` for the complete
+   naming rules.
 
-   ``generate_concepts()`` attaches only outputs aligned one-to-one with the
-   complete dataset. Call the pipeline directly for split-specific tensors.
+Complete example
+----------------
+
+The following example uses the ``average_scores`` function above. Install the
+repository's data extras with ``python -m pip install -e ".[data]"`` and set
+``OPENAI_API_KEY``. It calls an LLM provider and downloads CLIP weights and MNIST
+if needed. Only 120 images are annotated to keep the example small.
+
+.. code-block:: python
+
+   from torch_concepts.data import ColorMNISTDataset
+   from torch_concepts.data.base import ConceptDataset
+   from torch_concepts.data.generation import ConceptSupervisionPipeline
+   from torch_concepts.data.generation.generators import LiteLLMBackend, LLMConceptGenerator
+   from torch_concepts.data.generation.annotators import CLIPAnnotator
+   from torch_concepts.data.generation.calibrators import SigmoidCalibrator
+   from torch_concepts.data.generation.filters import DeduplicateConcepts, ThresholdAnnotationFilter
+
+   images = ColorMNISTDataset(train=True)
+   dataset = ConceptDataset(input_data=images.input_data[:120])
+   class_names = [str(i) for i in range(10)]
+   pipeline = ConceptSupervisionPipeline(
+       generators=LLMConceptGenerator(
+           llm=LiteLLMBackend(model="openai/gpt-4o-mini"),
+           prompt=(
+               "List 6 visible binary properties of handwritten digits useful "
+               "for distinguishing {class_names}. Return one property per line."
+           ),
+       ),
+       annotators=[
+           CLIPAnnotator(model_name="openai/clip-vit-base-patch32"),
+           CLIPAnnotator(model_name="openai/clip-vit-base-patch16"),
+       ],
+       generator_filter=DeduplicateConcepts(),
+       raw_annotation_filter=ThresholdAnnotationFilter(threshold=0.2),
+       calibrator=SigmoidCalibrator(scale=10.0, bias=-2.5),
+       calibrated_annotation_filter=ThresholdAnnotationFilter(threshold=0.5),
+       aggregator=average_scores,
+       routing="merged",
+   )
+   outputs = pipeline(dataset, class_names=class_names)
+   print(list(outputs))
+   # ['CLIPAnnotator', 'CLIPAnnotator_1', 'aggregated']
+   print(outputs["aggregated"].annotation.labels)
+
+``class_names`` gives the LLM task context, not the desired concept names.
+This string prompt reads no samples. To supply samples, use a callable prompt;
+the dataset is passed at generation time, not to the generator constructor.
+CLIP's default input getter handles ConceptDataset's ``inputs["x"]`` images.
+
+To annotate named subsets instead, reuse the pipeline as follows. This makes
+another generation call and shares its vocabulary across both subsets:
+
+.. code-block:: python
+
+   split_outputs = pipeline(
+       dataset,
+       class_names=class_names,
+       generation_indices=list(range(100)),
+       annotation_indices={"train": list(range(100)), "val": list(range(100, 120))},
+   )
+   train_scores = split_outputs["train_aggregated"]
+   val_scores = split_outputs["val_aggregated"]
+
+Use the output in ConceptDataset
+-----------------------------------
+
+Attach the full-dataset ``outputs`` already computed above and select one source
+as the learner-facing ``dataset.concepts``:
+
+.. code-block:: python
+
+   dataset.set_generated_concepts(
+       outputs, use_as_gt=True, generated_gt_name="aggregated",
+   )
+   assert dataset.concepts is outputs["aggregated"]
+
+Each attached tensor must follow the dataset's row order and contain one row
+per sample; split-specific tensors cannot be attached to the full dataset.
+Alternatively, ``dataset.generate_concepts(pipeline, class_names=class_names,
+use_as_gt=True, generated_gt_name="aggregated")`` generates and attaches in
+one call. Omit ``generated_gt_name`` when there is only one source.
+
+Native values remain in ``dataset.native_concepts``. With ``use_as_gt=False``,
+they stay selected if present; without native values, generated supervision
+is selected automatically. Selecting generated supervision does not append
+native task labels, so include those explicitly if the training task needs them.
+
+See :class:`~torch_concepts.data.base.ConceptDataset` and its
+:meth:`~torch_concepts.data.base.ConceptDataset.generate_concepts` method for
+the full parameter descriptions, including ``class_names``, ``use_as_gt``, and
+``generated_gt_name``.
 
 For configuration-based experiments, see :doc:`using_conceptarium`.
