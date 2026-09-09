@@ -230,6 +230,9 @@ class CompositeLoss(PyCLoss):
         names: Optional[List[str]] = None,
     ):
         super().__init__()
+        if names is not None and isinstance(terms, (list, tuple)):
+            # A dropped `None` term takes its name with it, as it does its weight.
+            names = [n for n, t in zip(names, terms) if t is not None]
         terms, weights = _normalize_loss_terms(terms, weights)
         if not terms:
             raise ValueError("CompositeLoss: `terms` must not be empty.")
