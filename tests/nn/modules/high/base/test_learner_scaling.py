@@ -171,8 +171,9 @@ class TestScaledSpaceSeparation:
         transforms = {'concepts': scaler}
         c_scaled = model.maybe_scale_concepts({'c': c}, transforms)['c']
         out = model.forward(
-            query=model.fully_observed_query(c_scaled),
-            evidence=model.default_evidence(model.maybe_scale_inputs(batch['inputs'], transforms)),
+            query=model.default_query(c_scaled, 'test'),
+            evidence=model.default_evidence(
+                model.maybe_scale_inputs(batch['inputs'], transforms), 'test'),
         )
         loc = out.loc
         preds = scaler.inverse_transform(loc.tensor)

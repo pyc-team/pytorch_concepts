@@ -22,6 +22,7 @@ from torch.distributions import Bernoulli
 from torch_concepts.annotations import Annotations
 from torch_concepts.tensor import AnnotatedTensor
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
+from torch_concepts.nn.modules.high.base.model import BaseModel
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
 from torch_concepts.nn.modules.outputs import ModelOutput
@@ -48,6 +49,10 @@ class FullMockLearner(BaseLearner):
     concept_names, concept_annotations, prepare_target,
     and a full forward(x, query, evidence, **kw).
     """
+
+    # Borrowed rather than restated, so the split behaviour under test is the real one.
+    default_query = BaseModel.default_query
+    default_evidence = BaseModel.default_evidence
 
     def __init__(self, annotations, n_concepts=2, **kwargs):
         super().__init__(**kwargs)
@@ -508,6 +513,29 @@ class TestBaseLearnerSharedStep(unittest.TestCase):
         loss = learner.shared_step(self.batch, step='val')
         self.assertEqual(loss.shape, ())
         self.assertIn('val_loss', learner._logged)
+
+    def test_shared_step_forces_the_concepts_only_at_train(self):
+        """The query reaching forward: ground truth at 'train', same keys with no
+        values at 'val'/'test', so evaluation measures the model unaided."""
+        learner = FullMockLearner(self.annotations, n_concepts=2, loss=self.loss_fn)
+        self._patch_logging(learner)
+        seen = {}
+        forward = learner.forward
+        learner.forward = lambda query=None, evidence=None, **kw: (
+            seen.update(query=query, evidence=evidence)
+            or forward(query=query, evidence=evidence, **kw)
+        )
+        c = self.batch['concepts']['c']
+
+        learner.shared_step(self.batch, step='train')
+        assert torch.equal(seen['query']['C1'], c[:, 0].unsqueeze(-1))
+        assert torch.equal(seen['evidence']['input'], self.batch['inputs']['x'])
+        train_keys = set(seen['query'])
+
+        for step in ('val', 'test'):
+            learner.shared_step(self.batch, step=step)
+            assert set(seen['query']) == train_keys
+            assert all(value is None for value in seen['query'].values())
 
     # -- training_step / validation_step / test_step -------------------
 

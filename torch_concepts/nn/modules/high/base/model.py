@@ -737,6 +737,29 @@ class BaseModel(nn.Module, ABC):
             query[name] = torch.cat(pieces, dim=-1)
         return query
 
+    def default_query(self, c, step='train'):
+        """The query a training/eval step asks for: every concept, teacher-forced
+        at ``'train'`` and latent otherwise, so evaluation measures the model unaided.
+
+        The keys are the same either way, only the values differ, so this makes a
+        difference only to an engine with ``p_int > 0`` (``VariationalInference``,
+        ``IndependentInference``). Override to observe a subset::
+
+            q = self.fully_observed_query(c)
+            return {n: (v if n in KEEP else None) for n, v in q.items()}
+        """
+        query = self.fully_observed_query(c)
+        return query if step == 'train' else {name: None for name in query}
+
+    def default_evidence(self, inputs, step='train'):
+        """The evidence a training/eval step observes: the raw input only
+        (``{"input": inputs["x"]}``).
+
+        Override to supply additional observed (non-concept) variables, per
+        ``step`` if they differ between training and evaluation.
+        """
+        return {"input": inputs["x"]}
+
     def prepare_target(self, target: torch.Tensor) -> torch.Tensor:
         """Prepare ground-truth labels for loss/metrics.
 

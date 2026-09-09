@@ -571,13 +571,23 @@ class TestTeacherForcingRate:
         assert positive > 0
         assert negative > 0
 
-    def test_the_ground_truth_is_always_in_the_query(self):
+    def test_the_ground_truth_is_always_in_the_train_query(self):
         """RandInt needs a target to force *to*, at every rate."""
         annotations = Annotations(labels=["a"], cardinalities=[1], types=["binary"])
         ground_truth = torch.ones(4, 1)
         for p_int in (0.0, 0.5, 1.0):
             forced = self._model(annotations, p_int).default_query(ground_truth)["a"]
             assert torch.equal(forced, ground_truth)
+
+    def test_the_eval_query_withholds_the_ground_truth(self):
+        """Evaluation measures the model unaided: same keys, no values."""
+        annotations = Annotations(labels=["a"], cardinalities=[1], types=["binary"])
+        model = self._model(annotations, p_int=1.0)
+        train = model.default_query(torch.ones(4, 1))
+        for step in ("val", "test"):
+            query = model.default_query(torch.ones(4, 1), step)
+            assert set(query) == set(train)
+            assert all(value is None for value in query.values())
 
     def test_the_observation_has_a_single_value_head(self):
         """A Delta observation allocates one head, whatever `p_int` is: there is
