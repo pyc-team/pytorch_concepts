@@ -54,7 +54,7 @@ CONC_WEIGHT = 5.0       # concept supervision, within the CBM lambda sweep
 ORT_WEIGHT = 1.0        # orthogonality loss weight
 
 # inference hparams
-P_INT_TRAIN = 0.5        # CEM's RandInt rate
+P_INT_TRAIN = 1        # CEM's RandInt rate
 TEMPERATURE = 1.0        # initial Gumbel-Softmax temperature
 TEMPERATURE_FINAL = 0.5  # its floor, as in Jang et al.
 ANNEALING_RATE = 5e-5    # exponential decay per step, reaching the floor late
@@ -65,18 +65,18 @@ LEARNING_RATE = 1e-3      # Adam's usual VAE setting
 CLIP_GRAD_MAX_NORM = 1.0  # max norm for gradient clipping
 
 
-def save_grid(original, reconstruction, path):
-    """Write an originals-over-reconstructions grid, if matplotlib is around."""
+def save_grid(top, bottom, path):
+    """Write two rows of images, if matplotlib is around."""
     try:
         from matplotlib import pyplot as plt
     except ImportError:
-        print("matplotlib not installed; skipping the reconstruction grid.")
+        print("matplotlib not installed; skipping the grid.")
         return
-    # The original keeps its (B, 3, 28, 28) event shape; the reconstruction comes
-    # back flat on the annotated axis, so reshape each before stacking.
-    images = torch.cat([original.reshape(-1, 3, 28, 28),
-                        reconstruction.reshape(-1, 3, 28, 28)])
-    _, axes = plt.subplots(2, len(original), figsize=(len(original), 2))
+    # The original keeps its (B, 3, 28, 28) event shape; a generated or
+    # reconstructed one comes back flat on the annotated axis, so reshape each.
+    images = torch.cat([top.reshape(-1, 3, 28, 28),
+                        bottom.reshape(-1, 3, 28, 28)])
+    _, axes = plt.subplots(2, len(top), figsize=(len(top), 2))
     for ax, image in zip(axes.flatten(), images):
         ax.imshow(image.permute(1, 2, 0).detach().numpy())
         ax.axis("off")
@@ -181,18 +181,19 @@ def main():
         out = model(query=list(model.pgm.variables), input=x)
     save_grid(x, out.value["input"].clamp(0, 1), "cbvae_colormnist_reconstruction.png")
 
-    # Generate from concepts alone.
-    # generate a green 7.
+    # Generate from concepts alone: every digit in both colours. One shared z,
+    # so the only thing varying across the grid is the concept intervention.
     model.setup_inference(AncestralSamplingInference)
     with torch.no_grad():
-        sampled_z = model(query=['z'], evidence={}).samples['z']
+        z = model(query=['z'], evidence={}).samples['z'].tensor
         out = model(
-            query=['input'], 
-            evidence={'z': sampled_z.tensor, 
-                      'color': torch.tensor([[0,1]]), # green
-                      'digit': torch.tensor([[0,0,0,0,0,0,0,1,0,0]])} # 7 
+            query=['input'],
+            evidence={'z': z.expand(20, -1),
+                      'color': torch.eye(2).repeat_interleave(10, 0),  # red row, green row
+                      'digit': torch.eye(10).repeat(2, 1)}             # 0..9, 0..9
         )
-    save_image(out.value["input"], "cbvae_colormnist_green_seven.png")
+    red, green = out.value["input"].chunk(2)
+    save_grid(red, green, "cbvae_colormnist_conditional_grid.png")
 
     # Generate a random sample.
     with torch.no_grad():
