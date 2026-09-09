@@ -213,6 +213,22 @@ class ConceptBottleneckVAE(DirectedGraphModel):
             {**guide, **(train_inference_kwargs or {})},
         )
 
+    def __repr__(self):
+        # The base reports `backbone`, which this model has none of: the guide's
+        # trunk is `encoder`, and the bottleneck's width is what sizes `decoder`.
+        fields = (
+            f"input_size={self.input_size}, "
+            f"latent_size={self.latent_size}, "
+            f"n_concepts={len(self.concept_names)}, "
+            f"embedding_size={self.embedding_size}, "
+            f"use_unknown={self.use_unknown}, "
+            f"encoder={self.encoder.__class__.__name__}, "
+            f"decoder={self.decoder.__class__.__name__}"
+        )
+        if self.plate:
+            fields += f", plate={self.plate}"
+        return f"{self.__class__.__name__}({fields})"
+
     # ------------------------------------------------------------------
     # Graph
     # ------------------------------------------------------------------
