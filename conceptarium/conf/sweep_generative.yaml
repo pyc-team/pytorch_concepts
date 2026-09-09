@@ -15,8 +15,10 @@ hydra:
       model: cbvae
       loss: cbvae
       loss.weights: [0.5, 1.0, 5.0, 1.0]
+      loss.terms.1.free_bits: 0.1
       model.model_cls.train_inference_kwargs.p_int: 1.0
       model.model_cls.optim_kwargs.lr: 0.001
+      model.model_cls.use_unknown: True
 
 seed: 42
 
@@ -26,7 +28,7 @@ precompute_embeddings: False
 dataset:
   backbone: null
   datamodule:
-    batch_size: 256
+    batch_size: 2048
     # max_samples: 30000
 
 metrics:
@@ -34,7 +36,7 @@ metrics:
   per_concept: true
 
 trainer:
-  max_epochs: 100
+  max_epochs: 2000
   monitor: val_loss
   patience: 20
   gradient_clip_val: 1.0

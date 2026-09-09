@@ -263,10 +263,14 @@ class TestConditionalPrior:
             layer = layer[0] if isinstance(layer, nn.Sequential) else layer
             assert layer.in_features == 12
 
-    def test_a_prior_encoder_without_out_features_is_rejected(self, binary_annotations):
-        """Fail naming the module to fix, not later on a shape mismatch."""
-        with pytest.raises(ValueError, match="conditional prior"):
-            build_model(binary_annotations, plate=False, prior_encoder=nn.ReLU())
+    def test_a_prior_encoder_without_out_features_is_measured(self, binary_annotations):
+        """A trunk that does not advertise its width is dry-run instead of rejected,
+        the same fallback the guide's encoder gets — which is what lets a plain
+        nn.Sequential of convs be configured as either one."""
+        model = build_model(binary_annotations, plate=False, prior_encoder=nn.ReLU())
+        loc = model.pgm.factors["z"].parametrization["loc"]
+        # nn.ReLU preserves width, so the readout is sized on the condition.
+        assert loc.in_features == model.condition_size
 
     @pytest.mark.parametrize(
         "kwargs", [{"plate": False}, {"plate": True}, {"conditional_prior": False}]
@@ -357,7 +361,8 @@ class TestGuideSharesOneBackbonePass:
         return ConditionalVAE(
             input_size=INPUT_SIZE,
             annotations=annotations,
-            backbone=backbone,
+            # The model takes no `backbone`: a feature extractor goes in `encoder`.
+            encoder=backbone,
             decoder=MLP(LATENT_SIZE + condition_size, 16, INPUT_SIZE),
             latent_size=LATENT_SIZE,
             embedding_size=EMBEDDING_SIZE,
@@ -471,6 +476,24 @@ class TestTrainingAndGeneration:
         for module in (model.decoder, model.condition_embedding, prior):
             grads = [p.grad for p in module.parameters() if p.grad is not None]
             assert grads and any(bool((g != 0).any()) for g in grads)
+
+    def test_every_split_observes_the_concepts(self, binary_annotations):
+        """The concepts are the condition, so — unlike the CBGM — evaluation cannot
+        withhold them: the guide `q(z | input, c)` reads them as parents, and a
+        `val`/`test` step whose query left them latent dies inside the guide."""
+        model = build_model(binary_annotations, plate=False, lightning=True,
+                            loss=CompositeLoss(
+                                terms=[MSEReconstructionLoss(variable="input"),
+                                       ConceptLoss(binary=nn.BCEWithLogitsLoss())],
+                                weights=[1.0, 1.0]))
+        model.log = lambda *a, **kw: None          # no Trainer attached
+        model.log_dict = lambda *a, **kw: None
+        c = torch.randint(0, 2, (5, 2)).float()
+        batch = {'inputs': {'x': torch.rand(5, INPUT_SIZE)}, 'concepts': {'c': c}}
+
+        for step in ('train', 'val', 'test'):
+            assert torch.equal(model.default_query(c, step)["a"], c[:, :1])
+            assert torch.isfinite(model.shared_step(batch, step))
 
     def test_unconditional_generation_through_ancestral_sampling(self, binary_annotations):
         """The learnable marginal p(c) exists so the model can be drawn from with no

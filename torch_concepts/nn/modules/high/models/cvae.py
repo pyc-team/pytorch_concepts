@@ -105,9 +105,10 @@ class ConditionalVAE(DirectedGraphModel):
         Concept annotations (labels, cardinalities, types). Every concept is a
         conditioning variable; there are no task variables.
     encoder : nn.Module
-        The guide's feature extractor, run after ``backbone``. Must declare
-        ``out_features``. The embedded concepts are appended to its output, and
-        two linear readouts give ``loc``/``scale``.
+        The guide's trunk, mapping an observation (``input_size``) to the
+        features its ``loc``/``scale`` readouts share — the embedded concepts are
+        appended to its output. Any feature extractor goes here — this model
+        takes no ``backbone``, since the guide reads the raw observation.
     decoder : nn.Module
         Maps ``latent_size + condition_size`` to ``input_size``. The observation
         is a ``Delta``, so this output **is** the reconstruction — nothing is
@@ -226,6 +227,12 @@ class ConditionalVAE(DirectedGraphModel):
         plate: Optional[bool] = False,
         **kwargs,
     ):
+        if kwargs.pop("backbone", None) is not None:
+            raise TypeError(
+                f"{type(self).__name__} does not accept a `backbone` parameter. "
+                "The guide reads the raw observation directly, so any feature "
+                "extractor belongs in `encoder`."
+            )
         super().__init__(
             input_size=input_size,
             annotations=annotations,
@@ -259,6 +266,22 @@ class ConditionalVAE(DirectedGraphModel):
             {**guide, **(train_inference_kwargs or {})},
         )
 
+    def __repr__(self):
+        # The base reports `backbone`, which this model has none of: the guide's
+        # trunk is `encoder`, and the condition's width is what sizes `decoder`.
+        fields = (
+            f"input_size={self.input_size}, "
+            f"latent_size={self.latent_size}, "
+            f"n_concepts={len(self.concept_names)}, "
+            f"embedding_size={self.embedding_size}, "
+            f"conditional_prior={self.conditional_prior}, "
+            f"encoder={self.encoder.__class__.__name__}, "
+            f"decoder={self.decoder.__class__.__name__}"
+        )
+        if self.plate:
+            fields += f", plate={self.plate}"
+        return f"{self.__class__.__name__}({fields})"
+
     # ------------------------------------------------------------------
     # Graph
     # ------------------------------------------------------------------
@@ -279,11 +302,15 @@ class ConditionalVAE(DirectedGraphModel):
     # Training hooks
     # ------------------------------------------------------------------
     def default_query(self, c, step='train'):
-        """Always query **every** variables. During train, observe concepts.
-        During validation and test, do not observe any variables.
+        """Query **every** variable, always observing the concepts.
 
-        Widens the base concept-only query
-                (:meth:`~torch_concepts.nn.modules.high.base.model.BaseModel.default_query`):
+        Evaluation does **not** withhold them the way the base query
+        (:meth:`~torch_concepts.nn.modules.high.base.model.BaseModel.default_query`)
+        and the CBGM do: here the concepts are the *condition*, an input rather
+        than something the model infers, and the guide ``q(z | input, c)`` reads
+        them as parents — withholding them leaves that CPD without a value. For
+        the same reason there is no RandInt knob on this model.
+
         :class:`~torch_concepts.nn.VariationalInference` requires all variables
         in the query — observed ones with values, latents absent or ``None`` —
         and the generative loss terms need the ones the base concept-only
@@ -291,7 +318,7 @@ class ConditionalVAE(DirectedGraphModel):
         """
         return {
             **{name: None for name in self.pgm.variables},
-            **super().default_query(c, step),
+            **self.fully_observed_query(c),
         }
 
     def default_extra(self, evidence, query=None):
@@ -302,22 +329,6 @@ class ConditionalVAE(DirectedGraphModel):
     # ------------------------------------------------------------------
     # Model assembly
     # ------------------------------------------------------------------
-    @staticmethod
-    def _readout_width(width, what: str, culprit: str) -> int:
-        """Validate a trunk's declared output width, or say which module lacks it.
-
-        A CPD's ``loc``/``scale`` heads are ``Linear(width, size)``, so a trunk
-        that does not advertise ``out_features`` cannot be built behind. Raising
-        here names the module to fix rather than failing later on a shape.
-        """
-        if width is None:
-            raise ValueError(
-                f"ConditionalVAE: cannot size {what} — "
-                f"neither {culprit} `out_features`. Set that attribute, or pass a "
-                "module that declares it (e.g. MLP, nn.Linear)."
-            )
-        return int(width)
-
     def _build_guide(self) -> ParametricCPD:
         """The variational posterior ``q(z | input, c)``, a Normal CPD on ``z``.
 
@@ -334,14 +345,13 @@ class ConditionalVAE(DirectedGraphModel):
         z = self.pgm.variables["z"]
         observed = self.pgm.variables["input"]
 
-        # Width of the trunk's output: the encoder's if it declares one (MLP,
-        # nn.Linear), else the backbone's — `encoder` defaults to nn.Identity.
-        width = self._readout_width(
-            getattr(self.encoder, "out_features", None)
-            or getattr(self.backbone, "out_features", None),
-            "the guide's readout",
-            "`encoder` nor `backbone` declares",
-        )
+        # Width of the trunk's output: declared when the encoder exposes it
+        # (MLP, nn.Linear), else measured with a dry run — the trick
+        # `backbone.py` uses for torchvision models.
+        width = getattr(self.encoder, "out_features", None)
+        if width is None:
+            with torch.no_grad():
+                width = self.encoder(torch.zeros(1, *observed.shape)).shape[-1]
         # The condition's variables, in the order they are concatenated.
         conditioning = [v for v in self.pgm.variables.values()
                         if v.variable_type == "concept"]
@@ -349,10 +359,7 @@ class ConditionalVAE(DirectedGraphModel):
         return ParametricCPD(
             variable=z,
             parents=[observed, *conditioning],
-            trunk=ConditionedInput(
-                self.condition_embedding,
-                encoder=nn.Sequential(self.backbone, self.encoder),
-            ),
+            trunk=ConditionedInput(self.condition_embedding, encoder=self.encoder),
             parametrization=self._flexible_parametrization(
                 variable=z,
                 first=nn.Linear(width, z.size),
@@ -391,11 +398,12 @@ class ConditionalVAE(DirectedGraphModel):
         # two heads are independent readouts over that shared trunk, exactly as in
         # the guide. `prior_encoder` supplies the nonlinearity between them.
         if self.conditional_prior:
-            prior_width = self._readout_width(
-                getattr(self.prior_encoder, "out_features", None),
-                "the conditional prior's readout",
-                "`prior_encoder` declares",
-            )
+            # Same sizing as the guide's trunk: declared, else measured.
+            prior_width = getattr(self.prior_encoder, "out_features", None)
+            if prior_width is None:
+                with torch.no_grad():
+                    prior_width = self.prior_encoder(
+                        torch.zeros(1, self.condition_size)).shape[-1]
             latent_cpd = ParametricCPD(
                 variable=latent,
                 parents=[*concepts],

@@ -9,7 +9,7 @@ defaults:
 # Filled in by update_config_from_data, not read from the dataset config,
 # because a `concept_subset` shrinks `n_concepts` at runtime.
 data_dims:
-  n_pixels: ???
+  input_size: ???
   n_concepts: ???
 
 channels: 32

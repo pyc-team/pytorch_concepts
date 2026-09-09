@@ -15,7 +15,7 @@
 # =============================================================
 _target_: "torch_concepts.nn.CompositeLoss"
 
-weights: [1.0, 1.0, 1.0]
+weights: [0.5, 1.0, 1.0]
 
 terms:
   # Identical to conf/loss/cbvae.yaml, so the two models' losses are comparable.
@@ -24,12 +24,16 @@ terms:
 
   - _target_: "torch_concepts.nn.KLDivergenceLoss"
     latents: [z]
+    free_bits: 0.1   # nats per latent dimension
 
-  # The model reports `probs`, so BCELoss / NLLProbLoss, not the logit versions.
+  # The model reports `logits`, so the logit-space losses.
   - _target_: "torch_concepts.nn.ConceptLoss"
-    binary_param: probs
-    categorical_param: probs
     binary:
-      _target_: "torch.nn.BCELoss"
+      _target_: "torch.nn.BCEWithLogitsLoss"
     categorical:
-      _target_: "torch_concepts.nn.NLLProbLoss"
+      _target_: "torch.nn.CrossEntropyLoss"
+    continuous:
+      _target_: "torch.nn.MSELoss"
+
+# Same short names as cbvae.yaml, so the logged terms line up across the two.
+names: [reco, kl, concept]
