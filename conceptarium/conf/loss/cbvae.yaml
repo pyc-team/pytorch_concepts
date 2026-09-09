@@ -12,7 +12,7 @@
 # =============================================================
 _target_: "torch_concepts.nn.CompositeLoss"
 
-weights: [1.0, 1.0, 5.0, 1.0]
+weights: [1.0, 1.0, 1.0, 1.0]
 
 terms:
   # Delta observation: 0.5*||x - v||^2 summed over pixels, averaged over the
@@ -22,15 +22,16 @@ terms:
 
   - _target_: "torch_concepts.nn.KLDivergenceLoss"
     latents: [z]
+    free_bits: 0.1   # nats per latent dimension
 
-  # The model reports `probs`, so BCELoss / NLLProbLoss, not the logit versions.
+  # The model reports `logits`, so the logit-space losses.
   - _target_: "torch_concepts.nn.ConceptLoss"
-    binary_param: probs
-    categorical_param: probs
     binary:
-      _target_: "torch.nn.BCELoss"
+      _target_: "torch.nn.BCEWithLogitsLoss"
     categorical:
-      _target_: "torch_concepts.nn.NLLProbLoss"
+      _target_: "torch.nn.CrossEntropyLoss"
+    continuous:
+      _target_: "torch.nn.MSELoss"
 
   # Drop this term under `use_unknown: false` -- there is no residual context to
   # push against, and the loss raises rather than quietly scoring 0.
@@ -38,3 +39,5 @@ terms:
     variable: mixing
     residual: unknown
     n_concepts: ${model.data_dims.n_concepts}
+  
+names: [reco, kl, concept, orth]

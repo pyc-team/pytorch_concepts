@@ -186,12 +186,13 @@ def update_config_from_data(cfg: DictConfig, dm: ConceptDataModule) -> DictConfi
         Updated cfg
     """
     with open_dict(cfg):
+        input_size = dm.n_features[-1] if len(dm.n_features) == 1 else dm.n_features
         cfg.model.model_cls.update(
-            input_size = dm.n_features[-1] if len(dm.n_features)==1 else dm.n_features,
+            input_size = input_size,
         )
         if "data_dims" in cfg.model:
             cfg.model.data_dims = {
-                "n_pixels": int(math.prod(dm.n_features)),
+                "input_size": input_size,
                 "n_concepts": len(dm.annotations.labels),
             }
     return cfg

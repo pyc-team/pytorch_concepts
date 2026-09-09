@@ -1,5 +1,6 @@
 # =============================================================
 # Concept Bottleneck Generative Model (VAE variant).
+# Mirrors examples/utilization/2_model/15.2_concept_bottleneck_vae_lightning.py.
 # =============================================================
 defaults:
   - _commons
@@ -11,6 +12,8 @@ data_dims:
   n_pixels: ???
   n_concepts: ???
 
+channels: 32
+
 model_cls:
   _target_: "torch_concepts.nn.ConceptBottleneckVAE"
 
@@ -20,44 +23,75 @@ model_cls:
 
   use_unknown: true # 'false' also nullify the orthogonality loss term
 
-  # The z -> context networks are MLPEmbeddingEncoders; hidden defaults to
-  # latent_size // 2, widened here.
-  context_net_kwargs:
-    hidden_size: 256
-
-  # Variational for BOTH train and eval
-  train_inference:
+  # Variational for BOTH train and eval; the engine is spelled out once, and
+  # `*_kwargs` is applied on top of the partial, so only the difference is set.
+  inference:
     _target_: "torch_concepts.nn.VariationalInference"
     _partial_: true
-    initial_temperature: 1.0
-    annealing: exponential
-    annealing_rate: 0.001
-    final_temperature: 0.1
-    p_int: 0.25
-
-  # Same engine, teacher-forcing rate aside: `*_kwargs` is applied on top of the
-  # partial, so only the difference is spelled out and one temperature override
-  # reaches both engines.
-  train_inference: ${model.model_cls.train_inference}
-  train_inference_kwargs:
     p_int: 0.0
+  train_inference: ${model.model_cls.inference}
+  train_inference_kwargs:
+    p_int: 1.0
+    initial_temperature: 1.0
+    final_temperature: 0.5
+    annealing: exponential
+    annealing_rate: 5.0e-5
 
-  # `n_pixels` rather than `input_size`, which is a shape on image data.
+  optim_kwargs:
+    lr: 0.001
+  scheduler_class: null   # the example trains on a flat LR
+
+  # DCGAN-style conv stacks for 3x28x28. This is pinned to 28x28 inputs.
+  # redefine it in the sweep config if you want to change it.
+  encoder:
+    _target_: torch.nn.Sequential
+    _args_:
+      - _target_: torch.nn.Conv2d
+        in_channels: 3
+        out_channels: ${model.channels}
+        kernel_size: 4
+        stride: 2
+        padding: 1
+      - _target_: torch.nn.LeakyReLU
+      - _target_: torch.nn.Conv2d
+        in_channels: ${model.channels}
+        out_channels: ${math:"2 * ${model.channels}"}
+        kernel_size: 4
+        stride: 2
+        padding: 1
+      - _target_: torch.nn.LeakyReLU
+      - _target_: torch.nn.Flatten
+      - _target_: torch.nn.Linear
+        in_features: ${math:"2 * ${model.channels} * 7 * 7"}
+        out_features: ${model.model_cls.latent_size}
+
   decoder:
-    _target_: "torch_concepts.nn.MLP"
-    input_size: ${math:"(${model.data_dims.n_concepts} + (1 if ${model.model_cls.use_unknown} else 0)) * ${model.model_cls.embedding_size}"}
-    output_size: ${model.data_dims.n_pixels}
-    hidden_size: 256
-    n_layers: 2
-    activation: leaky_relu
-    dropout: 0.
+    _target_: torch.nn.Sequential
+    _args_:
+      - _target_: torch.nn.Linear
+        in_features: ${math:"(${model.data_dims.n_concepts} + (1 if ${model.model_cls.use_unknown} else 0)) * ${model.model_cls.embedding_size}"}
+        out_features: ${math:"2 * ${model.channels} * 7 * 7"}
+      - _target_: torch.nn.LeakyReLU
+      - _target_: torch.nn.Unflatten
+        dim: 1
+        unflattened_size:
+          - ${math:"2 * ${model.channels}"}
+          - 7
+          - 7
+      - _target_: torch.nn.ConvTranspose2d
+        in_channels: ${math:"2 * ${model.channels}"}
+        out_channels: ${model.channels}
+        kernel_size: 4
+        stride: 2
+        padding: 1
+      - _target_: torch.nn.LeakyReLU
+      - _target_: torch.nn.ConvTranspose2d
+        in_channels: ${model.channels}
+        out_channels: 3
+        kernel_size: 4
+        stride: 2
+        padding: 1
 
-# Composed with the dataset's backbone by attach_latent_encoder and used as the
-# guide's shared trunk, so `output_size` must be reachable from the backbone.
-latent_encoder:
-  _target_: torch_concepts.nn.MLP
-  hidden_size: 256
-  output_size: 128
-  n_layers: 1
-  activation: leaky_relu
-  dropout: 0.
+# ConceptBottleneckVAE takes no `backbone`, which is what run_experiment.py
+# passes the latent encoder as. Needs `dataset.backbone=null` too.
+latent_encoder: null
