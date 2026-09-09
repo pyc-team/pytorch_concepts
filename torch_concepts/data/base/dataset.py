@@ -53,8 +53,11 @@ class ConceptDataset(Dataset):
         concepts: Optional native concept values as a numpy array, pandas
             DataFrame, Tensor, or AnnotatedTensor, with shape
             (n_samples, n_concepts). Categorical values are class indices.
-        annotations: Optional metadata for the native concepts. Defaults to
-            the attached metadata when 'concepts' is an AnnotatedTensor.
+        annotations: Optional metadata for plain concept values. Must be omitted when
+            concepts is an AnnotatedTensor, whose attached metadata is used.
+            When no metadata is provided the dataset assumes every concept is binary,
+            with a warning. Omit both arguments for a dataset without native concepts;
+            annotations without concept values are not supported.
         graph: Optional concept graph as pandas DataFrame or tensor.
         concept_names_subset: Optional list to select subset of concepts.
         reorder_by_type: Group same-type concepts contiguously -- binary, then
@@ -65,9 +68,11 @@ class ConceptDataset(Dataset):
         exogenous: Optional exogenous variables (not yet implemented).
 
     Raises:
-        ValueError: If native concepts are provided without an axis-1
-            annotation, or if an invalid concept subset is requested.
-        NotImplementedError: If continuous concepts or exogenous variables are used.
+        ValueError: If both an AnnotatedTensor and separate annotations are
+            supplied; annotations are supplied without concepts; annotated
+            values do not describe the concept columns of a two-dimensional
+            tensor, or an invalid concept shape or subset is requested.
+        RuntimeError: If concept values and inputs have different sample counts.
 
     Example:
         >>> import torch
@@ -120,22 +125,27 @@ class ConceptDataset(Dataset):
         self._ground_truth_annotation: Optional[Annotations] = None
         self._ground_truth_source: Optional[str] = None
 
-        # sanity check on concept annotations and metadata
+        # Normalize native values and their single source of metadata.
         if isinstance(concepts, AnnotatedTensor):
-            if concepts.dim() != 2 or concepts.axis not in (1, -1):
+            if annotations is not None:
                 raise ValueError(
-                    "Annotated concepts must be two-dimensional with "
-                    "metadata on the concept columns (axis 1 or -1)."
+                    "Do not provide annotations when concepts is an "
+                    "AnnotatedTensor; use its attached annotation."
                 )
-            if annotations is None:
-                annotations = concepts.annotation
-        if annotations is None and concepts is not None:
+            annotations = concepts.annotation
+        elif concepts is None:
+            if annotations is not None:
+                raise ValueError("annotations requires native concept values.")
+        elif annotations is None:
             warnings.warn("No concept annotations provided. These will be set to default numbered "
                          "concepts 'concept_{i}'. All concepts will be treated as binary.")
             n = concepts.shape[1]
             annotations = Annotations(labels=[f"concept_{i}" for i in range(n)],
                                       cardinalities=[1] * n, # assume binary
                                       types=['binary'] * n)
+            if isinstance(concepts, pd.DataFrame):
+                # Numbered metadata describes column positions, not frame labels.
+                concepts = concepts.to_numpy()
 
         # sanity check
         axis_annotation = annotations
@@ -859,7 +869,10 @@ class ConceptDataset(Dataset):
         )
         
     def set_concepts(self, concepts: Union[np.ndarray, pd.DataFrame, Tensor, AnnotatedTensor]):
-        """Set concept annotations for the dataset, aligned to :attr:`concept_names`.
+        """Replace native values using the metadata established at construction.
+
+        This does not define a new native schema; datasets constructed without
+        native concepts must use generated-concept APIs to attach generated data.
 
         Args:
             concepts: Concept values of shape (n_samples, n_concepts). An
@@ -876,6 +889,12 @@ class ConceptDataset(Dataset):
             )
 
         # Validate shape
+        if isinstance(concepts, AnnotatedTensor):
+            if concepts.dim() != 2 or concepts.axis not in (1, -1):
+                raise ValueError(
+                    "Annotated concepts must be two-dimensional with "
+                    "metadata on the concept columns (axis 1 or -1)."
+                )
         # concepts' length must match dataset's length
         if concepts.shape[0] != self.n_samples:
             raise RuntimeError(f"Concepts has {concepts.shape[0]} samples but "
