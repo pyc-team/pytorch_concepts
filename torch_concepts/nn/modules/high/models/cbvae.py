@@ -94,11 +94,7 @@ class ConceptBottleneckVAE(DirectedGraphModel):
         ``z`` injected into ``inference_kwargs['latents']``.
     lightning : bool, default False
         If True, adds Lightning training capabilities.
-    plate : bool or None, default None
-        Per-level plate preference (see :class:`BaseModel`). ``None``/``True``
-        group homogeneous concepts into the minimum number of plates; ``False``
-        gives one variable per concept, which is the reference implementation's
-        layout.
+    plate : bool or None, default False.
     **kwargs
         Forwarded to :class:`BaseModel`.
 
@@ -181,7 +177,7 @@ class ConceptBottleneckVAE(DirectedGraphModel):
         train_inference: Optional[BaseInference] = None,
         train_inference_kwargs: Optional[dict] = None,
         lightning: bool = False,
-        plate: Optional[bool] = None,
+        plate: Optional[bool] = False,
         **kwargs,
     ):
         if kwargs.pop("backbone", None) is not None:

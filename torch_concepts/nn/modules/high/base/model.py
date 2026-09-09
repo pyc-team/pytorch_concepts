@@ -263,10 +263,10 @@ class BaseModel(nn.Module, ABC):
         if variable_dist_kwargs is not None:
             self.variable_dist_kwargs = {**self.variable_dist_kwargs, **variable_dist_kwargs}
 
-        # Plate preference used by the level factories: None = auto-detect per
-        # level, True = force a plate (raise on a heterogeneous level), False =
-        # force one variable per concept.
-        self._plate_pref = plate
+        # Plate preference used by the level factories: None/True groups
+        # homogeneous concepts into the minimum number of plates, False gives one
+        # variable per concept.
+        self.plate = plate
 
         self._setup_annotations(annotations)
         self._setup_backbone(backbone, input_size, latent_size)
@@ -321,7 +321,7 @@ class BaseModel(nn.Module, ABC):
         """Resolve how a level is laid out, shared by the variable factories.
 
         Returns a list of ``(kind, name, members)`` where ``kind`` is ``"plate"``
-        or ``"individual"``. Honours the ``plate`` preference (:attr:`_plate_pref`):
+        or ``"individual"``. Honours the ``plate`` preference (:attr:`plate`):
 
         * ``None`` (default) / ``True`` — group homogeneous concepts into the
           minimum number of plates; even a lone concept becomes a single-member
@@ -334,7 +334,7 @@ class BaseModel(nn.Module, ABC):
         with their ``type`` and ``cardinality`` (e.g. ``concepts_binary_1``) so the
         names are unique.
         """
-        if self._plate_pref is False:
+        if self.plate is False:
             return [("individual", n, [n]) for n in names]
         # None / True: always plates (a lone concept is a single-member plate).
         groups = self._plate_groups(names)

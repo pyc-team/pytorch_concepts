@@ -141,10 +141,7 @@ class ConditionalVAE(DirectedGraphModel):
         ``z`` injected into ``inference_kwargs['latents']``.
     lightning : bool, default False
         If True, adds Lightning training capabilities.
-    plate : bool or None, default None
-        Per-level plate preference (see :class:`BaseModel`). ``False`` gives one
-        variable per concept, which is what per-concept interventions (and the
-        steerability metric) address.
+    plate : bool or None, default False.
     **kwargs
         Forwarded to :class:`BaseModel`.
 
@@ -226,7 +223,7 @@ class ConditionalVAE(DirectedGraphModel):
         train_inference: Optional[BaseInference] = None,
         train_inference_kwargs: Optional[dict] = None,
         lightning: bool = False,
-        plate: Optional[bool] = None,
+        plate: Optional[bool] = False,
         **kwargs,
     ):
         super().__init__(
