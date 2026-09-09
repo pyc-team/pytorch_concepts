@@ -142,6 +142,80 @@ Detailed Guides
       # Run sweep over multiple values
       python run_experiment.py dataset=celeba,cub model=cbm_joint,blackbox seed=1,2,3,4,5
 
+.. dropdown:: Concept Generation
+   :icon: workflow
+
+   Use the :doc:`concept generation pipeline <using_generation>` to discover
+   concepts with an LLM and score images with CLIP. The current
+   ``run_experiment.py`` does not read a concept-generation config group or call
+   the pipeline automatically. The example below shows explicit Hydra
+   instantiation for a custom preparation script.
+
+   Install the repository's ``data`` extras and set ``OPENAI_API_KEY`` before
+   using this provider. Save this configuration as ``concept_pipeline.yaml``
+   alongside your script:
+
+   .. code-block:: yaml
+
+      _target_: torch_concepts.data.generation.ConceptSupervisionPipeline
+      generators:
+        _target_: torch_concepts.data.generation.generators.LLMConceptGenerator
+        llm:
+          _target_: torch_concepts.llm_backends.LiteLLMBackend
+          model: openai/gpt-4o-mini
+        prompt: "List 6 visible binary properties distinguishing {class_names}. Return one per line."
+      annotators:
+        _target_: torch_concepts.data.generation.annotators.CLIPAnnotator
+        model_name: openai/clip-vit-base-patch32
+        batch_size: 64
+      generator_filter:
+        _target_: torch_concepts.data.generation.filters.DeduplicateConcepts
+      calibrator:
+        _target_: torch_concepts.data.generation.calibrators.SigmoidCalibrator
+        scale: 10.0
+        bias: -2.5
+      calibrated_annotation_filter:
+        _target_: torch_concepts.data.generation.filters.ThresholdAnnotationFilter
+        threshold: 0.5
+      routing: merged
+
+   Instantiate it and attach its outputs to a dataset:
+
+   .. code-block:: python
+
+      from hydra.utils import instantiate
+      from omegaconf import OmegaConf
+      from torch_concepts.data import ColorMNISTDataset
+
+      dataset = ColorMNISTDataset(train=True)
+      pipeline = instantiate(OmegaConf.load("concept_pipeline.yaml"))
+      generated = dataset.generate_concepts(
+          pipeline,
+          class_names=[str(i) for i in range(10)],
+          use_as_gt=False,
+      )
+      print(list(generated))  # ['CLIPAnnotator']
+
+   Here native task labels remain selected for training, while generated scores
+   are available in ``dataset.generated_concepts``. To train on generated
+   supervision, use ``use_as_gt=True`` and configure the model, losses, and task
+   names for that selected schema. Selecting generated values does not append
+   native task columns; a supervised task still needs its labels explicitly
+   included in the training data.
+
+   When adapting the runner, perform image annotation after creating the
+   datamodule and before ``maybe_precompute_embeddings`` replaces images with
+   embeddings. Finalize the selected supervision before fitting scalers and
+   calling ``update_config_from_data`` or constructing the model and metrics.
+   If discovery uses dataset samples, pass the actual training indices to
+   ``generation_indices`` and make the prompt respect them. This example's
+   prompt uses only task class names.
+
+   For several annotators, inspect ``generated.keys()`` and specify
+   ``generated_gt_name`` when selecting one source. Routing, aggregation, and
+   split-specific annotation follow the same rules as the Python pipeline;
+   see :doc:`using_generation`.
+
 .. dropdown:: Understanding Configurations
    :icon: file-code
    
