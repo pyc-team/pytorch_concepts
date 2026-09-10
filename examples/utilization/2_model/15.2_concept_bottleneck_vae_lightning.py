@@ -46,25 +46,24 @@ BATCH_SIZE = 2048      # the CBM/CEM range for MNIST-sized images
 LATENT_SIZE = 32      # dim(z); MNIST VAEs sit in the 20-64 range
 EMBEDDING_SIZE = 16   # dim of one concept embedding; CEM's default m=16
 CHANNELS = 32         # base channels, DCGAN-style: doubled per stride-2 stage
-USE_UNKNOWN = True    # the paper's w_{k+1}; without it ORT_WEIGHT does nothing
+USE_UNKNOWN = False    # the paper's w_{k+1}; without it ORT_WEIGHT does nothing
+CONCEPTS_TO_DECODER = True  # the reference's extra decoder input: steers directly
 
 # loss hparams
 RECON_WEIGHT = 0.5      # a sigma=1 Gaussian NLL is half the squared error
 KL_WEIGHT = 1.0         # plain ELBO: beta = 1
-FREE_BITS = 0.5         # KL free bits (nats) per latent dimension
+FREE_BITS = 0.05         # KL free bits (nats) per latent dimension
 CONC_WEIGHT = 5.0       # concept supervision, within the CBM lambda sweep
 ORT_WEIGHT = 1.0        # orthogonality loss weight
 
 # inference hparams
-P_INT_TRAIN = 1        # CEM's RandInt rate
-TEMPERATURE = 1.0        # initial Gumbel-Softmax temperature
-TEMPERATURE_FINAL = 0.5  # its floor
-ANNEALING_RATE = 5e-5    # exponential decay per step, reaching the floor late
+P_INT_TRAIN = 1.0        # CEM's RandInt rate
+P_INT_TEST = 0.0         # no interventions at test time
+TEMPERATURE_TEST = 0.1   # initial Gumbel-Softmax temperature
 
 # training hparams
-N_EPOCHS = 100
+N_EPOCHS = 2000
 LEARNING_RATE = 1e-3      # Adam's usual VAE setting
-CLIP_GRAD_MAX_NORM = 1.0  # max norm for gradient clipping
 
 
 def save_grid(top, bottom, path):
@@ -137,6 +136,8 @@ def main():
     concept_names = dataset.concept_names
 
     context_size = (len(concept_names) + 1) * EMBEDDING_SIZE if USE_UNKNOWN else len(concept_names) * EMBEDDING_SIZE
+    if CONCEPTS_TO_DECODER:
+        context_size += sum(dataset.annotations.cardinalities)
 
     model = ConceptBottleneckVAE(
         input_size=dataset.n_features,
@@ -156,15 +157,15 @@ def main():
             nn.ConvTranspose2d(CHANNELS, 3, 4, stride=2, padding=1),          # 28x28
         ),
         use_unknown=USE_UNKNOWN,
+        concepts_to_decoder=CONCEPTS_TO_DECODER,
         inference=VariationalInference,
-        inference_kwargs={"p_int": 0.0},
+        inference_kwargs={
+            "p_int": P_INT_TEST, 
+            "initial_temperature": TEMPERATURE_TEST
+        },
         train_inference=VariationalInference,
         train_inference_kwargs={
-            "p_int": P_INT_TRAIN,
-            "initial_temperature": TEMPERATURE,
-            "annealing": "exponential",
-            "annealing_rate": ANNEALING_RATE,
-            "final_temperature": TEMPERATURE_FINAL,
+            "p_int": P_INT_TRAIN
         },
         lightning=True,
         # --- Lightning-specific arguments ---
@@ -185,13 +186,12 @@ def main():
 
     trainer = Trainer(
         max_epochs=N_EPOCHS,
-        gradient_clip_val=CLIP_GRAD_MAX_NORM,
         accelerator="mps",
         enable_checkpointing=False,
         logger=False,
         callbacks=[
             EarlyStopping(monitor="val_loss", patience=20),
-            # LossWeightWarmup(term='kl', epochs=20)
+            # LossWeightWarmup(term='kl', epochs=10)
         ]
     )
     model.train()
@@ -208,14 +208,14 @@ def main():
         out = model(query=list(model.pgm.variables), input=x)
     save_grid(x, out.value["input"], "cbvae_colormnist_reconstruction.png")
 
-    # Generate from concepts alone: every digit in both colours. One shared z,
-    # so the only thing varying across the grid is the concept intervention.
+    # Generate from concepts alone: every digit in both colours. One z per
+    # column, shared by its two rows.
     model.setup_inference(AncestralSamplingInference)
     with torch.no_grad():
-        z = model(query=['z'], evidence={}).samples['z'].tensor
+        z = torch.randn(10, LATENT_SIZE)
         out = model(
             query=['input'],
-            evidence={'z': z.expand(20, -1),
+            evidence={'z': z.repeat(2, 1),
                       'color': torch.eye(2).repeat_interleave(10, 0),  # red row, green row
                       'digit': torch.eye(10).repeat(2, 1)}             # 0..9, 0..9
         )

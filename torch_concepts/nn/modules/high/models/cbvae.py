@@ -83,6 +83,10 @@ class ConceptBottleneckVAE(DirectedGraphModel):
         the paper's ``w = [w_1, ..., w_k, w_{k+1}]``. ``False`` removes the slot
         entirely, shrinking the bottleneck to ``m * k`` and making the
         orthogonality penalty vacuous.
+    concepts_to_decoder : bool, default False
+        Also feed the concept scores to the decoder, so an intervention reaches 
+        the concept directly rather than only through the state embedding it selects. 
+        Widens the decoder's input by `sum(cardinalities)``.
     context_net_kwargs : dict, optional
         Arguments for the default ``MLPEmbeddingEncoder`` context network
         mapping 'z' to the context embeddings — ``hidden_size``
@@ -97,37 +101,6 @@ class ConceptBottleneckVAE(DirectedGraphModel):
     plate : bool or None, default False.
     **kwargs
         Forwarded to :class:`BaseModel`.
-
-    Notes
-    -----
-    Deviations from the authors' released code, which implements the VAE-**GAN**
-    variant (paper Eq. 2) rather than the pure VAE (Eq. 1) built here:
-
-    * The decoder input is the paper's ``m(k + 1)`` bottleneck; the code also
-      prepends the concept probabilities.
-    * The reference context generators are a bare linear map ending in
-      ``BatchNorm1d``, which works there because the discriminator supplies the
-      nonlinearity. In this pure VAE a linear context plus a shallow decoder
-      leaves ``z -> pixels`` close to affine — reproducing the data mean near the
-      training codes and diverging away from them — so the default is an MLP
-      with ``norm='layer'``. Pass ``context_net_kwargs={'norm': 'batch'}`` to
-      approach the reference.
-    * The reference concept head is a per-concept ``Linear(bins * m, bins)``.
-      Every concept here keeps the CEM head instead — a ``Linear(m, 1)`` shared
-      across state embeddings — including a binary one, whose second state
-      ``w-`` is derived inside the mixture rather than encoded.
-    * What the mixture reads is the engine's ``p_int``, not a setting here. At
-      ``1.0`` the concepts are teacher-forced on the ground-truth labels: that
-      grounds the concept channel, but an intervention then *selects* a state
-      rather than forming the convex combination of Section 3.1, and the
-      unselected state embedding never sees reconstruction gradient. At ``0.0``
-      the concepts are sampled through the relaxation (Gumbel-Softmax, endorsed
-      by Appendix A of the paper, with the engine's temperature schedule
-      controlling it) and the mixture reads a score in ``(0, 1)``, as the
-      reference does. **Between** the two is CEM's RandInt, which is what makes
-      the model steerable: the decoder is trained on concept values it did not
-      itself predict, exactly what an intervention hands it. Set it on the train
-      engine and leave evaluation at ``0.0``.
 
     Examples
     --------
@@ -171,6 +144,7 @@ class ConceptBottleneckVAE(DirectedGraphModel):
         latent_size: int = 64,
         embedding_size: int = 16,
         use_unknown: bool = True,
+        concepts_to_decoder: bool = False,
         context_net_kwargs: Optional[dict] = None,
         inference: Optional[BaseInference] = VariationalInference,
         inference_kwargs: Optional[dict] = None,
@@ -196,6 +170,7 @@ class ConceptBottleneckVAE(DirectedGraphModel):
         )
         self.embedding_size = embedding_size
         self.use_unknown = bool(use_unknown)
+        self.concepts_to_decoder = bool(concepts_to_decoder)
         self.context_net_kwargs = dict(context_net_kwargs or {})
         self.encoder = encoder if encoder is not None else nn.Identity()
         self.decoder = decoder if decoder is not None else nn.Identity()
@@ -409,18 +384,21 @@ class ConceptBottleneckVAE(DirectedGraphModel):
             },
         )
 
+        def decoder_inputs(inputs):
+            """Contexts concatenated on dim=-2 and flattened, then the concept
+            scores (present only under `concepts_to_decoder`) on dim=-1."""
+            contexts = [t for v, t in inputs.items() if v.variable_type == "embedding"]
+            scores = [t for v, t in inputs.items() if v.variable_type == "concept"]
+            flat = torch.cat(contexts, dim=-2).flatten(start_dim=-2)
+            return torch.cat([flat, *scores], dim=-1) if scores else flat
+
         decoder_cpd = ParametricCPD(
             variable=observed,
-            parents=[mixing, *unknowns],
-            parametrization=self._flexible_parametrization(
-                variable=observed,
-                first=pyc.nn.Sequential(
-                    nn.Flatten(start_dim=-2), 
-                    self.decoder
-                ),
-            ),
-            # Default concatenation is along dim=-1; embeddings need dim=-2
-            aggregate=lambda embeddings: torch.cat(list(embeddings.values()), dim=-2),
+            parents=[mixing, *unknowns, *(concepts if self.concepts_to_decoder else [])],
+            parametrization={
+                'value': self.decoder
+            },
+            aggregate=decoder_inputs,
         )
 
         return BayesianNetwork(

@@ -15,10 +15,13 @@ hydra:
       model: cbvae
       loss: cbvae
       loss.weights: [0.5, 1.0, 5.0, 1.0]
-      loss.terms.1.free_bits: 0.1
+      loss.terms.1.free_bits: 0.05
       model.model_cls.train_inference_kwargs.p_int: 1.0
       model.model_cls.optim_kwargs.lr: 0.001
-      model.model_cls.use_unknown: True
+
+      # to disable the residual and orthogonality loss
+      model.model_cls.use_unknown: False
+      loss.terms.3: "null"
 
 seed: 42
 
@@ -39,8 +42,7 @@ trainer:
   max_epochs: 2000
   monitor: val_loss
   patience: 20
-  gradient_clip_val: 1.0
-  logger: null # null / wandb
+  logger: wandb # null / wandb
 
   # callbacks:
   #   - _target_: torch_concepts.nn.LossWeightWarmup

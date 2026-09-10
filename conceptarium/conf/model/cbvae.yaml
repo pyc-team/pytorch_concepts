@@ -11,6 +11,7 @@ defaults:
 data_dims:
   input_size: ???
   n_concepts: ???
+  n_concept_states: ???
 
 channels: 32
 
@@ -21,7 +22,8 @@ model_cls:
   embedding_size: 16
   plate: false
 
-  use_unknown: true # 'false' also nullify the orthogonality loss term
+  use_unknown: true
+  concepts_to_decoder: true
 
   # Variational for BOTH train and eval; the engine is spelled out once, and
   # `*_kwargs` is applied on top of the partial, so only the difference is set.
@@ -33,7 +35,7 @@ model_cls:
   train_inference_kwargs:
     p_int: 1.0
     initial_temperature: 1.0
-    final_temperature: 0.5
+    final_temperature: 0.1
     annealing: exponential
     annealing_rate: 5.0e-5
 
@@ -69,7 +71,7 @@ model_cls:
     _target_: torch.nn.Sequential
     _args_:
       - _target_: torch.nn.Linear
-        in_features: ${math:"(${model.data_dims.n_concepts} + (1 if ${model.model_cls.use_unknown} else 0)) * ${model.model_cls.embedding_size}"}
+        in_features: ${math:"(${model.data_dims.n_concepts} + (1 if ${model.model_cls.use_unknown} else 0)) * ${model.model_cls.embedding_size} + (${model.data_dims.n_concept_states} if ${model.model_cls.concepts_to_decoder} else 0)"}
         out_features: ${math:"2 * ${model.channels} * 7 * 7"}
       - _target_: torch.nn.LeakyReLU
       - _target_: torch.nn.Unflatten

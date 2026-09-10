@@ -174,6 +174,7 @@ def update_config_from_data(cfg: DictConfig, dm: ConceptDataModule) -> DictConfi
     If ``model.data_dims`` exists in the config, also sets:
     - ``input_size``
     - ``n_concepts``
+    - ``n_concept_states``
 
     Args:
         cfg: Hydra model config.
@@ -191,5 +192,7 @@ def update_config_from_data(cfg: DictConfig, dm: ConceptDataModule) -> DictConfi
             cfg.model.data_dims = {
                 "input_size": input_size,
                 "n_concepts": len(dm.annotations.labels),
+                # Width of the concepts concatenated
+                "n_concept_states": int(sum(dm.annotations.cardinalities)),
             }
     return cfg

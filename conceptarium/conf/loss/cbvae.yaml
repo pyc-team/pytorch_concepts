@@ -12,7 +12,7 @@
 # =============================================================
 _target_: "torch_concepts.nn.CompositeLoss"
 
-weights: [1.0, 1.0, 1.0, 1.0]
+weights: [0.5, 1.0, 5.0, 1.0]
 
 terms:
   # Delta observation: 0.5*||x - v||^2 summed over pixels, averaged over the
@@ -22,7 +22,7 @@ terms:
 
   - _target_: "torch_concepts.nn.KLDivergenceLoss"
     latents: [z]
-    free_bits: 0.1   # nats per latent dimension
+    free_bits: 0.05  # nats per latent dimension; 32*this is the KL's floor
 
   # The model reports `logits`, so the logit-space losses.
   - _target_: "torch_concepts.nn.ConceptLoss"
