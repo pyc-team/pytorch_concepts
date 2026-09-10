@@ -6,299 +6,399 @@
    :width: 20px
    :align: middle
 
+.. |pl_logo| image:: https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/lightning.svg
+    :width: 20px
+    :align: middle
+
 
 Losses
 ======
 
-A loss in |pyc_logo| PyC takes the model's whole output, not a pair of tensors.
-That is what lets it find each concept by name, score each concept *type* with
-the right objective, and sum any number of extra terms — without you wiring
-anything up by hand.
+A loss in |pyc_logo| PyC is scored on the model's **whole output**, not on a pair
+of tensors. That one change is what lets it find each concept by name, give each
+concept *type* the objective it deserves, and sum any number of extra terms —
+without you wiring anything up by hand.
 
-This page is the whole contract: how the output reaches a term, how to route by
-type, how to add and weight extra terms, and what to do when you write a new
-model.
+A loss is built from four pieces:
 
+- **ModelOutput** — the single object every term is scored on.
+- :class:`~torch_concepts.nn.ConceptLoss` — Loss for concept supervision.
+  Permit to specify one objective per concept **type** (binary, categorical, continuous).
+- :class:`~torch_concepts.nn.ConceptSubset` — restricts a loss to a **named
+  group** of concepts, so the group can carry its own weight (e.g., a task loss).
+- :class:`~torch_concepts.nn.CompositeLoss` — a **weighted sum** of terms that
+  each read the whole output (an ELBO, a shared regulariser).
 
-How the output reaches a loss
------------------------------
-
-::
-
-    model(query=..., evidence=...)
-        │
-        ▼
-    ModelOutput
-      ├── params        {'logits'|'probs': ..., 'loc'|'scale'|'value': ...}
-      │                 one annotated tensor per quantity, all queried variables
-      ├── guide_params  same layout, for a variational guide's latents
-      ├── target        concept-space ground truth (annotated)
-      └── extra         anything else a term needs  →  see `default_extra`
-        │
-        ▼
-    CompositeLoss           each term sees the whole ModelOutput
-      ├── MSEReconstructionLoss / KLDivergenceLoss / OrthogonalityLoss / ...
-      ├── ConceptSubset     narrows the output to a named group of concepts
-      └── ConceptLoss       routes by concept type:
-              binary       ← params['logits'|'probs'].binary()
-              categorical  ← params['logits'|'probs'].categorical()  (padded)
-              continuous   ← params['loc'|'value']
-                │           each paired with target[<the same concept names>]
-                ▼
-              _filter_kwargs  →  every term gets only the kwargs it declares
-
-Two rules follow from the picture, and they are the only two worth memorising:
-
-1. **Predictions and targets are matched by concept name**, through the
-   :class:`~torch_concepts.Annotations` both carry. Nothing depends on column
-   order, and a variable the target has no truth for (a reconstructed image, say)
-   is skipped rather than looked up.
-2. **A term declares what it wants.** ``ConceptLoss`` reads each term's
-   ``forward`` signature once, at construction, and passes exactly the arguments
-   it names — the same contract as ``torchmetrics.Metric._filter_kwargs``.
+Expand each block below for an explanation and an example.
 
 
-What a term may declare
------------------------
+.. dropdown:: What a loss receives
+    :icon: package
 
-A loss term is any |pytorch_logo| ``nn.Module`` returning a scalar. Declare any
-subset of:
+    A forward pass returns a :class:`~torch_concepts.nn.ModelOutput`. Every loss
+    term — built-in or your own — reads what it needs from it:
 
-.. list-table::
-   :widths: 22 78
-   :header-rows: 1
+    ::
 
-   * - Argument
-     - What it is
-   * - ``input``
-     - Predictions for the current type. ``(batch, n_binary)`` for binary,
-       ``(batch * n_concepts, max_cardinality)`` for categorical (concept-major
-       rows), ``(batch, n_continuous)`` for continuous.
-   * - ``target``
-     - Ground truth for the same concepts, in the same order.
-   * - ``padding_mask``
-     - Categorical only: ``True`` at real class positions, ``False`` at the
-       ``-inf`` padding added for concepts below the maximum cardinality.
-       Declare it in any term that touches ``input`` without a target — it is
-       only built when some term asks for it.
-   * - ``scale``
-     - Continuous only, when the model reports one.
-   * - any key of ``extra``
-     - Whatever the model published there, under that exact name.
-   * - ``**kwargs``
-     - Everything available.
+        model(query=..., evidence=...)  →  ModelOutput
+          ├── params         predicted distribution parameters {'logits'|'probs': ..., ...}; sliced by quantity or by variable name
+          ├── guide_params   same, for a variational guide's latents
+          ├── samples        per-variable realisations; sliced by variable name
+          ├── probabilities  P(query | evidence); one value per query, not sliceable
+          ├── target         concept-space ground truth; sliced by variable name
+          └── extra          anything else a term needs; sliced by key   ←  ``default_extra``
 
-.. code-block:: python
+    The first four fields are filled by the inference engine. ``extra`` is where the model
+    publishes everything else a term might need — the raw input, an intermediate embedding,
+    a per-sample weight — by overriding ``default_extra``.
 
-   class L2OnEmbeddings(torch.nn.Module):
-       # `embeddings` is matched to out.extra['embeddings'] by name.
-       def forward(self, embeddings):
-           return embeddings.pow(2).mean()
-
-Terms receive **plain tensors**, not ``AnnotatedTensor`` — by the time a term
-runs, the annotation has already done its job of aligning to the target.
-
-A term that needs the *whole* output rather than one type's slice — to read a
-guide's latents, or the evidence — subclasses
-:class:`~torch_concepts.nn.PyCLoss` instead and takes ``(output, target=None)``.
-That is what :class:`~torch_concepts.nn.MSEReconstructionLoss` and
-:class:`~torch_concepts.nn.KLDivergenceLoss` do; add it to a ``CompositeLoss``,
-not to a per-type list.
+    Each loss term can then read whichever fields of the ModelOutput it needs.
 
 
-Routing by concept type
------------------------
+.. dropdown:: ConceptLoss
+    :icon: flame
 
-Give each type its own objective. Types absent from your data need no entry.
+    :class:`~torch_concepts.nn.ConceptLoss` is the loss for concept
+    supervision: it scores each queried concept against its target, using the
+    objective configured for that concept's **type**.
 
-.. code-block:: python
+    .. code-block:: python
 
-   from torch_concepts.nn import ConceptLoss
+       import torch
+       from torch_concepts.nn import ConceptLoss
 
-   loss_fn = ConceptLoss(
-       binary=torch.nn.BCEWithLogitsLoss(),
-       categorical=torch.nn.CrossEntropyLoss(),
-       continuous=torch.nn.MSELoss(),
-   )
+       loss_fn = ConceptLoss(
+           binary=torch.nn.BCEWithLogitsLoss(),
+           categorical=torch.nn.CrossEntropyLoss(),
+           continuous=torch.nn.MSELoss(),
+       )
 
-Which quantity each type is read from is **inferred** from what the model
-reports: the first of ``('logits', 'probs')`` for discrete types, of
-``('loc', 'value')`` for continuous. Override it with ``binary_param``,
-``categorical_param`` or ``continuous_param`` only when a model reports several
-and you want a specific one.
+    **Which loss each type is routed to is inferred automatically** from the parameters name 
+    in the model's output:``('logits', 'probs')`` for discrete types, ``('loc', 'value')`` 
+    for continuous. Override it with ``binary_param``, ``categorical_param`` or ``continuous_param``
+    only when a model reports several and you want a specific one — for instance a head that emits
+    probabilities:
 
-Pass ``annotations=`` to have the configuration checked at construction instead
-of at the first training step:
+    .. code-block:: python
 
-.. code-block:: python
+       from torch_concepts.nn import NLLProbLoss
 
-   loss_fn = ConceptLoss(binary=torch.nn.BCEWithLogitsLoss(),
-                         annotations=annotations)   # errors now, not at step 1
+       loss_fn = ConceptLoss(categorical=NLLProbLoss(), categorical_param='probs')
 
+    **Stacking several terms on one type.** Each type may take a list instead
+    of a single module, summed with per-term weights — here a regularizer
+    added to the binary concepts only:
 
-Stacking terms, and weighting them
-----------------------------------
+    .. code-block:: python
 
-There are two levels, and both take a list of terms with a list of weights:
+       from torch_concepts.nn import ConceptLoss, L1LogitRegularizer
 
-.. code-block:: python
+       loss_fn = ConceptLoss(
+           binary=[torch.nn.BCEWithLogitsLoss(), L1LogitRegularizer(scale=0.05)],
+           binary_weights=[1.0, 0.5],           # L1 on the binary logits only
+           categorical=torch.nn.CrossEntropyLoss(),
+       )
+       # ConceptLoss(binary=[BCEWithLogitsLoss + 0.5*L1LogitRegularizer],
+       #             categorical=CrossEntropyLoss)
 
-   from torch_concepts.nn import CompositeLoss, ConceptLoss, L1LogitRegularizer
+    **A term declares what it wants.** ``ConceptLoss`` reads each term's
+    ``forward`` signature once, at construction, and passes exactly the
+    arguments it names — so two terms on the same type can want different
+    things from the very same call:
 
-   concept_term = ConceptLoss(
-       binary=[torch.nn.BCEWithLogitsLoss(), L1LogitRegularizer(scale=0.01)],
-       binary_weights=[1.0, 0.5],          # per type, on that type's slice
-       categorical=torch.nn.CrossEntropyLoss(),
-   )
+    .. code-block:: python
 
-   loss_fn = CompositeLoss(
-       terms=[reconstruction, kl, concept_term, orthogonality],
-       weights=[1.0, 1.0, 5.0, 1.0],       # shared, on the whole output
-   )
+       class PenalizeLarge(torch.nn.Module):
+           def forward(self, input):          # no `target` declared
+               return input.abs().mean()
 
-::
-
-    total =  Σ_types Σ_i  w_i · term_i(that type's slice)     # ConceptLoss
-          +  Σ_j          w_j · term_j(whole output)          # CompositeLoss
-
-**Which level does a term belong to?** Look at what it reads:
-
-- reads a **type's** predictions (a penalty on binary logits) → per-type list;
-- reads something **shared** (embeddings, a latent, the evidence) → a
-  ``CompositeLoss`` term.
-
-A shared penalty put in a per-type list is charged once per type it is listed
-in, on that type's slice — rarely what anyone means. Computing it once outside
-the routing keeps it one value, with one weight and one number to read.
-
-**Weighting a group of concepts** — say concepts against tasks, or shallow
-against deep — is the same mechanism: wrap a loss in a
-:class:`~torch_concepts.nn.ConceptSubset`, name the group, give it a weight.
-
-.. code-block:: python
-
-   from torch_concepts.nn import ConceptSubset
-
-   loss_fn = CompositeLoss(
-       terms=[ConceptSubset(ConceptLoss(binary=BCEWithLogitsLoss()), exclude=['cancer']),
-              ConceptSubset(ConceptLoss(binary=BCEWithLogitsLoss()), names=['cancer'])],
-       weights=[0.5, 1.0],
-       names=['concepts', 'tasks'],       # what breakdown() and repr will show
-   )
-
-:class:`~torch_concepts.nn.WeightedConceptLoss` and
-:class:`~torch_concepts.nn.DepthWeightedConceptLoss` are exactly this, prebuilt.
-
-Weights are a plain mutable list, so a schedule can rewrite one entry during
-training — that is how :class:`~torch_concepts.nn.LossWeightWarmup` ramps a KL
-term up over the first epochs.
+       loss_fn = ConceptLoss(
+           binary=[torch.nn.BCEWithLogitsLoss(), PenalizeLarge()],
+       )
+       # BCEWithLogitsLoss receives (input, target); PenalizeLarge receives
+       # only (input) — both come from the same ConceptLoss.forward() call.
 
 
-Reading and debugging the objective
------------------------------------
+.. dropdown:: ConceptSubset
+    :icon: filter
 
-:meth:`~torch_concepts.nn.CompositeLoss.breakdown` returns each term's weighted
-contribution. The values sum to what ``forward`` returns, so use it whenever a
-total is not enough — an ELBO whose KL has collapsed still looks fine summed:
+    :class:`~torch_concepts.nn.ConceptSubset` restricts a loss to a **named
+    group** of concepts. ``ConceptLoss`` only ever routes by *type*; weighting
+    concepts differently from tasks, or shallow concepts from deep ones, needs
+    them picked out by *name* instead — that is what this wraps around a loss.
 
-.. code-block:: python
+    Exactly one of ``names`` / ``exclude`` is given:
 
-   for name, value in loss_fn.breakdown(out, c).items():
-       print(f"{name:24s} {value.item():.4f}")
-   # MSEReconstructionLoss    412.8317
-   # KLDivergenceLoss          18.4402
-   # ConceptLoss                0.9137
-   # OrthogonalityLoss          0.0521
+    .. code-block:: python
 
-Two errors you may meet, and what they mean:
+       from torch_concepts.nn import ConceptLoss, ConceptSubset
 
-.. list-table::
-   :widths: 38 62
-   :header-rows: 1
-
-   * - Error
-     - Cause
-   * - ``ConceptLoss has terms for [...] but scored nothing``
-     - The output carries no quantity for any configured type. Check the model's
-       ``param_for_discrete_var``, and that the target covers those concepts.
-   * - ``TypeError: forward() missing ... 'embeddings'``
-     - A term declares a name that nothing published. Add it to ``extra`` (see
-       below) — the key and the argument name must match.
+       tasks = ConceptSubset(
+           ConceptLoss(binary=torch.nn.BCEWithLogitsLoss()),
+           names=['PropCost'],
+       )
 
 
-Writing a new model
--------------------
+.. dropdown:: CompositeLoss
+    :icon: stack
 
-Everything a loss needs is already on the output, with one hook for the
-exceptions. In most cases there is nothing to do:
+    :class:`~torch_concepts.nn.CompositeLoss` is a **weighted sum** of terms
+    that each see the **whole output** — the building block for an objective
+    that is not a single concept loss, such as an ELBO or concepts and tasks
+    weighted apart:
 
-.. list-table::
-   :widths: 45 55
-   :header-rows: 1
+    .. math::
 
-   * - Your model…
-     - What you do
-   * - reports ``logits`` (``param_for_discrete_var = "logits"``)
-     - nothing — inferred
-   * - reports ``probs``
-     - nothing — inferred; pick a term that expects probabilities, e.g.
-       :class:`~torch_concepts.nn.NLLProbLoss`
-   * - models continuous concepts as a ``Delta`` (``value``) or a ``Normal``
-       (``loc``)
-     - nothing — inferred
-   * - needs a tensor no quantity carries (embeddings, the evidence)
-     - override ``default_extra``; the dict key **is** the term's argument name
-   * - has terms beyond concept supervision (an ELBO, a regulariser)
-     - wrap them in a ``CompositeLoss``
+        \text{total} = \sum_j w_j \cdot \text{term}_j(\text{whole output})
 
-.. code-block:: python
+    **Combining independent terms.** A term that does not belong to any single
+    concept type — a shared penalty, an ELBO term — is a
+    :class:`~torch_concepts.nn.PyCLoss`, summed here rather than folded into a
+    per-type list:
 
-   class MyGenerativeModel(...):
-       def default_extra(self, evidence):
-           # The reconstruction terms read out.extra['evidence'][variable].
+    .. code-block:: python
+
+       from torch_concepts.nn import CompositeLoss, ConceptLoss, PyCLoss
+
+       class GlobalLogitL1(PyCLoss):
+           """L1 over *every* reported logit at once."""
+           def forward(self, output, target=None):
+               return 0.01 * output.logits.tensor.abs().mean()
+
+       loss_fn = CompositeLoss(
+           terms=[ConceptLoss(binary=torch.nn.BCEWithLogitsLoss(),
+                              categorical=torch.nn.CrossEntropyLoss()),
+                  GlobalLogitL1()],
+           weights=[1.0, 1.0],
+           names=['supervision', 'global_l1'],   # what breakdown() and repr show
+       )
+       # CompositeLoss(supervision + global_l1)
+
+    **Combining two ``ConceptSubset`` groups.** Concepts and tasks, weighted
+    apart:
+
+    .. code-block:: python
+
+       from torch_concepts.nn import ConceptSubset
+
+       supervision = dict(binary=torch.nn.BCEWithLogitsLoss(),
+                          categorical=torch.nn.CrossEntropyLoss())
+
+       loss_fn = CompositeLoss(
+           terms=[ConceptSubset(ConceptLoss(**supervision), exclude=['PropCost']),
+                  ConceptSubset(ConceptLoss(**supervision), names=['PropCost'])],
+           weights=[0.5, 1.0],
+           names=['concepts', 'task'],
+       )
+       # CompositeLoss(0.5*concepts + task)
+
+    :class:`~torch_concepts.nn.WeightedConceptLoss` (concepts vs. tasks) and
+    :class:`~torch_concepts.nn.DepthWeightedConceptLoss` (one group per depth
+    level of a :class:`~torch_concepts.ConceptGraph`) build exactly this for
+    you.
+
+    **What nests in what.** ``CompositeLoss`` and ``ConceptSubset`` are both a
+    :class:`~torch_concepts.nn.PyCLoss`, so they compose freely:
+
+    - a ``CompositeLoss`` term may itself be a ``CompositeLoss``, a
+      ``ConceptSubset`` or a ``ConceptLoss``;
+    - a ``ConceptSubset`` may wrap a ``ConceptLoss`` **or** a ``CompositeLoss``;
+    - a per-type list (inside ``ConceptLoss``) holds plain |pytorch_logo|
+      ``nn.Module`` terms only — never a ``PyCLoss``.
+
+    Two conveniences worth knowing:
+
+    - a ``None`` entry in ``terms`` is dropped together with its weight and name,
+      so a term can be switched off in place
+      (``OrthogonalityLoss(...) if use_unknown else None``);
+    - ``weights`` is a plain mutable list, so a schedule can rewrite one entry
+      during training — that is how
+      :class:`~torch_concepts.nn.LossWeightWarmup` ramps a KL term up over the
+      first epochs.
+
+    .. note::
+
+       A shared penalty put in a per-type list instead is charged **once per
+       type it is listed in**, on that type's slice — rarely what anyone
+       means. Computing it once here keeps it one value, with one weight and
+       one number to read.
+
+
+.. dropdown:: ``default_extra`` — publishing anything else a loss term needs
+    :icon: plug
+
+    ``params``, ``guide_params`` and ``target`` cover what the PGM computes.
+    Everything else a loss might want — the raw evidence, an intermediate
+    embedding, a mask, a per-sample weight — goes through one model hook:
+
+    .. code-block:: python
+
+       class MyModel(ConceptBottleneckModel):
+           def default_extra(self, evidence, query=None):
+               return {"evidence": evidence}      # or None for nothing
+
+    The returned dict lands **verbatim** on ``out.extra`` on every forward pass —
+    it is the model's ``forward`` that calls it, so this works identically in a
+    manual |pytorch_logo| PyTorch loop and under |pl_logo| Lightning. It is
+    called with the ``evidence`` dict and the ``query`` of that pass, so the
+    extras can depend on both.
+
+    There are two ways a term reads it, and which one applies depends on where
+    the term sits:
+
+    .. list-table::
+       :widths: 34 66
+       :header-rows: 1
+
+       * - Term
+         - How it gets the extra
+       * - inside a ``ConceptLoss`` per-type list
+         - ``extra`` is spread as keyword arguments, so **the dict key is the
+           argument name**. Declare it in ``forward`` and it arrives.
+       * - a ``PyCLoss`` in a ``CompositeLoss``
+         - reads ``output.extra[...]`` itself — e.g.
+           :class:`~torch_concepts.nn.MSEReconstructionLoss` looks up
+           ``output.extra['evidence'][variable]``.
+
+    **Example for case 1 — access extra in a ConceptLoss term.** The key
+    ``'embeddings'`` and the argument ``embeddings`` are the same name; that is
+    the whole coupling:
+
+    .. code-block:: python
+
+       from torch_concepts.nn import ConceptBottleneckModel, ConceptLoss
+
+       class CBMWithEmbeddings(ConceptBottleneckModel):
+           def default_extra(self, evidence, query=None):
+               # Runs on every forward pass, so keep it cheap — or cache it.
+               return {'embeddings': self.backbone(evidence['input'])}
+
+       class EmbeddingReg(torch.nn.Module):
+           # `input` is the binary slice; `embeddings` comes from extra, by name.
+           def forward(self, input, embeddings):
+               return 0.01 * embeddings.pow(2).mean()
+
+       loss_fn = ConceptLoss(
+           binary=[torch.nn.BCEWithLogitsLoss(), EmbeddingReg()],
+           binary_weights=[1.0, 0.5],
+       )
+
+    **Example for case 2 — access extra in any other loss term.** A
+    reconstruction term reads the evidence straight off the output — no
+    per-type routing, and no ``CompositeLoss`` needed to show the mechanism:
+
+    .. code-block:: python
+
+       from torch_concepts.nn import ConceptBottleneckModel, PyCLoss
+
+       class CBMWithEvidence(ConceptBottleneckModel):
+           def default_extra(self, evidence, query=None):
+               return {"evidence": evidence}
+
+       class ReconstructionTerm(PyCLoss):
+           # Reads `output.extra['evidence']` itself — no per-type routing.
+           def forward(self, output, target=None):
+               observed = output.extra['evidence']['input']
+               predicted = output.params['value']['input']
+               return (predicted - observed).pow(2).mean()
+
+    Two things to keep in mind:
+
+    - Extras are offered to **every** type's terms, so a term that declares
+      ``embeddings`` receives it whether it is scoring binary or categorical
+      concepts.
+    - Avoid the reserved names ``input``, ``target``, ``scale`` and
+      ``padding_mask``: extras are merged last and would shadow them.
+
+
+.. dropdown:: Reading and debugging the objective
+    :icon: bug
+
+    For a :class:`~torch_concepts.nn.CompositeLoss`,
+    :meth:`~torch_concepts.nn.CompositeLoss.breakdown` returns each term's
+    **weighted** contribution. The values sum to exactly what ``forward``
+    returns, so use it whenever a total is not enough — an ELBO whose KL has
+    collapsed still looks fine summed:
+
+    .. code-block:: python
+
+       for name, value in loss_fn.breakdown(out, c).items():
+           print(f"{name:24s} {value.item():.4f}")
+       # MSEReconstructionLoss    412.8317
+       # KLDivergenceLoss          18.4402
+       # ConceptLoss                0.9137
+       # OrthogonalityLoss          0.0521
+
+    Under |pl_logo| Lightning this is automatic: a ``CompositeLoss`` logs every
+    term separately as ``{split}_{term_name}`` (``train_kl``, ``val_recon``, …)
+    alongside the total, which is why passing ``names=`` is worth the keystrokes.
+
+    Two errors you may meet, and what they mean:
+
+    .. list-table::
+       :widths: 38 62
+       :header-rows: 1
+
+       * - Error
+         - Cause
+       * - ``ConceptLoss has terms for [...] but scored nothing``
+         - The output carries no quantity for any configured type. Check the
+           model's ``param_for_discrete_var``, and that the target covers those
+           concepts.
+       * - ``TypeError: forward() missing ... 'embeddings'``
+         - A term declares a name that nothing published. Return it from
+           ``default_extra`` — the key and the argument name must match.
+
+
+.. dropdown:: Putting it together: an ELBO
+    :icon: rocket
+
+    A concept bottleneck VAE's objective is four independent terms, each reading
+    a different part of the same output — reconstruction from ``extra['evidence']``,
+    the KL from ``guide_params``, supervision from the concept slice, and an
+    orthogonality penalty from two ``Delta`` variables:
+
+    .. code-block:: python
+
+       import torch.nn as nn
+       from pytorch_lightning import Trainer
+       from torch_concepts.nn import (
+           CompositeLoss, ConceptLoss, KLDivergenceLoss,
+           LossWeightWarmup, MSEReconstructionLoss, OrthogonalityLoss,
+       )
+
+       loss = CompositeLoss(
+           terms=[
+               MSEReconstructionLoss(variable='input'),
+               KLDivergenceLoss(latents=['z']),
+               ConceptLoss(categorical=nn.CrossEntropyLoss()),
+               OrthogonalityLoss('mixing', 'unknown', len(concept_names)),
+           ],
+           weights=[1.0, 1.0, 5.0, 1.0],
+           names=['recon', 'kl', 'concepts', 'orth'],
+       )
+       # CompositeLoss(recon + kl + 5.0*concepts + orth)
+
+       trainer = Trainer(max_epochs=100)
+       trainer.fit(model, datamodule=datamodule)
+
+    The model supplies the missing piece by publishing its evidence:
+
+    .. code-block:: python
+
+       def default_extra(self, evidence, query=None):
            return {"evidence": evidence}
 
-The learner merges this into ``out.extra`` on every step. Outside |pytorch_logo|
-Lightning, set ``out.extra`` yourself after the forward pass.
+    Each term is logged separately as ``train_recon``, ``train_kl``, … so a
+    collapsing KL is visible from the first epochs.
 
 
-Built-in terms
---------------
-
-.. list-table::
-   :widths: 34 66
-   :header-rows: 1
-
-   * - Term
-     - Use
-   * - :class:`~torch_concepts.nn.ConceptLoss`
-     - Concept supervision, routed by type. The usual starting point.
-   * - :class:`~torch_concepts.nn.CompositeLoss`
-     - Weighted sum of any terms. The building block for an ELBO.
-   * - :class:`~torch_concepts.nn.ConceptSubset`
-     - Applies a loss to a named group of concepts, so the group can carry its
-       own weight in a ``CompositeLoss``.
-   * - :class:`~torch_concepts.nn.WeightedConceptLoss`
-     - Concepts and tasks weighted separately. Two ``ConceptSubset`` groups.
-   * - :class:`~torch_concepts.nn.DepthWeightedConceptLoss`
-     - One ``ConceptSubset`` group per depth level of a
-       :class:`~torch_concepts.ConceptGraph`, weighted by ``depth_decay ** d``.
-   * - :class:`~torch_concepts.nn.MSEReconstructionLoss`
-     - Squared error against an observed variable, for a ``Delta`` observation.
-   * - :class:`~torch_concepts.nn.KLDivergenceLoss`
-     - ``KL(q ‖ p)`` per latent, with optional ``free_bits``.
-   * - :class:`~torch_concepts.nn.OrthogonalityLoss`
-     - Pushes each concept context away from a supervised residual.
-   * - :class:`~torch_concepts.nn.NLLProbLoss`
-     - Categorical NLL for a head that emits ``probs`` rather than logits.
-   * - :class:`~torch_concepts.nn.L1LogitRegularizer`
-     - L1 penalty on logit magnitude, padding-aware.
-
-
-Next steps
+Next Steps
 ----------
 
+- Browse the loss classes in the :doc:`API reference </modules/nn.loss>`.
 - :doc:`Contributing a New Loss <contributing_loss>` — adding a term to the library.
 - :doc:`Out-of-the-box Models <using_high_level>` — training with a loss attached.
-- ``examples/utilization/2_model/`` — runnable versions of everything above
-  (``7`` per-type, ``13`` stacking and weights, ``14`` kwarg routing, ``15`` an ELBO).
+- Check out the `example scripts <https://github.com/pyc-team/pytorch_concepts/tree/master/examples/utilization/2_model>`_:
+  ``7`` per-type routing, ``13`` composition and weights, ``14`` kwarg routing
+  and ``default_extra``, ``15`` a full ELBO.
