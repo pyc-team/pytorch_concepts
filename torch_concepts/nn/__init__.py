@@ -48,7 +48,11 @@ from .modules.low.graph.wanda import WANDAGraphLearner
 
 # Loss functions
 from .modules.loss import PyCLoss, ConceptLoss, ConceptSubset, WeightedConceptLoss, \
-    DepthWeightedConceptLoss, L1LogitRegularizer, CompositeLoss, NLLProbLoss
+    DepthWeightedConceptLoss, L1LogitRegularizer, CompositeLoss, \
+    MSEReconstructionLoss, KLDivergenceLoss, OrthogonalityLoss, NLLProbLoss
+
+# Training callbacks
+from .modules.callbacks import LossWeightWarmup
 
 # Metrics
 from .modules.metrics import ConceptMetrics, compute_cace
@@ -60,6 +64,8 @@ from .modules.outputs import ModelOutput, InferenceOutput
 from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
 from .modules.high.models.cbm import ConceptBottleneckModel
 from .modules.high.models.cem import ConceptEmbeddingModel
+from .modules.high.models.cbvae import ConceptBottleneckVAE
+from .modules.high.models.cvae import ConditionalVAE
 from .modules.high.models.graph_cbm import GraphConceptBottleneckModel
 from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
 
@@ -167,7 +173,13 @@ __all__ = [
     "WeightedConceptLoss",
     "DepthWeightedConceptLoss",
     "L1LogitRegularizer",
+    "MSEReconstructionLoss",
+    "KLDivergenceLoss",
+    "OrthogonalityLoss",
     "NLLProbLoss",
+
+    # Training callbacks
+    "LossWeightWarmup",
 
     # Metrics
     "ConceptMetrics",
@@ -182,6 +194,8 @@ __all__ = [
     "BlackBoxTaskOnly",
     "ConceptBottleneckModel",
     "ConceptEmbeddingModel",
+    "ConceptBottleneckVAE",
+    "ConditionalVAE",
     "GraphConceptBottleneckModel",
     "CausallyReliableConceptBottleneckModel",
     # Models (mid-level)

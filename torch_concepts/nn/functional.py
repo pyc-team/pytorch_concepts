@@ -179,6 +179,38 @@ def grouped_concept_exogenous_mixture(c_emb: torch.Tensor,
     return out
 
 
+def concept_orthogonality(
+    contexts: torch.Tensor, residual: torch.Tensor
+) -> torch.Tensor:
+    """Mean absolute cosine similarity between ``residual`` and each context.
+
+    One score per sample in ``[0, 1]``: ``0`` when the residual is orthogonal to
+    every concept context, ``1`` when collinear with all of them. Reducing the
+    batch is the caller's; summing it gives Eq. 5 of the paper.
+
+    Args:
+        contexts: ``(*batch, n_concepts, emb_size)`` concept contexts.
+        residual: ``(*batch, emb_size)`` unsupervised context.
+
+    Returns:
+        torch.Tensor: ``(*batch,)``.
+
+    Example:
+        >>> import torch
+        >>> from torch_concepts.nn.functional import concept_orthogonality
+        >>> concept_orthogonality(torch.randn(4, 2, 16), torch.randn(4, 16)).shape
+        torch.Size([4])
+
+    References:
+        Ismail et al. "Concept Bottleneck Generative Models", ICLR 2024.
+        https://openreview.net/forum?id=L9U5MJJleF
+    """
+    similarity = torch.nn.functional.cosine_similarity(
+        contexts, residual.unsqueeze(-2), dim=-1, eps=1e-6
+    )
+    return similarity.abs().mean(-1)
+
+
 def selection_eval(
     selection_weights: torch.Tensor,
     *predictions: torch.Tensor,

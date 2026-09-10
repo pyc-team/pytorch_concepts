@@ -1,0 +1,101 @@
+# =============================================================
+# Conditional VAE, conditioned on the concepts.
+# The baseline for conf/model/cbvae.yaml.
+# =============================================================
+defaults:
+  - _commons
+  - _self_
+
+# Filled in by update_config_from_data, not read from the dataset config,
+# because a `concept_subset` shrinks `n_concepts` at runtime.
+data_dims:
+  input_size: ???
+  n_concepts: ???
+
+channels: 32
+
+model_cls:
+  _target_: "torch_concepts.nn.ConditionalVAE"
+
+  latent_size: 32
+  embedding_size: 16
+  plate: false
+
+  # true makes the KL's target learnable, which opens a collapse mode: watch the
+  # `kl` term, not val_loss (see the class Notes).
+  conditional_prior: true
+
+  # p(z|c)'s trunk; input width is derived from the condition, so only the
+  # hidden layer needs stating. Pass `prior_encoder` for a pre-built module.
+  prior_net_kwargs:
+    hidden_size: 256
+    activation: leaky_relu
+
+  # Variational for BOTH train and eval; the analysis script swaps in ancestral
+  # sampling. `p_int` stays 1.0 on BOTH engines, unlike cbvae.yaml: the concepts
+  # ARE the condition, so they are forced at every split and there is no RandInt
+  # knob here. At 0.0 the decoder would read a sampled condition instead.
+  inference:
+    _target_: "torch_concepts.nn.VariationalInference"
+    _partial_: true
+    p_int: 1.0
+  train_inference: ${model.model_cls.inference}
+  train_inference_kwargs:
+    p_int: 1.0
+
+  # Same nets as cbvae.yaml, so the two models' losses and FIDs are comparable:
+  # DCGAN-style conv stacks for 3x28x28, pinned to that input size. The decoder
+  # reads [z | embedded c], hence `latent_size + n_concepts * embedding_size`.
+  # Its output is the reconstruction, unactivated (a Delta observation).
+  encoder:
+    _target_: torch.nn.Sequential
+    _args_:
+      - _target_: torch.nn.Conv2d
+        in_channels: 3
+        out_channels: ${model.channels}
+        kernel_size: 4
+        stride: 2
+        padding: 1
+      - _target_: torch.nn.LeakyReLU
+      - _target_: torch.nn.Conv2d
+        in_channels: ${model.channels}
+        out_channels: ${math:"2 * ${model.channels}"}
+        kernel_size: 4
+        stride: 2
+        padding: 1
+      - _target_: torch.nn.LeakyReLU
+      - _target_: torch.nn.Flatten
+      - _target_: torch.nn.Linear
+        in_features: ${math:"2 * ${model.channels} * 7 * 7"}
+        out_features: ${model.model_cls.latent_size}
+
+  decoder:
+    _target_: torch.nn.Sequential
+    _args_:
+      - _target_: torch.nn.Linear
+        in_features: ${math:"${model.model_cls.latent_size} + ${model.data_dims.n_concepts} * ${model.model_cls.embedding_size}"}
+        out_features: ${math:"2 * ${model.channels} * 7 * 7"}
+      - _target_: torch.nn.LeakyReLU
+      - _target_: torch.nn.Unflatten
+        dim: 1
+        unflattened_size:
+          - ${math:"2 * ${model.channels}"}
+          - 7
+          - 7
+      - _target_: torch.nn.ConvTranspose2d
+        in_channels: ${math:"2 * ${model.channels}"}
+        out_channels: ${model.channels}
+        kernel_size: 4
+        stride: 2
+        padding: 1
+      - _target_: torch.nn.LeakyReLU
+      - _target_: torch.nn.ConvTranspose2d
+        in_channels: ${model.channels}
+        out_channels: 3
+        kernel_size: 4
+        stride: 2
+        padding: 1
+
+# The conv encoder above is the guide's whole feature extractor, so there is no
+# separate latent encoder. Needs `dataset.backbone=null` too.
+latent_encoder: null

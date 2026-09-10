@@ -28,7 +28,6 @@ from typing import List, Optional
 
 import torch.nn as nn
 
-from .....annotations import Annotations
 from .....concept_graph import ConceptGraph
 from ...low.sequential import Sequential
 from ...mid.activations import DefaultActivation
@@ -127,11 +126,6 @@ class DirectedGraphModel(GraphModel, ABC):
     per node).
     """
 
-    def __init__(self, *args, graph: Optional[ConceptGraph] = None, **kwargs):
-        super().__init__(*args, graph=graph, **kwargs)
-        self.plate = self.plate_compatible_levels(self.concept_annotations, self.graph)
-
-
     def _validate_graph(self, graph: ConceptGraph) -> None:
         super()._validate_graph(graph)
         assert graph.is_directed_acyclic(), (
@@ -219,46 +213,6 @@ class DirectedGraphModel(GraphModel, ABC):
         if isinstance(activation.activation, nn.Identity):
             return head
         return Sequential(head, activation)
-
-    @staticmethod
-    def plate_compatible_levels(
-        axis_annotation: Annotations,
-        graph: ConceptGraph,
-    ) -> List[bool]:
-        """Flag, per graph level, whether its concepts can share a plate.
-
-        Returns one boolean per level (in the order of
-        :meth:`~torch_concepts.ConceptGraph.get_levels`): ``True`` when every
-        concept at that level has the **same type and size** (cardinality), so the
-        level could be represented by a single plate
-        :class:`~torch_concepts.nn.ConceptVariable` with one member per concept;
-        ``False`` otherwise. A level with a single concept is trivially ``True``.
-
-        Whether to *actually* build a plate (vs. independent variables) is left to
-        the child model — this only reports compatibility.
-
-        Parameters
-        ----------
-        axis_annotation : Annotations
-            Concept annotations carrying per-concept ``cardinalities`` and types.
-        graph : ConceptGraph
-            A directed acyclic concept graph whose node names are concept labels.
-
-        Returns
-        -------
-        List[bool]
-            One flag per graph level (roots → leaves).
-        """
-        def type_and_size(name: str):
-            idx = axis_annotation.get_index(name)
-            size = int(axis_annotation.cardinalities[idx])
-            return (axis_annotation.types[idx], size)
-
-        return [
-            len({type_and_size(name) for name in level}) == 1
-            for level in graph.get_levels()
-        ]
-
 
 class UndirectedGraphModel(GraphModel, ABC):
     """Placeholder for *undirected* graph models (Markov random fields).

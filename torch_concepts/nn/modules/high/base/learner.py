@@ -23,7 +23,7 @@ from pytorch_lightning.utilities.types import Optimizer, LRScheduler
 
 from .....tensor import AnnotatedTensor
 from ...metrics import ConceptMetrics
-from ...loss import PyCLoss
+from ...loss import PyCLoss, CompositeLoss
 from ...outputs import CONTINUOUS_QUANTITIES, ModelOutput, ParamsDict
 
 
@@ -160,7 +160,7 @@ class BaseLearner(pl.LightningModule):
             on_step=False,
             on_epoch=True,
             logger=True,
-            prog_bar=True,
+            prog_bar=kwargs.pop("prog_bar", True),
             **kwargs
         )
 
@@ -278,24 +278,6 @@ class BaseLearner(pl.LightningModule):
         """List of concept variable names (plate names or individual concepts)."""
         return [var.name for var in self.pgm.variables.values() if var.variable_type == 'concept']
 
-    def default_query(self, c):
-        """Default query for a training/eval step: observe **every** concept,
-        teacher-forced to its ground-truth value (via :meth:`fully_observed_query`).
-
-        This is the full-observation query the standard step uses. Override in a
-        learner that should observe only a subset of concepts (or leave them
-        latent) — e.g. a task-only learner.
-        """
-        return self.fully_observed_query(c)
-
-    def default_evidence(self, inputs):
-        """Default evidence for a training/eval step: the raw input only
-        (``{"input": inputs["x"]}``).
-
-        Override to supply additional observed (non-concept) variables.
-        """
-        return {"input": inputs["x"]}
-
     def shared_step(self, batch, step):
         """Shared logic for train/val/test steps.
 
@@ -327,9 +309,10 @@ class BaseLearner(pl.LightningModule):
         c_loss = self.maybe_scale_concepts(concepts, transforms).get('c', None)
 
         # --- Model forward (scaled space) ---
-        # Defaults: observe all concepts, pass the input as evidence.
-        query = self.default_query(c_loss)
-        evidence = self.default_evidence(inputs)
+        # Both are split-aware: the concepts are teacher-forced at 'train' and
+        # left latent at 'val'/'test' (see `default_query`).
+        query = self.default_query(c_loss, step)
+        evidence = self.default_evidence(inputs, step)
         out = self.forward(query=query, evidence=evidence)
 
         target = self.prepare_target(c_loss)
@@ -342,7 +325,14 @@ class BaseLearner(pl.LightningModule):
                     "Only a PyCLoss (e.g. ConceptLoss) is supported; a plain "
                     "loss(input, target) is not."
                 )
-            loss = self.loss(out, target)
+            if isinstance(self.loss, CompositeLoss):
+                # log each term of a CompositeLoss separately
+                terms = self.loss.breakdown(out, target)
+                loss = sum(terms.values())
+                for term_name, value in terms.items():
+                    self.log_loss(f"{step}_{term_name}", value, batch_size=batch_size)
+            else:
+                loss = self.loss(out, target)
             self.log_loss(step, loss, batch_size=batch_size)
 
         # --- Update and log metrics (original scale) ---

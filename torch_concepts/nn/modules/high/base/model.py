@@ -263,10 +263,10 @@ class BaseModel(nn.Module, ABC):
         if variable_dist_kwargs is not None:
             self.variable_dist_kwargs = {**self.variable_dist_kwargs, **variable_dist_kwargs}
 
-        # Plate preference used by the level factories: None = auto-detect per
-        # level, True = force a plate (raise on a heterogeneous level), False =
-        # force one variable per concept.
-        self._plate_pref = plate
+        # Plate preference used by the level factories: None/True groups
+        # homogeneous concepts into the minimum number of plates, False gives one
+        # variable per concept.
+        self.plate = plate
 
         self._setup_annotations(annotations)
         self._setup_backbone(backbone, input_size, latent_size)
@@ -321,7 +321,7 @@ class BaseModel(nn.Module, ABC):
         """Resolve how a level is laid out, shared by the variable factories.
 
         Returns a list of ``(kind, name, members)`` where ``kind`` is ``"plate"``
-        or ``"individual"``. Honours the ``plate`` preference (:attr:`_plate_pref`):
+        or ``"individual"``. Honours the ``plate`` preference (:attr:`plate`):
 
         * ``None`` (default) / ``True`` — group homogeneous concepts into the
           minimum number of plates; even a lone concept becomes a single-member
@@ -334,7 +334,7 @@ class BaseModel(nn.Module, ABC):
         with their ``type`` and ``cardinality`` (e.g. ``concepts_binary_1``) so the
         names are unique.
         """
-        if self._plate_pref is False:
+        if self.plate is False:
             return [("individual", n, [n]) for n in names]
         # None / True: always plates (a lone concept is a single-member plate).
         groups = self._plate_groups(names)
@@ -593,7 +593,7 @@ class BaseModel(nn.Module, ABC):
         """Extra context merged into ``out.extra`` for loss terms that need more
         than params/target. ``None`` by default (nothing merged); override in a
         model whose loss needs it, e.g. ``{'evidence': evidence}`` for
-        :class:`~torch_concepts.nn.ReconstructionLoss`.
+        :class:`~torch_concepts.nn.MSEReconstructionLoss`.
         """
         return None
 
@@ -736,6 +736,29 @@ class BaseModel(nn.Module, ABC):
                     pieces.append(F.one_hot(raw[..., i].long(), card).float())
             query[name] = torch.cat(pieces, dim=-1)
         return query
+
+    def default_query(self, c, step='train'):
+        """The query a training/eval step asks for: every concept, teacher-forced
+        at ``'train'`` and latent otherwise, so evaluation measures the model unaided.
+
+        The keys are the same either way, only the values differ, so this makes a
+        difference only to an engine with ``p_int > 0`` (``VariationalInference``,
+        ``IndependentInference``). Override to observe a subset::
+
+            q = self.fully_observed_query(c)
+            return {n: (v if n in KEEP else None) for n, v in q.items()}
+        """
+        query = self.fully_observed_query(c)
+        return query if step == 'train' else {name: None for name in query}
+
+    def default_evidence(self, inputs, step='train'):
+        """The evidence a training/eval step observes: the raw input only
+        (``{"input": inputs["x"]}``).
+
+        Override to supply additional observed (non-concept) variables, per
+        ``step`` if they differ between training and evaluation.
+        """
+        return {"input": inputs["x"]}
 
     def prepare_target(self, target: torch.Tensor) -> torch.Tensor:
         """Prepare ground-truth labels for loss/metrics.

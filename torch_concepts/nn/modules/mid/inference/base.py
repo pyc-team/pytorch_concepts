@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 import math
 import warnings
 from typing import Callable, Dict, List, Optional, Tuple, Union
@@ -11,6 +10,7 @@ import torch
 import torch.nn as nn
 
 from ..distributions import spec_for
+from ..factors.factor import _module_input_names
 from ..graph.probabilistic_model import ProbabilisticModel
 from ..variable import Variable
 from .utils import flatten_event, leading_shape, make_temperature_schedule
@@ -121,10 +121,11 @@ class BaseInference(nn.Module):
             f.name
             for f in pgm.factors.values()
             if getattr(f, "is_root", False)
-            and any(
-                len(inspect.signature(mod.forward).parameters) > 0
-                for mod in f.parametrization.values()
-            )
+            # ``_module_input_names`` unwraps a Sequential and ignores
+            # ``*args``/``**kwargs``: a root prior is ``Sequential(LearnablePrior,
+            # activation)``, whose ``forward(*args, **kwargs)`` would otherwise
+            # count as two parameters and warn about a prior that takes no input.
+            and any(_module_input_names(mod) for mod in f.parametrization.values())
         ]
         if roots_needing_input:
             warnings.warn(
@@ -544,6 +545,13 @@ class BaseInference(nn.Module):
             params = per_variable.get(var.name)
             if params is None:
                 continue  # fully observed, or not computed by this engine
+            if len(var.shape) > 1:
+                # Parameters live on the annotated axis as (*leading, width). A
+                # multi-dimensional variable — an image observation, whose CPD
+                # is a conv decoder — emits (*leading, *event) instead, which
+                # neither concatenates with the other quantities nor slices by
+                # column, so normalise it the way _assemble_samples does.
+                params = {q: flatten_event(var, t) for q, t in params.items()}
             if chunk == var.members:
                 # Whole variable (a non-plate, or a plate queried by name):
                 # the factor's stacked output is used as-is — no per-member

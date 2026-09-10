@@ -189,7 +189,8 @@ Concept Bottleneck Model ``input → latent → concepts → task`` as a probabi
       probabilistic alternatives.
 
     ``query`` accepts a **list** of variable names (predict them) or a **dict** mapping names to
-    observed values (clamp them as evidence, e.g. for teacher forcing during training). The result
+    ground-truth values, which can be used to do teacher forcing by certain inference strategies; unlike
+    ``evidence``, which clamps unconditionally and skips the CPD. The result
     exposes per-variable distribution parameters in ``out.params[name]`` and samples (when applicable)
     in ``out.samples[name]``.
 

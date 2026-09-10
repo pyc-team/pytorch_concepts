@@ -1,0 +1,56 @@
+# =============================================================
+# Generative models (CB-VAE, and CVAE as its baseline), matching
+# examples/utilization/2_model/15.2_concept_bottleneck_vae_lightning.py.
+# =============================================================
+defaults:
+  - _default
+  - _self_
+
+hydra:
+  job:
+    name: generative
+  sweeper:
+    params:
+      dataset: colormnist
+      model: cbvae
+      loss: cbvae
+      loss.weights: [0.5, 1.0, 5.0, 1.0]
+      loss.terms.1.free_bits: 0.05
+      model.model_cls.train_inference_kwargs.p_int: 1.0
+      model.model_cls.optim_kwargs.lr: 0.001
+
+      # to disable the residual and orthogonality loss
+      model.model_cls.use_unknown: False
+      loss.terms.3: "null"
+
+seed: 42
+
+# The guide reads raw pixels
+precompute_embeddings: False
+
+dataset:
+  backbone: null
+  datamodule:
+    batch_size: 2048
+    # max_samples: 30000
+
+metrics:
+  summary: true
+  per_concept: true
+
+trainer:
+  max_epochs: 2000
+  monitor: val_loss
+  patience: 20
+  logger: wandb # null / wandb
+
+  # callbacks:
+  #   - _target_: torch_concepts.nn.LossWeightWarmup
+  #     term: kl
+  #     epochs: 10
+
+matmul_precision: medium
+
+debug: true
+
+notes: generative
