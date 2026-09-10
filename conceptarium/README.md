@@ -16,6 +16,7 @@
 - Configuration system and hierarchy
 - Dataset and model configuration
 - Custom losses and metrics
+- Concept generation
 - Advanced usage patterns
 - Troubleshooting
 

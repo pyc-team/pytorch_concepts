@@ -304,6 +304,7 @@ Indices and Tables
    modules/nn.metrics
    modules/nn.functional
    modules/data_api
+   modules/generation_api
    modules/distributions
 
 .. toctree::

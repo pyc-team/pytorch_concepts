@@ -260,18 +260,11 @@ class CelebADataset(ConceptDataset):
         return img.resize((self.image_size, self.image_size), Image.BILINEAR)
 
     def __getitem__(self, item):
-        """
-        Get a single sample from the dataset.
-
-        Args:
-            item (int): Index of the sample to retrieve.
-
-        Returns:
-            dict: Dictionary containing 'inputs' and 'concepts' sub-dictionaries.
-        """
+        """Load and prepare one CelebA image."""
+        sample = super().__getitem__(item)
         # Load image on-the-fly
         if self.embs_precomputed:
-            x = self.input_data[item]  # input_data contains precomputed embeddings
+            return sample
         else:
             filename = self.input_data[item]  # input_data contains filenames
             img_path = os.path.join(self.root, "raw", "img_align_celeba", filename)
@@ -288,15 +281,7 @@ class CelebADataset(ConceptDataset):
             if self.image_size is not None:
                 img = self._resize(img)
             x = torch.from_numpy(np.array(img)).permute(2, 0, 1).float() / 255.0
-        
-        c = self.concepts[item]
-
-        # Create sample dictionary
-        sample = {
-            'inputs': {'x': x},
-            'concepts': {'c': c},
-        }
-
+        sample['inputs']['x'] = x
         return sample
 
     # Override properties that assume input_data is a tensor

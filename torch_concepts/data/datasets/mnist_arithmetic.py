@@ -343,20 +343,16 @@ class MNISTArithmeticDataset(ConceptDataset):
         return self.load_raw()
 
     def __getitem__(self, item):
+        sample = super().__getitem__(item)
         if self.embs_precomputed:
-            x = self.input_data[item]
-        else:
-            filename = self.input_data[item]
-            img_path = os.path.join(self.root_dir, "images", filename)
-            img = Image.open(img_path).convert('RGB')
-            x = torch.from_numpy(np.array(img)).permute(2, 0, 1).float() / 255.0
-
-        c = self.concepts[item]
-
-        return {
-            'inputs': {'x': x},
-            'concepts': {'c': c},
-        }
+            return sample
+        filename = self.input_data[item]
+        img_path = os.path.join(self.root_dir, "images", filename)
+        img = Image.open(img_path).convert('RGB')
+        sample['inputs']['x'] = (
+            torch.from_numpy(np.array(img)).permute(2, 0, 1).float() / 255.0
+        )
+        return sample
 
     @property
     def n_samples(self) -> int:

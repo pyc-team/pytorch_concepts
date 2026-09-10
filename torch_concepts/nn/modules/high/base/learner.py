@@ -188,6 +188,16 @@ class BaseLearner(pl.LightningModule):
                 f"Found keys: {list(batch.keys())}. "
                 f"Ensure your dataset returns batches with 'inputs' and 'concepts' keys."
             )
+        if not isinstance(batch['concepts'], dict):
+            raise TypeError(
+                "Expected batch['concepts'] to be a dict containing the "
+                "learner-facing 'c' entry."
+            )
+        if 'c' not in batch['concepts']:
+            raise KeyError(
+                "Batch concepts are missing the learner-facing 'c' entry. "
+                f"Found keys: {list(batch['concepts'].keys())}."
+            )
 
     def unpack_batch(self, batch):
         """Extract inputs, concepts, and transforms from batch dict.
@@ -201,7 +211,7 @@ class BaseLearner(pl.LightningModule):
         """
         self._check_batch(batch)
         inputs = batch['inputs']
-        concepts = batch['concepts']
+        concepts = {'c': batch['concepts']['c']}
         transforms = batch.get('scalers', {})
         return inputs, concepts, transforms
 
@@ -233,13 +243,7 @@ class BaseLearner(pl.LightningModule):
             dict: ``{'c': ...}``, with continuous columns standardized, or the
             concept tensor unchanged.
         """
-        # raise error if multiple keys in 'concepts'
-        if isinstance(concepts, dict) and len(concepts) > 1:
-            raise NotImplementedError(
-                f"Expected a single concept AnnotatedTensor, but got multiple keys: {list(concepts.keys())}. "
-                f"review this current implementation when using multiple annotators. "
-            )
-        c = concepts.get('c')
+        c = concepts['c']
         scaler = transforms.get('concepts') if self.scale_concepts else None
         if scaler is not None and c is not None:
             labels = c.annotation.labels_by_type.get('continuous')
@@ -441,4 +445,3 @@ class BaseLearner(pl.LightningModule):
             cfg["monitor"] = monitor_metric
         
         return cfg
- 

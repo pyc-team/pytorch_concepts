@@ -29,6 +29,7 @@ from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset, Subset
 
 from .dataset import ConceptDataset
+from ..generation.base.pipeline import ConceptGenerationPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -176,12 +177,7 @@ class ConceptDataModule(LightningDataModule):
             if max_samples < n:
                 generator = torch.Generator().manual_seed(seed) if seed is not None else None
                 idx = torch.randperm(n, generator=generator)[:max_samples]
-                # File-list datasets (e.g., CelebA, CUB).
-                if isinstance(dataset.input_data, list):
-                    dataset.input_data = [dataset.input_data[i] for i in idx.tolist()]
-                else:
-                    dataset.input_data = dataset.input_data[idx]
-                dataset.concepts = dataset.concepts[idx]
+                dataset._subset_rows(idx)
                 # Record this so any cache can be keyed to them (see ``precompute_embeddings``).
                 dataset.is_subset, dataset.subset_seed = True, seed
                 if isinstance(splitter, FixedIndicesSplitter):
@@ -435,6 +431,20 @@ class ConceptDataModule(LightningDataModule):
             force=force,
         )
 
+    def generate_concepts(
+        self,
+        concept_pipeline: ConceptGenerationPipeline,
+        **kwargs,
+    ):
+        """Generate and annotate concepts on the underlying dataset.
+
+        This is an explicit preprocessing step, parallel to
+        :meth:`precompute_embeddings`. All keyword arguments are forwarded to
+        :meth:`ConceptDataset.generate_concepts`, including generation options
+        and the generated source selected as ``concepts['c']``.
+        """
+        return self.dataset.generate_concepts(concept_pipeline, **kwargs)
+
     def setup(self, stage: StageOptions = None) -> None:
         """Prepare the data splits for training, validation, or testing.
 
@@ -470,6 +480,12 @@ class ConceptDataModule(LightningDataModule):
 
                 # Get the training data for the specified key (e.g., 'concepts' or 'input')
                 train_data = getattr(self.dataset, attr_name)
+                if key == 'concepts' and train_data is None:
+                    warnings.warn(
+                        "A 'concepts' scaler was configured but the dataset has "
+                        "no concept supervision; concept scaling is skipped."
+                    )
+                    continue
                 if isinstance(self.trainset, Subset):
                     train_data = train_data[self.trainset.indices]
 

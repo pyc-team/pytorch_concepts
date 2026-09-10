@@ -10,6 +10,7 @@ concept datasets.
 from . import base
 from . import datasets
 from . import datamodules
+from . import generation
 from . import preprocessing
 from . import scalers
 from . import splitters
@@ -50,6 +51,7 @@ __all__ = [
     "base",
     "datasets",
     "datamodules",
+    "generation",
     "preprocessing",
     "scalers",
     "splitters",
