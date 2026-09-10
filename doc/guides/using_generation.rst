@@ -299,16 +299,16 @@ if needed. Only 120 images are annotated to keep the example small.
                "for distinguishing {class_names}. Return one property per line."
            ),
        ),
+       generator_filter=DeduplicateConcepts(),
+       routing="merged",
        annotators=[
            CLIPAnnotator(model_name="openai/clip-vit-base-patch32"),
            CLIPAnnotator(model_name="openai/clip-vit-base-patch16"),
        ],
-       generator_filter=DeduplicateConcepts(),
        raw_annotation_filter=ThresholdAnnotationFilter(threshold=0.2),
        calibrator=SigmoidCalibrator(scale=10.0, bias=-2.5),
        calibrated_annotation_filter=ThresholdAnnotationFilter(threshold=0.5),
        aggregator=average_scores,
-       routing="merged",
    )
    outputs = pipeline(dataset, class_names=class_names)
    print(list(outputs))
