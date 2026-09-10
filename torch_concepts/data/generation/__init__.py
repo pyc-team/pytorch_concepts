@@ -4,7 +4,7 @@ from . import annotators, base, calibrators, filters, generators
 from .base import (
     Annotator,
     Calibrator,
-    ConceptSupervisionPipeline,
+    ConceptGenerationPipeline,
     FilterAnnotator,
     FilterGenerator,
     Generator,
@@ -14,7 +14,7 @@ from .base import (
 __all__ = [
     "Annotator",
     "Calibrator",
-    "ConceptSupervisionPipeline",
+    "ConceptGenerationPipeline",
     "FilterAnnotator",
     "FilterGenerator",
     "Generator",

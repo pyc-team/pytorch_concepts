@@ -20,7 +20,7 @@ from ...concept_graph import ConceptGraph
 from ...annotations import Annotations
 from ...tensor import AnnotatedTensor
 from ..utils import files_exist, parse_tensor, convert_precision
-from ..generation.base.pipeline import ConceptSupervisionPipeline
+from ..generation.base.pipeline import ConceptGenerationPipeline
 
 # TODO: implement masks for missing values
 # TODO: add exogenous
@@ -686,7 +686,7 @@ class ConceptDataset(Dataset):
     
     def generate_concepts(
         self,
-        concept_pipeline: ConceptSupervisionPipeline,
+        concept_pipeline: ConceptGenerationPipeline,
         class_names: Optional[List[str]] = None,
         use_as_gt: bool = False,
         generated_gt_name: Optional[str] = None,
@@ -694,7 +694,7 @@ class ConceptDataset(Dataset):
     ) -> Dict[str, AnnotatedTensor]:
         """Generate concepts aligned one-to-one with and attach them to this dataset.
 
-        Call :class:`ConceptSupervisionPipeline` directly for split-specific
+        Call :class:`ConceptGenerationPipeline` directly for split-specific
         tensors or annotation of multiple target datasets.
 
         Args:
@@ -734,7 +734,7 @@ class ConceptDataset(Dataset):
                         "List visual properties that distinguish {class_names}."
                     ),
                 )
-                pipeline = ConceptSupervisionPipeline(
+                pipeline = ConceptGenerationPipeline(
                     generators=generator,
                     annotators=[clip_annotator_a, clip_annotator_b],
                     aggregator=average_scores,

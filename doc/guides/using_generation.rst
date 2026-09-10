@@ -6,58 +6,52 @@ Concept generation in PyC is built around a simple idea:
 1. **Discover which concepts are useful** for the task.
 2. **Assign those concepts to the samples** in the dataset.
 
+.. code-block:: text
+
+   [Component] = library pipeline stage; (object) = input/output data
+
+   (Dataset context / prompt)
+               ↓
+          [Generator] → (Annotations) → [Generator filter]
+                                               ↓
+   (Dataset images) ────────────────────── [Annotator]
+                                               ↓
+                                       (AnnotatedTensor)
+                                               ↓
+                                      [Raw score filter]
+                                               ↓
+                                         [Calibrator]
+                                               ↓
+                                   [Calibrated score filter]
+                                               ↓
+                                [Aggregator: optional callable]
+                                               ↓
+                                (dict[str, AnnotatedTensor])
+
 The pipeline is modular: each step can be replaced or configured independently.
 For example, one component may propose concepts, another may remove unsuitable
 ones, another may score how strongly each concept applies to each sample, and
 optional post-processing stages can refine those scores.
 
-The :class:`~torch_concepts.data.generation.ConceptSupervisionPipeline`
+The :class:`~torch_concepts.data.generation.ConceptGenerationPipeline`
 orchestrates these steps.
-
-.. code-block:: text
-
-   Dataset context → Generator → Annotations → Generator filter
-                                                    ↓
-   Images ────────────────────────────────────── Annotator
-                                                    ↓
-                                             Raw score filter
-                                                    ↓
-                                                Calibrator
-                                                    ↓
-                                          Calibrated score filter
-                                                    ↓
-                                                Aggregator
-                                                    ↓
-                                     Named AnnotatedTensor outputs
 
 Pipeline steps
 --------------
 
-.. dropdown:: 1. Choose what to discover from and what to annotate
-   :icon: database
-
-   Concept discovery (i.e., generation) and sample annotation are independent.
-
-   ``dataset`` provides the context for concept generation. Optionally,
-   ``generation_indices`` restricts which rows may influence discovery.
-
-   Annotation can target:
-
-   - the full ``dataset``;
-   - named subsets through ``annotation_indices``;
-   - separate datasets through ``annotation_datasets``.
-
-   If only ``generation_indices`` is provided, the full dataset is still
-   annotated. Generators receive the original dataset plus ``indices``;
-   a callable prompt that reads samples must honor those indices.
-   ``annotation_indices`` and ``annotation_datasets`` are mutually exclusive.
-
-
-.. dropdown:: 2. Generate concepts
+.. dropdown:: 1. Generate concepts
    :icon: light-bulb
 
    Each :class:`~torch_concepts.data.generation.Generator` produces a concept
-   vocabulary from the available context.
+   vocabulary from the available context. The dataset need not have any
+   existing concepts: an LLM can propose them from a prompt describing the task.
+
+   .. code-block:: python
+
+      generator = LLMConceptGenerator(
+          llm=llm_backend,
+          prompt="List visible properties distinguishing {class_names}. One per line.",
+      )
 
    Contract::
 
@@ -70,7 +64,7 @@ Pipeline steps
    :doc:`concept generation API </modules/generation_api>`.
 
 
-.. dropdown:: 3. Filter generated concepts
+.. dropdown:: 2. Filter generated concepts
    :icon: filter
 
    A :class:`~torch_concepts.data.generation.FilterGenerator` can remove or
@@ -86,12 +80,16 @@ Pipeline steps
    duplicates have incompatible states, cardinalities, or types.
    Set ``generator_filter=None`` to disable this stage.
 
+   .. code-block:: python
 
-.. dropdown:: 4. Route concepts to annotators
+      generator_filter = DeduplicateConcepts()
+
+
+.. dropdown:: 3. Route concepts to annotators
    :icon: workflow
 
-   Routing determines which generated vocabularies are passed to which
-   annotators.
+   A pipeline can use multiple generators and multiple annotators. Routing
+   determines which generated vocabularies are passed to which annotators.
 
    ``merged``
       Merge all generator outputs, filter once, and send the resulting
@@ -133,7 +131,7 @@ Pipeline steps
    every combination, and zip routing for designated generator–annotator pairs.
 
 
-.. dropdown:: 5. Annotate samples
+.. dropdown:: 4. Annotate samples
    :icon: tag
 
    Each :class:`~torch_concepts.data.generation.Annotator` assigns values for
@@ -146,10 +144,14 @@ Pipeline steps
    The resulting :class:`~torch_concepts.AnnotatedTensor` contains the
    sample-level values together with their concept metadata.
 
+   .. code-block:: python
+
+      annotator = CLIPAnnotator(model_name="openai/clip-vit-base-patch32", batch_size=64)
+
    See :doc:`Annotations and tensors </modules/low_level_api>`.
 
 
-.. dropdown:: 6. Filter raw annotations
+.. dropdown:: 5. Filter raw annotations
    :icon: filter
 
    ``raw_annotation_filter`` optionally processes annotator outputs before
@@ -165,8 +167,12 @@ Pipeline steps
    ``ThresholdAnnotationFilter(threshold=0.2)`` sets scores below 0.2 to zero;
    it does not remove concepts or turn the remaining scores into ones.
 
+   .. code-block:: python
 
-.. dropdown:: 7. Calibrate annotation scores
+      raw_annotation_filter = ThresholdAnnotationFilter(threshold=0.2)
+
+
+.. dropdown:: 6. Calibrate annotation scores
    :icon: sliders
 
    A :class:`~torch_concepts.data.generation.Calibrator` optionally transforms
@@ -182,8 +188,12 @@ Pipeline steps
    ``sigmoid(10 * scores - 2.5)``. These example settings transform scores into
    the range (0, 1); they do not guarantee calibrated probabilities.
 
+   .. code-block:: python
 
-.. dropdown:: 8. Filter calibrated annotations
+      calibrator = SigmoidCalibrator(scale=10.0, bias=-2.5)
+
+
+.. dropdown:: 7. Filter calibrated annotations
    :icon: filter
 
    ``calibrated_annotation_filter`` optionally processes the values after
@@ -195,8 +205,12 @@ Pipeline steps
 
    If no calibrator is configured, it receives the raw-filtered values.
 
+   .. code-block:: python
 
-.. dropdown:: 9. Aggregate outputs
+      calibrated_annotation_filter = ThresholdAnnotationFilter(threshold=0.5)
+
+
+.. dropdown:: 8. Aggregate outputs
    :icon: stack
 
    With ``merged`` routing, an optional ``aggregator`` can combine compatible
@@ -221,7 +235,7 @@ Pipeline steps
           )
 
 
-.. dropdown:: 10. Return generated supervision
+.. dropdown:: 9. Return generated supervision
    :icon: package
 
    The pipeline returns a dictionary of named
@@ -268,7 +282,7 @@ if needed. Only 120 images are annotated to keep the example small.
 
    from torch_concepts.data import ColorMNISTDataset
    from torch_concepts.data.base import ConceptDataset
-   from torch_concepts.data.generation import ConceptSupervisionPipeline
+   from torch_concepts.data.generation import ConceptGenerationPipeline
    from torch_concepts.data.generation.generators import LiteLLMBackend, LLMConceptGenerator
    from torch_concepts.data.generation.annotators import CLIPAnnotator
    from torch_concepts.data.generation.calibrators import SigmoidCalibrator
@@ -277,7 +291,7 @@ if needed. Only 120 images are annotated to keep the example small.
    images = ColorMNISTDataset(train=True)
    dataset = ConceptDataset(input_data=images.input_data[:120])
    class_names = [str(i) for i in range(10)]
-   pipeline = ConceptSupervisionPipeline(
+   pipeline = ConceptGenerationPipeline(
        generators=LLMConceptGenerator(
            llm=LiteLLMBackend(model="openai/gpt-4o-mini"),
            prompt=(

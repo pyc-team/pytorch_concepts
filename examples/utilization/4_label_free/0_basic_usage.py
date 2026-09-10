@@ -5,7 +5,7 @@ This example uses:
 - CLIPAnnotator to produce raw image-concept similarity scores.
 - Calibrator and FilterAnnotator stages to turn similarities into
   probabilities and filter uncertain sample-level annotations.
-- ConceptSupervisionPipeline, whose concept-discovery and annotation targets
+- ConceptGenerationPipeline, whose concept-discovery and annotation targets
   can be chosen independently.
 - A PyC concept bottleneck model supervised by the generated concepts.
 
@@ -65,7 +65,7 @@ from torch import nn
 from torch.utils.data import DataLoader, Subset
 from PIL import Image
 
-from torch_concepts.data.generation import ConceptSupervisionPipeline
+from torch_concepts.data.generation import ConceptGenerationPipeline
 from torch_concepts.data.generation.annotators import CLIPAnnotator
 from torch_concepts.data.generation.calibrators import SigmoidCalibrator
 from torch_concepts.data.generation.filters import (
@@ -221,7 +221,7 @@ def main():
     # The pipeline wires concept generation and annotation together. With
     # routing="merged", all generated concepts are passed to the annotator as a
     # single concept axis.
-    pipeline = ConceptSupervisionPipeline(
+    pipeline = ConceptGenerationPipeline(
         generators=generator,
         annotators=annotator,
         calibrator=SigmoidCalibrator(scale=10.0),

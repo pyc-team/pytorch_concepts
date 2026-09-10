@@ -29,7 +29,7 @@ from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset, Subset
 
 from .dataset import ConceptDataset
-from ..generation.base.pipeline import ConceptSupervisionPipeline
+from ..generation.base.pipeline import ConceptGenerationPipeline
 
 logger = logging.getLogger(__name__)
 
@@ -433,7 +433,7 @@ class ConceptDataModule(LightningDataModule):
 
     def generate_concepts(
         self,
-        concept_pipeline: ConceptSupervisionPipeline,
+        concept_pipeline: ConceptGenerationPipeline,
         **kwargs,
     ):
         """Generate and annotate concepts on the underlying dataset.

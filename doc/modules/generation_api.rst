@@ -16,7 +16,7 @@ Pipeline
    :template: generation_class.rst
    :nosignatures:
 
-   ConceptSupervisionPipeline
+   ConceptGenerationPipeline
 
 Generators
 ----------

@@ -24,7 +24,7 @@ RoutingMode = Literal["merged", "cartesian", "zip"]
 DEFAULT_GENERATOR_FILTER = DeduplicateConcepts()
 
 
-class ConceptSupervisionPipeline:
+class ConceptGenerationPipeline:
     """Compose concept generation, annotation, calibration, and filtering.
 
     Concept discovery and sample annotation are deliberately independent. A
@@ -107,7 +107,7 @@ class ConceptSupervisionPipeline:
         import torch
         from torch_concepts import AnnotatedTensor
         from torch_concepts.data.generation.base.pipeline import (
-            ConceptSupervisionPipeline,
+            ConceptGenerationPipeline,
         )
         from torch_concepts.data.generation.annotators import CLIPAnnotator
         from torch_concepts.data.generation.calibrators import SigmoidCalibrator
@@ -128,7 +128,7 @@ class ConceptSupervisionPipeline:
                 axis=1,
             )
 
-        pipeline = ConceptSupervisionPipeline(
+        pipeline = ConceptGenerationPipeline(
             generators=LLMConceptGenerator(
                 llm=LiteLLMBackend(model="openai/gpt-4o"),
                 prompt=(
@@ -914,7 +914,7 @@ class ConceptSupervisionPipeline:
                 "outputs, but their attached annotation defines "
                 f"{values.annotation.size}."
             )
-        if not ConceptSupervisionPipeline._annotations_match(
+        if not ConceptGenerationPipeline._annotations_match(
             values.annotation,
             annotation,
         ):
@@ -949,7 +949,7 @@ class ConceptSupervisionPipeline:
         iterator = iter(values.values())
         first = next(iterator).annotation
         if any(
-            not ConceptSupervisionPipeline._annotations_match(
+            not ConceptGenerationPipeline._annotations_match(
                 value.annotation,
                 first,
             )

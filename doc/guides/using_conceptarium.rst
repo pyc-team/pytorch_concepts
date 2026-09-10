@@ -157,7 +157,7 @@ Detailed Guides
 
    .. code-block:: yaml
 
-      _target_: torch_concepts.data.generation.ConceptSupervisionPipeline
+      _target_: torch_concepts.data.generation.ConceptGenerationPipeline
       generators:
         _target_: torch_concepts.data.generation.generators.LLMConceptGenerator
         llm:
