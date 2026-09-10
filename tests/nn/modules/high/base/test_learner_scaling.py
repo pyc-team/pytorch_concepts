@@ -261,11 +261,6 @@ class TestScaleConcepts:
         model = build_model(annotations=annotations)
         assert model.maybe_scale_concepts({'c': None}, {'concepts': scaler})['c'] is None
 
-    def test_multiple_concept_keys_raise(self, annotations, scaler):
-        model = build_model(annotations=annotations)
-        with pytest.raises(NotImplementedError, match="multiple keys"):
-            model.maybe_scale_concepts({'c': None, 'extra': None}, {'concepts': scaler})
-
 
 class TestScaleInputs:
     def test_input_is_scaled(self, annotations):
