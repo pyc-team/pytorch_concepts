@@ -760,7 +760,7 @@ class BaseModel(nn.Module, ABC):
         """
         return {"input": inputs["x"]}
 
-    def prepare_target(self, target: torch.Tensor) -> torch.Tensor:
+    def prepare_target(self, target: torch.Tensor, out: Optional[ModelOutput] = None) -> torch.Tensor:
         """Prepare ground-truth labels for loss/metrics.
 
         Returns the target as a concept-space :class:`AnnotatedTensor` (one column
@@ -772,6 +772,9 @@ class BaseModel(nn.Module, ABC):
         ----------
         target : torch.Tensor
             Raw ground-truth labels from the batch.
+        out : ModelOutput, optional
+            The forward pass output the model produces. Ignored here; it lets a subclass
+            supervise a variable whose truth is defined against a prediction.
 
         Returns
         -------

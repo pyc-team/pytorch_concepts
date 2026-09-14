@@ -296,7 +296,7 @@ class BlackBoxTaskOnly(BaseModel):
             AnnotatedTensor(output, self.task_annotations, axis=-1)
         )
 
-    def prepare_target(self, target: torch.Tensor) -> torch.Tensor:
+    def prepare_target(self, target: torch.Tensor, out=None) -> torch.Tensor:
         """Slice the target to task-only columns and annotate it in task
         concept-space, matching the task-only output.
 

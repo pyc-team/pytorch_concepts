@@ -319,7 +319,7 @@ class BaseLearner(pl.LightningModule):
         evidence = self.default_evidence(inputs, step)
         out = self.forward(query=query, evidence=evidence)
 
-        target = self.prepare_target(c_loss)
+        target = self.prepare_target(c_loss, out)
 
         # --- Compute loss (scaled space) ---
         loss = None
@@ -341,7 +341,7 @@ class BaseLearner(pl.LightningModule):
 
         # --- Update and log metrics (original scale) ---
         out = self.unscale_output(out, transforms)
-        target = self.prepare_target(concepts.get('c', None))
+        target = self.prepare_target(concepts.get('c', None), out)
         self.update_and_log_metrics(out, target, step, batch_size)
         return loss
 
