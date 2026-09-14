@@ -84,7 +84,7 @@ class FullMockLearner(BaseLearner):
                 params[name] = {'logits': logits[:, i:i+1]}
         return ModelOutput(logits=logits, params=params)
 
-    def prepare_target(self, target):
+    def prepare_target(self, target, out=None):
         if target is None:
             return None
         return AnnotatedTensor(target, self.concept_annotations.to_concept_space())
@@ -488,6 +488,25 @@ class TestBaseLearnerSharedStep(unittest.TestCase):
         loss = learner.shared_step(self.batch, step='train')
         self.assertEqual(loss.shape, ())
         self.assertIn('train_loss', learner._logged)
+
+    def test_shared_step_hands_the_output_to_prepare_target(self):
+        """`prepare_target` is called with the forward pass it is preparing for,
+        which is what lets a model supervise a variable defined against a
+        prediction (a residual fitted on ``Y - Y_C``)."""
+        learner = FullMockLearner(
+            self.annotations, n_concepts=2,
+            loss=self.loss_fn,
+        )
+        self._patch_logging(learner)
+        seen = []
+        prepare_target = learner.prepare_target
+        learner.prepare_target = lambda target, out=None: (
+            seen.append(out), prepare_target(target, out))[1]
+
+        learner.shared_step(self.batch, step='train')
+        self.assertTrue(seen, "prepare_target was never called")
+        for out in seen:
+            self.assertIsInstance(out, ModelOutput)
 
     def test_shared_step_no_loss(self):
         """shared_step with loss=None returns None."""
