@@ -413,12 +413,14 @@ class ConceptDataset(Dataset):
 
     @property
     def annotations(self) -> Optional[Annotations]:
-        """Annotations for the concepts in the dataset."""
-        return (
-            self.concepts.annotation
-            if self.concepts is not None
-            else None
-        )
+        """The concept schema: a categorical concept keeps its cardinality, so a
+        model can size its variables. Native ground truth returns the declared
+        schema, a generated one the annotation its pipeline produced.
+        ``concepts.annotation`` describes the stored tensor instead — one column
+        per concept when native, whatever the pipeline shipped when generated."""
+        if self._ground_truth_source == "native" and self._annotations is not None:
+            return self._annotations
+        return self.concepts.annotation if self.concepts is not None else None
 
     @property
     def shape(self) -> tuple:
