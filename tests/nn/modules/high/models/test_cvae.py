@@ -92,8 +92,9 @@ class TestConditionalVAE:
     def test_categorical_marginals_normalise_per_concept(self, categorical_annotations):
         model = build_model(categorical_annotations, plate=False)
         for name, cardinality in (("digit", 4), ("color", 3)):
+            # A CPD reports the member layout: one member of `cardinality` states.
             logits = model.pgm.factors[name](parent_values={})["logits"]
-            assert logits.shape == (cardinality,)
+            assert logits.shape == (1, cardinality)
             assert torch.allclose(logits.softmax(-1).sum(), torch.ones(()))
 
     def test_a_categorical_plates_marginal_normalises_each_member(self):
@@ -111,7 +112,8 @@ class TestConditionalVAE:
         model = build_model(annotations, plate=True)
         assert "concepts" in model.pgm.variables  # one plate, both members
 
-        assert model.pgm.factors["concepts"](parent_values={})["logits"].shape == (8,)
+        # Member layout on the CPD (2 members x 4 states); flat on the engine output.
+        assert model.pgm.factors["concepts"](parent_values={})["logits"].shape == (2, 4)
         drawn = AncestralSamplingInference(model.pgm).query(
             query=["concepts"], evidence={}, n_samples=5
         ).samples["concepts"]
@@ -534,7 +536,8 @@ class TestContinuousConcepts:
             plate=False,
             variable_distributions={"continuous": MultivariateNormal},
         )
+        # Member layout: one member, whose `scale_tril` carries the extra rank.
         params = model.pgm.factors["v"](parent_values={})
-        assert params["loc"].shape == (3,)
-        assert params["scale_tril"].shape == (3, 3)
-        assert bool((params["scale_tril"].diagonal() > 0).all())
+        assert params["loc"].shape == (1, 3)
+        assert params["scale_tril"].shape == (1, 3, 3)
+        assert bool((params["scale_tril"].diagonal(dim1=-2, dim2=-1) > 0).all())

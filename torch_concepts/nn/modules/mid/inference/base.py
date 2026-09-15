@@ -641,8 +641,13 @@ class BaseInference(nn.Module):
                 continue  # fully observed, or not computed by this engine
             # The annotated axis is flat, so this is where the member axis is
             # folded back into the event — the one place the member layout
-            # leaves the engine.
-            flat = {q: var.to_event(t, q) for q, t in params.items()}
+            # leaves the engine. A multi-dimensional event (an image) is
+            # flattened all the way to ``(*leading, size)``, the layout its
+            # samples are reported in; ``to_event`` alone would keep its rank.
+            if len(var.shape) > 1:
+                flat = {q: var.to_flat(var.to_member(t, q)) for q, t in params.items()}
+            else:
+                flat = {q: var.to_event(t, q) for q, t in params.items()}
             for quantity, tensor in flat.items():
                 emit(quantity, self._chunk_of(var, tensor, chunk, quantity), chunk)
         return {
