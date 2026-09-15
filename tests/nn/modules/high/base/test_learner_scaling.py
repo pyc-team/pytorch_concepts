@@ -171,8 +171,9 @@ class TestScaledSpaceSeparation:
         transforms = {'concepts': scaler}
         c_scaled = model.maybe_scale_concepts({'c': c}, transforms)['c']
         out = model.forward(
-            query=model.fully_observed_query(c_scaled),
-            evidence=model.default_evidence(model.maybe_scale_inputs(batch['inputs'], transforms)),
+            query=model.default_query(c_scaled, 'test'),
+            evidence=model.default_evidence(
+                model.maybe_scale_inputs(batch['inputs'], transforms), 'test'),
         )
         loc = out.loc
         preds = scaler.inverse_transform(loc.tensor)
@@ -259,11 +260,6 @@ class TestScaleConcepts:
     def test_none_concepts(self, annotations, scaler):
         model = build_model(annotations=annotations)
         assert model.maybe_scale_concepts({'c': None}, {'concepts': scaler})['c'] is None
-
-    def test_multiple_concept_keys_raise(self, annotations, scaler):
-        model = build_model(annotations=annotations)
-        with pytest.raises(NotImplementedError, match="multiple keys"):
-            model.maybe_scale_concepts({'c': None, 'extra': None}, {'concepts': scaler})
 
 
 class TestScaleInputs:

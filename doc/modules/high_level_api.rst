@@ -37,6 +37,8 @@ Models
 
    ConceptBottleneckModel
    ConceptEmbeddingModel
+   ConceptBottleneckVAE
+   ConditionalVAE
    GraphConceptBottleneckModel
    CausallyReliableConceptBottleneckModel
    BlackBox

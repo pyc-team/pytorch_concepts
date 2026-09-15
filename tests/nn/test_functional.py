@@ -1593,5 +1593,41 @@ class TestMinimizeConstrSLSQP(unittest.TestCase):
             CF.minimize_constr(f, x0, constr=constr, method="SLSQP", max_iter=10)
 
 
+
+class TestConceptOrthogonality(unittest.TestCase):
+    """`concept_orthogonality` against Eq. 5 of Ismail et al., ICLR 2024.
+
+    Eq. 5 averages |cos| over the k concepts and SUMS over the mini-batch. The
+    functional does the concept average; the batch sum is the caller's, so the
+    correspondence is checked on `.sum()`.
+    """
+
+    @staticmethod
+    def _eq5(contexts, residual):
+        """Eq. 5 transcribed term by term, one sample and one concept at a time."""
+        batch, k, _ = contexts.shape
+        total = 0.0
+        for j in range(batch):                                 # sum over j in B
+            per_concept = [
+                abs(torch.dot(contexts[j, i], residual[j]).item()
+                    / (contexts[j, i].norm().item() * residual[j].norm().item()))
+                for i in range(k)
+            ]
+            total += sum(per_concept) / k                      # / sum_i 1
+        return total
+
+    def test_matches_equation_5(self):
+        for batch, k, emb in ((256, 2, 8), (64, 3, 16), (7, 4, 5), (1, 2, 3)):
+            with self.subTest(batch=batch, k=k, emb=emb):
+                torch.manual_seed(0)
+                contexts = torch.randn(batch, k, emb, dtype=torch.float64)
+                residual = torch.randn(batch, emb, dtype=torch.float64)
+                self.assertAlmostEqual(
+                    float(CF.concept_orthogonality(contexts, residual).sum()),
+                    self._eq5(contexts, residual),
+                    places=10,
+                )
+
+
 if __name__ == '__main__':
     unittest.main()

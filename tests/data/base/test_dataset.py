@@ -242,5 +242,29 @@ class TestReorderByCardinality(unittest.TestCase):
         self.assertEqual(list(dataset.concept_names), ['bin_a', 'cat_3', 'cat_3b', 'cat_5'])
 
 
+class TestAnnotationSpaces(unittest.TestCase):
+    """`annotations` is the schema; the stored tensor's annotation is the
+    concept-space view of it. They differ as soon as a concept has >2 states."""
+
+    def test_schema_keeps_cardinalities_while_the_tensor_is_concept_space(self):
+        n_samples = 20
+        annotations = Annotations(labels=['digit', 'color'], cardinalities=(10, 3))
+        C = torch.stack([
+            torch.randint(0, 10, (n_samples,)),
+            torch.randint(0, 3, (n_samples,)),
+        ], dim=1)
+
+        dataset = ConceptDataset(torch.randn(n_samples, 10), C, annotations=annotations)
+
+        # Reordered by ascending cardinality, and the schema follows the concepts.
+        self.assertEqual(list(dataset.concept_names), ['color', 'digit'])
+        self.assertEqual(list(dataset.annotations.labels), list(dataset.concept_names))
+        self.assertEqual(list(dataset.annotations.cardinalities), [3, 10])
+        self.assertFalse(dataset.annotations.concept_space)
+        # The tensor holds one integer column per concept, and says so.
+        self.assertTrue(dataset.concepts.annotation.concept_space)
+        self.assertEqual(dataset.concepts.shape[1], 2)
+
+
 if __name__ == '__main__':
     unittest.main()

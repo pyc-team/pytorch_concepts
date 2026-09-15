@@ -802,20 +802,23 @@ class TestDirectedGraphModelBase:
 
 
 
-    def test_plate_compatible_levels(self):
-        """plate_compatible_levels returns True for homogeneous levels."""
+    def test_plate_is_the_preference_and_drives_the_layout(self):
+        """``plate`` means one thing: the requested layout. ``False`` gives one
+        variable per concept, ``None``/``True`` group homogeneous ones."""
         ann = Annotations(
-                labels=['a', 'b'],
-                cardinalities=[1, 1],
-                types=['binary', 'binary'],
-            )
-        graph = ConceptGraph(
-            torch.tensor([[0., 0.], [0., 0.]]),
-            node_names=['a', 'b'],
+            labels=['a', 'b', 't'],
+            cardinalities=[1, 1, 1],
+            types=['binary', 'binary', 'binary'],
         )
-        axis_ann = ann
-        result = DirectedGraphModel.plate_compatible_levels(axis_ann, graph)
-        assert all(result)
+        individual = ConceptBottleneckModel(
+            input_size=8, annotations=ann, task_names=['t'], plate=False)
+        grouped = ConceptBottleneckModel(
+            input_size=8, annotations=ann, task_names=['t'], plate=True)
+
+        assert individual.plate is False and grouped.plate is True
+        # Both binary concepts are homogeneous, so only `grouped` plates them.
+        assert {'a', 'b'} <= set(individual.pgm.variables)
+        assert 'a' not in grouped.pgm.variables
 
     def test_dag_validation_rejects_cycle(self):
         """DirectedGraphModel validates that the graph is a DAG."""

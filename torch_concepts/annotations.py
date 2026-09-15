@@ -786,6 +786,18 @@ class Annotations:
         cache[cache_key] = result
         return result
 
+    def rename(self, mapping) -> "Annotations":
+        """New annotations with labels renamed; `mapping` is a dict or a callable."""
+        fn = mapping.get if isinstance(mapping, dict) else mapping
+        result = Annotations(
+            labels=[fn(l) or l for l in self.labels],
+            states=[list(s) for s in self.states],
+            types=list(self.types),
+            concept_space=self.concept_space,
+        )
+        return result
+
+
     def to_concept_space(self) -> "Annotations":
         """Return a concept-space view: one integer-coded column per concept.
 

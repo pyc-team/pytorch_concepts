@@ -6,11 +6,15 @@ Tests loss functions for concept-based learning:
 - WeightedConceptLoss: Weighted combination of concept and task losses
 - DepthWeightedConceptLoss: Graph-depth-weighted concept losses
 """
+import math
+
 import pytest
 import unittest
 import torch
 from torch import nn
-from torch_concepts.nn.modules.loss import ConceptLoss, WeightedConceptLoss, DepthWeightedConceptLoss, L1LogitRegularizer
+from torch_concepts.nn.modules.loss import (ConceptLoss, WeightedConceptLoss,
+                                            DepthWeightedConceptLoss, L1LogitRegularizer,
+                                            MSEReconstructionLoss)
 from torch_concepts.nn.modules.outputs import ModelOutput
 from torch_concepts.annotations import Annotations
 from torch_concepts.tensor import AnnotatedTensor
@@ -1383,3 +1387,66 @@ class TestContinuousQuantityResolution:
         assert float(ConceptLoss(continuous=torch.nn.MSELoss())(out)) == pytest.approx(1.0)
         assert float(ConceptLoss(continuous=torch.nn.MSELoss(),
                                  continuous_param="value")(out)) == pytest.approx(16.0)
+
+
+def _observation_output(quantity, tensor, observed):
+    """A one-variable output reporting ``quantity``, with ``observed`` as evidence."""
+    annotations = Annotations(
+        labels=["input"], cardinalities=[tensor.shape[-1]], types=["continuous"]
+    )
+    return ModelOutput(
+        **{quantity: AnnotatedTensor(tensor, annotations, axis=-1)},
+        extra={"evidence": {"input": observed}},
+    )
+
+
+class TestMSEReconstructionLoss:
+    """The term for a ``Delta`` observation, which has no likelihood to score.
+
+    Its reduction is the point: summed over the event, averaged over the batch,
+    matching ``KLDivergenceLoss`` so the two are comparable. ``MSELoss``'s own
+    ``'mean'`` would divide by the event size as well.
+    """
+
+    def test_it_sums_the_event_and_averages_the_batch(self):
+        value, observed = torch.randn(6, 5), torch.randn(6, 5)
+        loss = MSEReconstructionLoss(variable="input")(
+            _observation_output("value", value, observed))
+        assert torch.allclose(loss, (value - observed).pow(2).sum(-1).mean())
+
+    def test_half_of_it_is_the_sigma_one_gaussian_nll_up_to_a_constant(self):
+        """Why a weight of 0.5 recovers the Gaussian NLL's gradients."""
+        value, observed = torch.randn(6, 5), torch.randn(6, 5)
+        mse = MSEReconstructionLoss(variable="input")(
+            _observation_output("value", value, observed))
+        normal = -torch.distributions.Independent(
+            torch.distributions.Normal(value, torch.ones_like(value)), 1
+        ).log_prob(observed).mean()
+        constant = 5 * 0.5 * math.log(2 * math.pi)
+        assert torch.allclose(normal - 0.5 * mse, torch.tensor(constant))
+
+    def test_the_reduction_applies_to_the_batch(self):
+        out = _observation_output("value", torch.randn(6, 5), torch.randn(6, 5))
+        mean = MSEReconstructionLoss(variable="input")(out)
+        total = MSEReconstructionLoss(variable="input", reduction="sum")(out)
+        assert torch.allclose(total, mean * 6)
+
+    def test_it_carries_a_gradient(self):
+        """`Delta.log_prob` is a detached constant; this must not be."""
+        value = torch.randn(4, 3, requires_grad=True)
+        MSEReconstructionLoss(variable="input")(
+            _observation_output("value", value, torch.randn(4, 3))).backward()
+        assert value.grad is not None and bool((value.grad != 0).any())
+
+    def test_a_non_delta_observation_is_refused(self):
+        """It reads `value`, so a Normal reporting loc/scale has nothing to score."""
+        annotations = Annotations(labels=["input"], cardinalities=[3],
+                                  types=["continuous"])
+        out = ModelOutput(
+            loc=AnnotatedTensor(torch.randn(4, 3), annotations, axis=-1),
+            scale=AnnotatedTensor(torch.rand(4, 3) + 1, annotations, axis=-1),
+            extra={"evidence": {"input": torch.randn(4, 3)}},
+        )
+        with pytest.raises(KeyError, match="neither a reported quantity"):
+            MSEReconstructionLoss(variable="input")(out)
+

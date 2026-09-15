@@ -17,7 +17,7 @@ for how they fit together.
    ConceptSubset
    WeightedConceptLoss
    DepthWeightedConceptLoss
-   ReconstructionLoss
+   MSEReconstructionLoss
    KLDivergenceLoss
    OrthogonalityLoss
    NLLProbLoss

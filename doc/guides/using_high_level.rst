@@ -189,6 +189,12 @@ Expand each block below for an explanation and an example.
        trainer = Trainer(max_epochs=100)
        trainer.fit(model, datamodule=datamodule)
 
+    The step builds the query for you: training observes the concepts (so that certain 
+    inference strategies can do teacher-forcing, e.g., IndependentInference), while
+    validation and test leave them latent so evaluation measures the model unaided.
+    Override ``default_query`` (or ``default_evidence``), both of which take the split as
+    ``step``, to change what a split observes.
+
 
 .. dropdown:: Putting It Together: Concept Bottleneck Model
     :icon: package

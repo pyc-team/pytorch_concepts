@@ -92,6 +92,17 @@ increasing amounts of abstraction, and they build on top of one another.
 
         **Best for:** implementing a new model, or designing its objective.
 
+    .. grid-item-card::  :octicon:`workflow;1em;sd-text-primary` Concept Generation
+        :link: using_generation
+        :link-type: doc
+        :shadow: lg
+        :class-card: sd-border-primary
+
+        Discover concepts with an LLM, annotate images with CLIP, and select
+        generated supervision for a dataset.
+
+        **Best for:** learning with concepts that have no manual annotations.
+
     .. grid-item-card::  |conceptarium_logo| Benchmarking at scale
         :link: using_conceptarium
         :link-type: doc
@@ -112,4 +123,5 @@ increasing amounts of abstraction, and they build on top of one another.
    using_mid_level
    using_high_level
    using_loss
+   using_generation
    using_conceptarium
