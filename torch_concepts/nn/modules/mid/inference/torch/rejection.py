@@ -21,8 +21,11 @@ different numbers of samples:
 
 Constraints
 -----------
-- All query and evidence variables **must** be discrete (Bernoulli,
-  Categorical, OneHotCategorical).  Exact equality matching is used.
+- Query variables and **non-root** evidence variables **must** be discrete
+  (Bernoulli, Categorical, OneHotCategorical): they are matched by exact
+  equality.
+- Evidence on a **root** variable may be continuous (e.g. an input embedding):
+  it is clamped into every joint draw, never matched.
 - Hidden variables (neither query nor evidence) may be continuous.
 """
 
@@ -30,7 +33,7 @@ from __future__ import annotations
 
 import math
 import warnings
-from typing import Dict, List
+from typing import Dict, List, Set
 
 import torch
 
@@ -96,6 +99,18 @@ class RejectionSampling(TorchBaseInference):
         )
 
     # ------------------------------------------------------------------
+    def _root_names(self) -> Set[str]:
+        """Whole-variable names of the roots.
+
+        Evidence on these is clamped during generation rather than matched.
+        A plate member's name is never in this set, so member evidence is
+        always matched, even on a root plate.
+        """
+        return {
+            v.name for v in self.pgm.variables.values()
+            if self.pgm.factors[v.name].is_root
+        }
+
     def _require_discrete(self, names: List[str], role: str) -> None:
         for name in names:
             v = self.pgm.resolve(name)  # a member's family is its plate's family
@@ -188,10 +203,7 @@ class RejectionSampling(TorchBaseInference):
         # Partition evidence into root vars (conditioned during generation)
         # and non-root vars (handled by rejection filtering). The PGM might
         # require constant evidence on certain roots (e.g. a root image).
-        root_names = {
-            v.name for v in self.pgm.variables.values()
-            if self.pgm.factors[v.name].is_root
-        }
+        root_names = self._root_names()
         root_evidence_names = set(evidence.keys()) & root_names
         nonroot_evidence_names = set(evidence.keys()) - root_names
 
@@ -274,4 +286,9 @@ class RejectionSampling(TorchBaseInference):
             )
 
         self._require_discrete(list(query.keys()), "query")
-        self._require_discrete(list(evidence.keys()), "evidence")
+        # Root evidence is clamped into the draw, never matched, so it may be
+        # continuous; only evidence the mask compares must be discrete.
+        root_names = self._root_names()
+        self._require_discrete(
+            [name for name in evidence if name not in root_names], "non-root evidence"
+        )

@@ -673,13 +673,28 @@ class TestRejectionSamplingValidation:
                 evidence={},
             )
 
-    def test_continuous_evidence_variable_raises(self):
-        """Providing a continuous variable as evidence should raise ValueError."""
+    def test_continuous_root_evidence_is_clamped(self):
+        """Continuous evidence on a root is clamped into the draw, not matched."""
         m = _make_mixed_model()
         eng = RejectionSampling(m, n_samples=10)
-        with pytest.raises(ValueError, match="not discrete"):
+        out = eng.query(
+            query={"c": torch.tensor([[1.0]])},
+            evidence={"x": torch.randn(1, 4)},
+        )
+        assert out.probabilities.shape == (1,)
+        assert 0.0 <= float(out.probabilities[0]) <= 1.0
+
+    def test_continuous_nonroot_evidence_raises(self):
+        """Continuous evidence below the roots would be matched exactly: it raises."""
+        a = ConceptVariable("a", distribution=dist.Bernoulli, size=1)
+        x = ConceptVariable("x", distribution=Delta, size=4)
+        cpd_a = ParametricCPD(variable=a, parametrization={"probs": FixedPrior(torch.tensor([0.5]))})
+        cpd_x = ParametricCPD(variable=x, parametrization={"value": nn.Linear(1, 4)}, parents=[a])
+        m = BayesianNetwork(variables=[a, x], factors=[cpd_a, cpd_x])
+        eng = RejectionSampling(m, n_samples=10)
+        with pytest.raises(ValueError, match="non-root evidence variable 'x'.*not discrete"):
             eng.query(
-                query={"c": torch.tensor([[1.0]])},
+                query={"a": torch.tensor([[1.0]])},
                 evidence={"x": torch.zeros(1, 4)},
             )
 

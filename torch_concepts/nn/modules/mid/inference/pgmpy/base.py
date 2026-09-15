@@ -16,16 +16,23 @@ def _import_pgmpy():
     pays, because :mod:`torch_concepts.nn` imports all engines eagerly, and
     which only this backend needs. ``sys.modules`` makes every call after the
     first free, so the one call site (at the top of ``query``) costs nothing.
+
+    The undirected model class was renamed in pgmpy 1.0: ``DiscreteMarkovNetwork``
+    there, ``MarkovNetwork`` before. 1.x still exports a ``MarkovNetwork`` shim,
+    but it raises on construction, so the new name must be tried first.
     """
     try:
         from pgmpy.factors.discrete import DiscreteFactor
         from pgmpy.inference import VariableElimination
-        from pgmpy.models import MarkovNetwork
     except ImportError as exc:  # pragma: no cover - pgmpy not installed
         raise ImportError(
             "pgmpy-based inference requires the `pgmpy` package. "
             "Install it with: pip install pgmpy"
         ) from exc
+    try:
+        from pgmpy.models import DiscreteMarkovNetwork as MarkovNetwork  # pgmpy >= 1.0
+    except ImportError:  # pragma: no cover - depends on the installed pgmpy
+        from pgmpy.models import MarkovNetwork  # pgmpy < 1.0
     return MarkovNetwork, DiscreteFactor, VariableElimination
 
 
