@@ -42,7 +42,6 @@ import torch.distributions as dist
 
 from ....graph.bayesian_network import BayesianNetwork
 from ....variable import Variable
-from ...utils import reshape_value_to_event
 from ..utils import build_relaxed_distribution
 
 
@@ -64,6 +63,13 @@ def _stabilize_relaxed(variable: Variable, sample: torch.Tensor, eps: float = 1e
     if issubclass(D, _BERNOULLI):
         return sample.clamp(eps, 1.0 - eps)
     if issubclass(D, _ONEHOT):
+        # NOTE: ``sample`` arrives in **member layout**
+        # ``(*leading, n_members, *member_shape)`` — see
+        # ``build_relaxed_distribution``, which builds a plate as k independent
+        # RelaxedOneHotCategoricals — so the last axis is *one* member's
+        # simplex and this renormalises each member back onto its own. Applied
+        # to a flat ``(*leading, k * width)`` event it would instead drive every
+        # member's mass to ``1/k`` and throw ``log q`` off by tens of nats.
         s = sample.clamp_min(eps)
         return s / s.sum(dim=-1, keepdim=True)
     return sample
@@ -200,8 +206,7 @@ class BaseProposal(nn.Module, ABC):
             name = var.name
             if name in evidence:
                 # Clamped observation: carry the value forward, no q-density.
-                value = evidence[name].reshape(evidence[name].shape[0], var.size)
-                samples[name] = reshape_value_to_event(var, value)
+                samples[name] = var.as_event(evidence[name])
                 continue
 
             cpd = pgm.factors[name]
@@ -218,6 +223,6 @@ class BaseProposal(nn.Module, ABC):
             s = cpd.clamp_members(d.rsample(), member_evidence.get(name, {}))
             s = _stabilize_relaxed(var, s)
             log_q = log_q + d.log_prob(s)
-            samples[name] = reshape_value_to_event(var, s.reshape(batch_size, var.size))
+            samples[name] = var.as_event(s)
 
         return samples, log_q

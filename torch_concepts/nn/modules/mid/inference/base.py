@@ -241,6 +241,18 @@ class BaseInference(nn.Module):
     # helpers are the single place that split the two, so no engine hard-codes
     # anything (e.g., ``shape[0]`` as "the batch").
 
+    def _dtype(self) -> torch.dtype:
+        """The floating dtype the model's parameters live in.
+
+        The enumeration engines build tables themselves rather than reading a
+        parametrization's output, so they need somewhere to read the working
+        dtype from; a parameterless model falls back to the global default.
+        """
+        try:
+            return next(self.pgm.parameters()).dtype
+        except StopIteration:
+            return torch.get_default_dtype()
+
     def _leading_shape(self, name: str, value: torch.Tensor) -> torch.Size:
         """The batch-like dimensions of ``value``, read as the variable ``name``.
 
@@ -419,15 +431,65 @@ class BaseInference(nn.Module):
                 member_evidence.setdefault(var.name, {})[name] = value
         return whole, member_evidence
 
+    def member_evidence(
+        self, evidence: Dict[str, torch.Tensor], dtype: torch.dtype
+    ) -> Dict[str, torch.Tensor]:
+        """Evidence as one block per observed **member**.
+
+        A variable, a whole plate and a subset of a plate's members all
+        collapse to the same thing here: some members have a value, the rest are
+        free. This is :func:`~.utils.unpack_plates`'s companion on the way in — an engine
+        running on an unpacked model addresses everything by member name.
+        """
+        whole, per_owner = self._split_evidence(evidence)
+        blocks: Dict[str, torch.Tensor] = {}
+        for name, value in whole.items():
+            var = self.pgm.variables[name]
+            observed = var.to_member(value.to(dtype))
+            for member in var.members:
+                blocks[member] = var.member_of(observed, member)
+        for owner_name, members in per_owner.items():
+            owner = self.pgm.variables[owner_name]
+            for member, value in members.items():
+                blocks[member] = owner.member(member).as_event(value.to(dtype))
+        return blocks
+
+    def regroup_members(
+        self,
+        per_member: Dict[str, torch.Tensor],
+        member_blocks: Dict[str, torch.Tensor],
+    ) -> Dict[str, ParamDict]:
+        """Per-member results -> the per-*variable* dict :meth:`_assemble_params` wants.
+
+        :func:`~.utils.unpack_plates`'s companion on the way out. A variable's members
+        stack back onto the member axis in member order. On a partially observed
+        plate the observed members contribute their evidence, which *is* their
+        posterior: conditioning makes ``P(x_m | e)`` a point mass at the observed
+        value — and :meth:`_assemble_params` divides a chunk's width evenly
+        across its labels, so a ragged plate would corrupt the annotation. A
+        variable with no free member at all emits nothing, mirroring the rule
+        that a fully-observed queried variable reports no parameters.
+        """
+        computed: Dict[str, ParamDict] = {}
+        for var in self.pgm.variables.values():
+            if not any(m in per_member for m in var.members):
+                continue
+            parts = [
+                per_member[m] if m in per_member else member_blocks[m]
+                for m in var.members
+            ]
+            computed[var.name] = {
+                "probs": torch.stack(parts, dim=var.member_axis)
+            }
+        return computed
+
     # ------------------------------------------------------------------
-    # Output assembly (backend-agnostic)
+    # Output assembly
     # ------------------------------------------------------------------
     # Engines compute per-variable parameter dicts internally, then hand them to
     # these two methods, which produce the quantity-keyed annotated tensors an
-    # :class:`InferenceOutput` exposes. Assembly happens exactly once and the
-    # concatenated tensor is the only storage: a per-variable or per-member view
-    # is recovered by label slicing, which is a view rather than a copy.
-
+    # :class:`InferenceOutput` exposes. 
+    
     def _output_labels(self, query_names) -> List[Tuple[List[str], Variable]]:
         """It returns ``(labels, owning variable)`` chunks for the queried names,
         in order.

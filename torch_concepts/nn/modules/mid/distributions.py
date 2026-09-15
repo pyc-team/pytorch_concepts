@@ -365,7 +365,7 @@ SPECS: Dict[type, DistributionSpec] = {
         param_activations={"probs": _softmax_activation},
         # A plain Categorical's *value* is encoded as a one-hot of width
         # ``size`` here, not as a class index — the same encoding
-        # ``BeliefPropagation._encode_states`` uses — so that it matches the
+        # ``inference.utils.encode_states`` uses — so that it matches the
         # ``(*leading, size)`` layout every cached value and child CPD expects.
         mode=_argmax_one_hot,
         is_discrete=True,

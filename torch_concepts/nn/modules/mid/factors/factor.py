@@ -201,6 +201,11 @@ class ParametricFactor(nn.Module, ABC):
 
         self.parametrization = parametrization
         self.trunk = trunk
+        # The resolved aggregators close over ``self.inputs``, so they cannot be
+        # reused by a factor with different inputs. Keeping the user's argument
+        # is what lets one be rebuilt over unpacked parents (see
+        # :func:`~..inference.utils.unpack_plates`).
+        self._aggregate_arg = aggregate
 
     def _initialize_parametrization(
         self,

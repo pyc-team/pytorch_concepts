@@ -1,20 +1,24 @@
 """Distribution utilities shared across all inference backends.
 
-Backend-agnostic helpers used by both the pure-PyTorch and the Pyro engines:
+Backend-agnostic helpers used by every engine, whichever backend it runs on:
 temperature schedules, event reshaping, exact distribution construction,
-teacher forcing, and the discrete-state count an enumeration-based engine needs.
+teacher forcing, the discrete-state count and factor-table enumeration an
+enumeration-based engine needs, and plate unpacking for the engines that would
+rather not know about plates.
 """
 
 from __future__ import annotations
 
 import math
 import warnings
-from typing import Callable, Dict, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Union
 
 import torch
 import torch.distributions as dist
+import torch.nn as nn
 
 from ..distributions import spec_for
+from ..graph.probabilistic_model import ProbabilisticModel
 from ..variable import Variable
 
 
@@ -113,9 +117,10 @@ def teacher_force(
 def enumerable_cardinality(variable: Variable) -> int:
     """Number of discrete states of ``variable``.
 
-    Used by the enumeration-based engines (currently
-    :class:`~torch_concepts.nn.BeliefPropagation`) to size the state axis of a
-    variable's messages and to build a factor's log-potential table.
+    Used by the enumeration-based engines
+    (:class:`~torch_concepts.nn.BeliefPropagation`,
+    :class:`~torch_concepts.nn.PgmpyVariableElimination`) to size the state axis
+    of a variable's messages and to build a factor's log-potential table.
 
     - Bernoulli-family with ``size == 1`` -> ``2`` (states ``0`` and ``1``).
     - Categorical/OneHot-family -> ``variable.size`` (one state per class).
@@ -152,9 +157,109 @@ def enumerable_cardinality(variable: Variable) -> int:
         )
     raise ValueError(
         f"Variable {variable.name!r}: distribution {D.__name__} is not discretely "
-        "enumerable, so it cannot be a free (queried/latent) variable under belief "
-        "propagation. Observe it as evidence, or use a discrete distribution."
+        "enumerable, so it cannot be a free (queried/latent) variable under an "
+        "enumeration-based engine (belief propagation, variable elimination). "
+        "Observe it as evidence, or use a discrete distribution."
     )
+
+
+# ---------------------------------------------------------------------------
+# Factor enumeration
+# ---------------------------------------------------------------------------
+# How an enumeration-based engine turns a *parametrized* factor into a plain
+# table of numbers. Shared by every such engine — ``BeliefPropagation`` runs the
+# tables through message passing, ``PgmpyVariableElimination`` hands them to
+# pgmpy — so the enumeration itself lives here, next to its collaborator
+# ``enumerable_cardinality`` and to ``unpack_plates``.
+
+
+def encode_states(
+    variable: Variable,
+    states: torch.Tensor,
+    leading: torch.Size,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    """Value tensor for a whole *grid* of discrete states of ``variable``.
+
+    ``states`` is a ``(grid,)`` vector of state indices; the result is
+    ``(grid, *leading, width)`` — scalar ``{0., 1.}`` for a binary variable,
+    one-hot otherwise — broadcast (as a view) over the leading dimensions.
+    Batching the grid into a leading axis is what lets a factor's whole
+    table come out of a *single* ``log_potential`` call instead of one call
+    per cell.
+    """
+    card = enumerable_cardinality(variable)
+    if card == 2 and variable.size == 1:
+        width = 1
+        flat = states.to(dtype).unsqueeze(-1)
+    else:
+        width = variable.size
+        flat = torch.nn.functional.one_hot(states, variable.size).to(dtype)
+    grid = int(states.shape[0])
+    return flat.reshape(grid, *([1] * len(leading)), width).expand(
+        grid, *leading, width
+    )
+
+
+def factor_table(
+    factor,
+    free_variables: List[str],
+    handles: Dict[str, Variable],
+    member_blocks: Dict[str, torch.Tensor],
+    leading: torch.Size,
+    dtype: torch.dtype,
+    device: torch.device,
+) -> Optional[torch.Tensor]:
+    """Log-potential table over ``free_variables`` (axis order preserved).
+
+    The free grid is enumerated into a **leading** axis and scored in one
+    ``factor.log_potential`` call — uniform for CPDs and energy-based
+    potentials alike, since both accept any number of leading dimensions.
+    Observed variables read their value from ``member_blocks`` and are baked
+    in (factor reduction), which is also how *continuous* evidence enters.
+    Returns ``None`` when the factor has no free variable: it is then a
+    constant w.r.t. the active variables and contributes nothing.
+
+    The result is shaped ``(*leading, *free_cards)`` — the state axes are
+    appended after however many leading dimensions the query carries.
+
+    NOTE: folding the grid into the batch is transparent to any module that
+    acts **per element**, including ``nn.Dropout`` — its mask has the shape
+    of its input, so every cell of the table still gets an independent mask,
+    exactly as when the cells were scored one call at a time. What *does*
+    change is a module that couples across the batch (``BatchNorm`` in
+    training mode, or anything reducing over the batch axis): its statistics
+    are now taken over ``grid * leading`` rows rather than ``leading``. Such
+    a module makes ``log_potential`` batch-dependent, which is outside the
+    factor contract to begin with.
+    """
+    free_cards = [enumerable_cardinality(handles[m]) for m in free_variables]
+    if not free_cards:
+        return None
+    grid = math.prod(free_cards)
+
+    # ``cartesian_prod`` enumerates in C order (last slot varies fastest),
+    # which is what makes the final reshape map axis ``a`` to slot ``a``.
+    states = torch.cartesian_prod(
+        *[torch.arange(c, device=device) for c in free_cards]
+    ).reshape(grid, len(free_cards))
+    blocks: Dict[str, torch.Tensor] = {
+        m: encode_states(handles[m], states[:, a], leading, dtype)
+        for a, m in enumerate(free_variables)
+    }
+
+    def block(name: str) -> torch.Tensor:
+        """This variable's ``(grid, *leading, width)`` value: enumerated or observed."""
+        if name in blocks:
+            return blocks[name]
+        observed = member_blocks[name]
+        return observed.unsqueeze(0).expand(grid, *observed.shape)
+
+    assignment = {v: block(v.name) for v in factor.scope}
+
+    logp = factor.log_potential(assignment).reshape(grid, *leading)
+    # (grid, *leading) -> (*leading, grid) -> (*leading, *free_cards)
+    return torch.movedim(logp, 0, -1).reshape(*leading, *free_cards)
 
 
 def make_temperature_schedule(
@@ -264,3 +369,133 @@ def build_distribution(
     return build_in_member_layout(
         variable, spec, params, lambda p: D(**p, **dist_kwargs)
     )
+
+
+# ---------------------------------------------------------------------------
+# Plates
+# ---------------------------------------------------------------------------
+
+class _MemberSlice(nn.Module):
+    """One plate member's columns out of the plate's shared parametrization head.
+
+    A plate's head emits all ``k`` members' parameters in one flat row; an
+    unpacked member variable wants only its own. The head object itself is
+    shared by all ``k`` slices, so the unpacked model trains the same weights as
+    the packed one.
+    """
+
+    def __init__(self, head: nn.Module, cols: slice):
+        super().__init__()
+        self.head = head
+        self.cols = cols
+
+    def forward(self, *args, **kwargs):
+        return self.head(*args, **kwargs)[..., self.cols]
+
+
+def unpack_plates(pgm: ProbabilisticModel) -> ProbabilisticModel:
+    """A copy of ``pgm`` with one ordinary variable per plate member.
+
+    For an engine that has no reason to know what a plate is — belief
+    propagation, say — this removes the concept entirely: every variable has one
+    member, so every factor scope entry is a single variable. Returns ``pgm``
+    itself when it holds no plate.
+
+    A plate's CPD becomes ``k`` CPDs, one per member, sharing the plate's head
+    through :class:`_MemberSlice`. That is exact: a plate's members are
+    conditionally independent given the parents, so ``log p(c_1..c_k | pa)``
+    equals ``sum_i log p(c_i | pa)``. Every other factor keeps its identity and
+    only has its plate inputs replaced by the members, in order — which is the
+    same concatenated row the plate produced.
+
+    The result is a **separate** model sharing the original's modules. Callers
+    must not register it as a submodule: ``state_dict`` does not deduplicate
+    shared modules, so doing so would double the checkpoint and rename its keys.
+
+    Raises
+    ------
+    ValueError
+        If a plate appears in a :class:`ParametricPotential`'s scope. An energy
+        module ties its whole scope together, so those members are not
+        separable; declare them as individual variables instead.
+    """
+    from ..factors.cpd import ParametricCPD
+    from ..factors.potential import ParametricPotential
+
+    if not any(v.is_plate for v in pgm.variables.values()):
+        return pgm
+
+    # Every plate expands to its members; everything else is reused as-is, so a
+    # factor that touches no plate keeps working on the very same objects.
+    by_name: Dict[str, Variable] = {}
+    for var in pgm.variables.values():
+        if not var.is_plate:
+            by_name[var.name] = var
+            continue
+        for name in var.members:
+            handle = var.member(name)
+            # A member handle points back at its plate, and the adjacency map is
+            # keyed by that plate — which is not a registered variable here.
+            handle._plate = None
+            by_name[name] = handle
+
+    def unpacked(v: Variable) -> List[Variable]:
+        """``v``'s stand-ins: a plate's members, anything else just itself."""
+        return [by_name[m] for m in (v.members if v.plate is v else [v.name])]
+
+    factors: List = []
+    for factor in pgm.factors.values():
+        if isinstance(factor, ParametricPotential):
+            if any(v.is_plate for v in factor.scope):
+                plates = [v.name for v in factor.scope if v.is_plate]
+                raise ValueError(
+                    f"unpack_plates: potential {factor.name!r} has plates {plates} in "
+                    "its scope. An energy module ties its whole scope together, so a "
+                    "plate's members are not separable there — declare them as "
+                    "individual variables instead."
+                )
+            scope = [by_name[v.name] for v in factor.scope]
+            factors.append(
+                factor if scope == factor.scope else ParametricPotential(
+                    scope=scope,
+                    parametrization=dict(factor.parametrization),
+                    name=factor.name,
+                    aggregate=factor._aggregate_arg,
+                )
+            )
+            continue
+
+        parents = [p for v in factor.parents for p in unpacked(v)]
+        child = factor.variable
+        if not child.is_plate:
+            # Compare the whole scope, not just the parents: a *member handle*
+            # keeps a back-reference to its plate, which the graph rejects as
+            # "not the registered variable", so it has to be swapped out too.
+            scope = [by_name[child.name], *parents]
+            factors.append(
+                factor if scope == factor.scope else ParametricCPD(
+                    scope[0],
+                    parametrization=dict(factor.parametrization),
+                    parents=parents,
+                    aggregate=factor._aggregate_arg,
+                    trunk=factor.trunk,
+                )
+            )
+            continue
+
+        width = child.member_size
+        for name in child.members:
+            start = child.index_of(name) * width
+            cols = slice(start, start + width)
+            factors.append(ParametricCPD(
+                by_name[name],
+                parametrization={
+                    p: _MemberSlice(mod, cols)
+                    for p, mod in factor.parametrization.items()
+                },
+                parents=parents,
+                aggregate=factor._aggregate_arg,
+                trunk=factor.trunk,
+            ))
+
+    return type(pgm)(variables=list(by_name.values()), factors=factors)
