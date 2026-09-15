@@ -94,10 +94,16 @@ def propagated_value(
     Picks ``primary_param`` when present, else falls back to ``logits``. If
     ``activate``, the picked parameter is converted to the primary domain
     (:func:`_activate`) before being returned; otherwise it is returned raw.
+
+    ``params`` must be in the member layout every CPD reports. A flat
+    ``(*leading, size)`` parameter — an engine's *output*, for instance —
+    raises ``ValueError``: activating it would take a categorical plate's
+    softmax over all members' classes at once.
     """
     spec = spec_for(variable.distribution, f"Variable {variable.name!r}")
     for param_name in (spec.primary_param, "logits"):
         if param_name in params:
+            variable._require_member_layout(params[param_name], param_name)
             return (
                 _activate(variable, param_name, params[param_name])
                 if activate
@@ -126,9 +132,11 @@ def _apply_mode(variable: Variable, value: torch.Tensor) -> torch.Tensor:
 def mode_value(variable: Variable, params: Dict[str, torch.Tensor]) -> torch.Tensor:
     """Return the family's *mode* — its most likely value — for a parameter dict.
 
-    The hard counterpart of :func:`propagated_value`, in the same flat
-    ``(*leading, size)`` layout: ``0.``/``1.`` bits for a Bernoulli, a one-hot
-    row for a categorical, ``loc`` for a Normal, ``value`` for a Delta.
+    The hard counterpart of :func:`propagated_value`, in the same member layout
+    ``(*leading, n_members, *member_shape)``: ``0.``/``1.`` bits for a
+    Bernoulli, a one-hot row per member for a categorical, ``loc`` for a
+    Normal, ``value`` for a Delta. Flat parameters raise, as in
+    :func:`propagated_value`.
 
     The parameter is activated first, which makes each rule
     parametrization-agnostic — ``sigmoid(logits) > 0.5`` is ``logits > 0``, and

@@ -235,7 +235,9 @@ class TestFormatEvidence:
         value = torch.randint(0, 4, (3, 4), dtype=torch.long)
         out = eng._format_evidence(x, value)
         assert out.dtype == torch.long
-        assert torch.equal(out, value)
+        # Read into the member layout the cache holds; the values are untouched.
+        assert out.shape == (3, 1, 4)
+        assert torch.equal(x.to_event(out), value)
 
     def test_no_parameters_falls_back_to_default_dtype(self):
         """With no learnable parameters, dtype falls back to the global default."""
@@ -1316,13 +1318,16 @@ class TestBuildRelaxedDistribution:
     def test_onehot_categorical_returns_relaxed_onehot(self):
         v = self._var(dist.OneHotCategorical, size=3)
         d = build_relaxed_distribution(v, {"probs": torch.ones(1, 3) / 3}, self._T)
-        assert isinstance(d, dist.RelaxedOneHotCategorical)
+        # Built per member, then reinterpreted as one event.
+        assert isinstance(d, dist.Independent)
+        assert isinstance(d.base_dist, dist.RelaxedOneHotCategorical)
 
     def test_relaxed_onehot_declared_returns_relaxed_onehot(self):
         """Variable declared as RelaxedOneHotCategorical should resolve to the same family."""
         v = self._var(dist.RelaxedOneHotCategorical, size=3)
         d = build_relaxed_distribution(v, {"probs": torch.ones(1, 3) / 3}, self._T)
-        assert isinstance(d, dist.RelaxedOneHotCategorical)
+        assert isinstance(d, dist.Independent)
+        assert isinstance(d.base_dist, dist.RelaxedOneHotCategorical)
 
     def test_categorical_raises(self):
         v = self._var(dist.Categorical, size=3)
@@ -1351,11 +1356,10 @@ class TestBuildRelaxedDistribution:
         v = self._var(dist.OneHotCategorical, size=3, members=["m1", "m2"])
         d = build_relaxed_distribution(v, {"logits": torch.zeros(1, 6)}, self._T)
         s = d.rsample()
-        assert s.shape == (1, 6)
+        assert s.shape == (1, 2, 3)  # member layout: one simplex per member
         # Each member's block is its own simplex (sums to 1); a single 6-way
         # distribution would make the *whole* row sum to 1 instead.
-        assert torch.allclose(s[..., :3].sum(-1), torch.ones(1), atol=1e-4)
-        assert torch.allclose(s[..., 3:].sum(-1), torch.ones(1), atol=1e-4)
+        assert torch.allclose(s.sum(-1), torch.ones(1, 2), atol=1e-4)
 
 
 # ===========================================================================
@@ -1363,6 +1367,14 @@ class TestBuildRelaxedDistribution:
 # ===========================================================================
 
 class TestPropagatedValue:
+    def test_flat_categorical_plate_params_raise(self):
+        """An engine's output is flat; activating it would take one softmax over
+        every member's classes, so it is rejected rather than silently mixed."""
+        v = ConceptVariable("c", members=["a", "b"],
+                            distribution=dist.OneHotCategorical, size=3)
+        with pytest.raises(ValueError, match="member layout"):
+            propagated_value(v, {"logits": torch.randn(4, 6)}, activate=True)
+
     def test_bernoulli_probs(self):
         p = torch.tensor([[0.3, 0.7]])
         v = ConceptVariable("c", distribution=dist.Bernoulli, size=2)
@@ -1399,8 +1411,11 @@ class TestPropagatedValue:
         """Activating logits uses the plate-aware softmax, not a flat one."""
         v = ConceptVariable("c", members=["a", "b"],
                             distribution=dist.OneHotCategorical, size=3)
-        probs = propagated_value(v, {"logits": torch.randn(4, 6)}, activate=True)
-        assert torch.allclose(probs.reshape(4, 2, 3).sum(-1), torch.ones(4, 2))
+        # Parameters arrive in member layout, as every CPD reports them.
+        logits = v.to_member(torch.randn(4, 6), "logits")
+        probs = propagated_value(v, {"logits": logits}, activate=True)
+        assert probs.shape == (4, 2, 3)
+        assert torch.allclose(probs.sum(-1), torch.ones(4, 2))
 
 
 # ===========================================================================

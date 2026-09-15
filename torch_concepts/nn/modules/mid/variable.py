@@ -333,6 +333,30 @@ class Variable(ABC):
             )
         return tensor.reshape(*tensor.shape[:split], *trailing)
 
+    def _require_member_layout(
+        self, tensor: torch.Tensor, param: Optional[str] = None
+    ) -> None:
+        """Raise unless ``tensor`` is already in the member layout.
+
+        For helpers that treat the last axis as *one member's* event: handed a
+        flat ``(*leading, size)`` row instead, they would silently mix members
+        (a categorical plate's softmax taken over every member's classes) or
+        address the wrong axis. Unlike :meth:`to_member`, nothing is inferred —
+        the caller converts explicitly.
+        """
+        trailing = self.param_trailing_shape(param)
+        n = len(trailing)
+        if tensor.dim() >= n and tuple(tensor.shape[-n:]) == trailing:
+            return
+        what = "a value" if param is None else f"parameter {param!r}"
+        read = "to_member(tensor)" if param is None else f"to_member(tensor, {param!r})"
+        raise ValueError(
+            f"{type(self).__name__}({self.name!r}): expected {what} in member layout "
+            f"(*leading, {', '.join(map(str, trailing))}), got shape "
+            f"{tuple(tensor.shape)}. Read a flat (*leading, size) tensor with "
+            f"`variable.{read}` first."
+        )
+
     def to_member(self, tensor: torch.Tensor, param: Optional[str] = None) -> torch.Tensor:
         """Read ``tensor`` into the canonical ``(*leading, n_members, *member_shape)`` layout."""
         return self._fit(tensor, self.param_trailing_shape(param))
@@ -465,7 +489,15 @@ class Variable(ABC):
         The result is a fresh tensor: the caller caches ``value`` and reuses it
         as a parent input downstream, so writing in place would corrupt that
         cache and break autograd on the tensor the CPD produced.
+
+        Raises
+        ------
+        ValueError
+            If ``value`` is not in member layout. A flat ``(*leading, size)``
+            row would put the member axis on a batch axis and overwrite rows
+            instead of members.
         """
+        self._require_member_layout(value)
         if not observed:
             return value
         stacked = value.clone()

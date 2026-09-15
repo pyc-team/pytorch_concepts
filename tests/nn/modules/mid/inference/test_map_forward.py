@@ -24,7 +24,11 @@ from torch_concepts.nn.modules.mid.inference.torch.map_forward import MAPForward
 from torch_concepts.nn.modules.mid.inference.torch.utils import mode_value
 
 
-LEADINGS = [(6,), (2, 3), (2, 3, 1)]
+# A size-1 leading axis sits in the middle, never last: a tensor ending in
+# ``(..., 1, *event)`` is read with that 1 as the member axis (see
+# ``Variable._fit``), so a trailing singleton leading dim is ambiguous by
+# design and cannot round-trip.
+LEADINGS = [(6,), (2, 3), (3, 1, 2)]
 
 
 def _mixed_model():
@@ -333,6 +337,11 @@ class TestDeterminism:
 # 9. mode_value, family by family
 # ===========================================================================
 class TestModeValue:
+    def test_flat_params_raise(self):
+        p = ConceptVariable("p", members=["a", "b"], distribution=dist.OneHotCategorical, size=3)
+        with pytest.raises(ValueError, match="member layout"):
+            mode_value(p, {"probs": torch.tensor([[0.1, 0.7, 0.2, 0.5, 0.3, 0.2]])})
+
     def test_bernoulli_probs_and_logits_agree(self):
         b = ConceptVariable("b", distribution=dist.Bernoulli, size=3)
         logits = torch.tensor([[-1.0, 0.5, 2.0]])
@@ -369,16 +378,17 @@ class TestModeValue:
 
     def test_bernoulli_plate_is_elementwise(self):
         p = ConceptVariable("p", members=["m1", "m2"], distribution=dist.Bernoulli)
-        assert torch.equal(
-            mode_value(p, {"probs": torch.tensor([[0.9, 0.1]])}), torch.tensor([[1.0, 0.0]])
-        )
+        probs = torch.tensor([[[0.9], [0.1]]])  # member layout (1, n_members, 1)
+        assert torch.equal(mode_value(p, {"probs": probs}), torch.tensor([[[1.0], [0.0]]]))
 
     def test_categorical_plate_folds_per_member(self):
         p = ConceptVariable("p", members=["a", "b"], distribution=dist.OneHotCategorical, size=3)
-        probs = torch.tensor([[0.1, 0.7, 0.2, 0.5, 0.3, 0.2]])
+        # Parameters arrive in member layout, as every CPD reports them: one
+        # argmax per member, not one over the flattened six classes.
+        probs = p.to_member(torch.tensor([[0.1, 0.7, 0.2, 0.5, 0.3, 0.2]]), "probs")
         assert torch.equal(
             mode_value(p, {"probs": probs}),
-            torch.tensor([[0.0, 1.0, 0.0, 1.0, 0.0, 0.0]]),
+            torch.tensor([[[0.0, 1.0, 0.0], [1.0, 0.0, 0.0]]]),
         )
 
     def test_dtype_is_preserved(self):

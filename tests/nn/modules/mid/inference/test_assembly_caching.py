@@ -168,7 +168,9 @@ def test_samples_assembly_is_cached_consistently():
     """_assemble_samples shares the cached chunks with _assemble_params but
     keys its annotation separately, so both must stay correct."""
     eng = _engine()
-    per_variable = {"concepts": torch.rand(3, 3), "y": torch.randn(3, 2)}
+    # Realisations arrive in member layout (B, n_members, member_size), as the
+    # engines cache them.
+    per_variable = {"concepts": torch.rand(3, 3, 1), "y": torch.randn(3, 1, 2)}
     for _ in range(2):
         samples = eng._assemble_samples(per_variable, ["concepts", "y"])
         assert list(samples.annotation.labels) == ["c1", "c2", "c3", "y"]
