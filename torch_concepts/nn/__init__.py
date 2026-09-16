@@ -27,16 +27,15 @@ from .modules.low.priors import LearnablePrior, FixedPrior
 from .modules.low.encoders.linear import LinearEmbeddingToConcept
 from .modules.low.encoders.whitening import ConceptWhitening, WhitenedEmbeddingToConcept
 from .modules.low.encoders.cav import CAVEmbeddingToConcept
-from .modules.low.encoders.selector import CategoricalSelector
 
 # Predictors
 from .modules.low.predictors.call import CallableConceptToConcept
 from .modules.low.predictors.hypernet import HyperlinearConceptEmbeddingToConcept
 from .modules.low.predictors.linear import LinearConceptToConcept
 from .modules.low.predictors.rule import (
+    ReconstructionRuleConceptEmbeddingToConcept,
+    RuleConceptEmbeddingToConcept,
     RuleMemory,
-    RuleTaskPredictor,
-    RuleReconstructionPredictor,
 )
 from .modules.low.predictors.mix import MixConceptEmbeddingToConcept
 
@@ -138,8 +137,8 @@ __all__ = [
     # Predictor classes
     "LinearConceptToConcept",
     "RuleMemory",
-    "RuleTaskPredictor",
-    "RuleReconstructionPredictor",
+    "RuleConceptEmbeddingToConcept",
+    "ReconstructionRuleConceptEmbeddingToConcept",
     "CallableConceptToConcept",
     "HyperlinearConceptEmbeddingToConcept",
     "MixConceptEmbeddingToConcept",
@@ -149,7 +148,6 @@ __all__ = [
     "ResidualMLP",
     "MLP",
 
-    "CategoricalSelector",
     "Sequential",
     "LinearEmbeddingEncoder",
     "SelectorEmbeddingEncoder",

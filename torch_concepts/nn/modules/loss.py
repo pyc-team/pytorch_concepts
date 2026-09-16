@@ -608,8 +608,8 @@ class CMRBlendedLoss(TypeAwareLoss):
     ``y_pred_with_rec``.
     Concept supervision remains standard BCE on the intermediate concepts.
 
-    The reconstruction-aware task prediction is expected in
-    ``output.extra["input_with_rec"]``.
+    The reconstruction-aware task probabilities are exposed as the deterministic
+    auxiliary value ``output.value["tasks_with_rec"]``.
     """
 
     def __init__(self, task_names, concept_weight: float = 1.0, task_weight: float = 1.0):
@@ -624,12 +624,14 @@ class CMRBlendedLoss(TypeAwareLoss):
             raise ValueError("CMRBlendedLoss requires a concept-space target.")
         if output.probs is None:
             raise ValueError("CMRBlendedLoss requires Bernoulli probability outputs.")
-        if not output.extra or "task_input" not in output.extra or "input_with_rec" not in output.extra:
-            raise ValueError("CMRBlendedLoss requires output.extra['task_input'] and output.extra['input_with_rec'].")
+        if output.value is None or "tasks_with_rec" not in output.value.annotation.label_to_index:
+            raise ValueError(
+                "CMRBlendedLoss requires output.value['tasks_with_rec']."
+            )
 
         task_target = target[self.task_names].to(output.probs.dtype)
-        task_pred = output.extra["task_input"].to(output.probs.dtype)
-        rec_pred = output.extra["input_with_rec"].to(task_pred.dtype)
+        task_pred = output.probs[self.task_names]
+        rec_pred = output.value["tasks_with_rec"].to(task_pred.dtype)
         if task_pred.shape != rec_pred.shape or task_pred.shape != task_target.shape:
             raise ValueError("CMR task predictions and targets must have identical shapes.")
 
