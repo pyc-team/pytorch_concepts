@@ -70,7 +70,7 @@ def main():
     )
 
     # Inference Initialization
-    inference_engine = DeterministicInference(concept_model, activate_before_propagation=True)
+    inference_engine = DeterministicInference(concept_model)
     evidence = {'input': x_train}
     query_concepts = {"concepts": c_train, "xor": y_train}
 

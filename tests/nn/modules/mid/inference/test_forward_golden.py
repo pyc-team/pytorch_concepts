@@ -38,14 +38,14 @@ def _is_view_of(sub: torch.Tensor, whole: torch.Tensor) -> bool:
 class TestForwardGoldenContract:
     def test_deterministic_params_keys_are_queried_names_only(self):
         m = _plate_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         out = eng.query(query=["g", "y", "m1"], evidence={"x": torch.randn(3, 4)})
         assert set(out.variables) == {"g", "m1", "m2", "y"}
         assert out.samples is None  # deterministic mode never emits samples
 
     def test_deterministic_member_params_are_views_of_plate(self):
         m = _plate_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         out = eng.query(query=["g", "m1", "m2"], evidence={"x": torch.randn(2, 4)})
         g = out.probs["g"]
         assert out.probs["m1"].shape == (2, 1)
@@ -56,7 +56,7 @@ class TestForwardGoldenContract:
 
     def test_whole_plate_evidence_emits_no_params_for_plate(self):
         m = _plate_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         out = eng.query(query=["y"], evidence={"x": torch.randn(2, 4), "g": torch.rand(2, 2)})
         assert "g" not in out.variables
         assert set(out.variables) == {"y"}

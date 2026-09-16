@@ -20,12 +20,10 @@ class IndependentInference(DeterministicInference):
     ----------
     pgm : BayesianNetwork
         The model to query.
-    activate_before_propagation : bool, optional
-        Forwarded to :class:`DeterministicInference`; see there.
     """
-    def __init__(self, pgm: BayesianNetwork, activate_before_propagation: bool = True):
+    def __init__(self, pgm: BayesianNetwork, **temperature_kwargs):
         super().__init__(
             pgm,
-            activate_before_propagation=activate_before_propagation,
             p_int=1.0,
+            **temperature_kwargs,
         )

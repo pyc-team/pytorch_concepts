@@ -22,9 +22,11 @@ Expand each block below for a step-by-step walkthrough.
 .. dropdown:: Layer Interface
     :icon: code
 
-    All layers extend ``BaseConceptLayer``. The constructor accepts three optional dimension
-    descriptors — pass an :class:`~torch_concepts.Annotations` object instead of an ``int``
-    to make the layer *semantics-aware*:
+    All layers extend ``BaseConceptLayer``. The constructor accepts three dimension
+    descriptors. For the *concept* dimensions you may pass an
+    :class:`~torch_concepts.Annotations` object instead of an ``int`` to make the layer
+    *semantics-aware*; ``in_embeddings`` is an unannotated feature width, so it is always
+    a plain ``int``:
 
     .. code-block:: python
 
@@ -33,7 +35,7 @@ Expand each block below for a step-by-step walkthrough.
                self,
                out_concepts: Union[int, Annotations],
                in_concepts:  Union[int, Annotations] = None,
-               in_embeddings: Union[int, Annotations] = None,
+               in_embeddings: int = None,
            ): ...
 
     After ``super().__init__(...)`` three resolved-integer attributes are available:
@@ -43,7 +45,8 @@ Expand each block below for a step-by-step walkthrough.
     - ``self.out_concepts_shape``  — ``int``
 
     These always hold plain integers regardless of whether you passed an ``Annotations``
-    object or an ``int``, so you can use them directly in ``nn.Linear`` / ``nn.Conv``.
+    object or an ``int`` for the concept dimensions, so you can use them directly in
+    ``nn.Linear`` / ``nn.Conv``.
 
     **Naming convention.** Layer class names follow
     ``<OperationType><InputType>To<OutputType>``, e.g.:

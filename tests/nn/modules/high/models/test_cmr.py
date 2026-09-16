@@ -12,7 +12,7 @@ def test_cmr_routes_reconstruction_prediction_as_auxiliary_value():
         n_rules=3,
     )
     target = torch.tensor([[0., 1., 1.], [1., 0., 0.]])
-    query = model.build_query(target)
+    query = model.fully_observed_query(target)
     query["tasks_with_rec"] = None
     output = model(query=query, evidence={"input": torch.randn(2, 2)})
 

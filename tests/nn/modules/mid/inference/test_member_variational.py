@@ -4,12 +4,9 @@ condition on a member-handle parent of an observed plate (new capability from
 §6.1). See PLATE_REFACTOR_INSTRUCTIONS.md §6.1, §6.2, §8.3."""
 import warnings
 
-import pytest
 import torch
 import torch.nn as nn
 import torch.distributions as dist
-
-pyro = pytest.importorskip("pyro", reason="pyro not installed")
 
 from torch_concepts import seed_everything
 from torch_concepts.nn.modules.mid.variable import ConceptVariable, EmbeddingVariable

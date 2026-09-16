@@ -153,7 +153,7 @@ class LazyConstructor(torch.nn.Module):
     def build(self,
               out_concepts: int,
               in_concepts: Optional[Union[int, Annotations]] = None,
-              in_embeddings: Optional[Union[int, Annotations]] = None,
+              in_embeddings: Optional[int] = None,
               **kwargs
               ) -> torch.nn.Module:
         """

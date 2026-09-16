@@ -18,7 +18,6 @@ import torch.nn as nn
 
 from ...graph.bayesian_network import BayesianNetwork
 from ...factors.cpd import ParametricCPD
-from ..utils import make_temperature_schedule
 from ....outputs import InferenceOutput
 from .base import PyroBaseInference, trace_to_params, _import_pyro
 
@@ -55,6 +54,12 @@ class VariationalInference(PyroBaseInference):
     initial_temperature, annealing, annealing_rate
         Temperature schedule for the relaxed-discrete sites; see
         :func:`~torch_concepts.nn.modules.mid.inference.base.make_temperature_schedule`.
+    p_int : float, default 1.0
+        Teacher-forcing rate for query variables that carry a target; see
+        :class:`~torch_concepts.nn.modules.mid.inference.base.BaseInference`.
+        Below ``1.0`` those variables become latent sites blended with the
+        ground truth after the draw, which is how a generative concept model
+        gets CEM's RandInt. Set it on the *train* engine only.
     """
 
     name = "VariationalInference"
@@ -68,8 +73,17 @@ class VariationalInference(PyroBaseInference):
         initial_temperature: float = 1.0,
         annealing: Union[str, Callable[[int], float]] = "constant",
         annealing_rate: float = 0.0,
+        final_temperature: float = 1e-6,
+        p_int: float = 1.0,
     ):
-        super().__init__(pgm)
+        super().__init__(
+            pgm,
+            initial_temperature=initial_temperature,
+            annealing=annealing,
+            annealing_rate=annealing_rate,
+            final_temperature=final_temperature,
+            p_int=p_int,
+        )
         self._require_directed()
 
         # Detect PGM device before building guides.
@@ -86,18 +100,6 @@ class VariationalInference(PyroBaseInference):
         self.n_samples = int(n_samples)
         self.max_plate_nesting = int(max_plate_nesting)
         self._warned_latent_evidence = False
-        # Retained for repr/introspection; the live schedule lives in ``_schedule``.
-        self.initial_temperature = float(initial_temperature)
-        self.annealing = annealing
-        self.annealing_rate = float(annealing_rate)
-        self._schedule = make_temperature_schedule(
-            initial_temperature, annealing, annealing_rate
-        )
-        self._step: int = 0
-        self.register_buffer(
-            "_temperature",
-            torch.tensor(float(self._schedule(self._step))),
-        )
 
         # Construction-time notices.
         if self._latent_names:
@@ -128,6 +130,8 @@ class VariationalInference(PyroBaseInference):
             initial_temperature=self.initial_temperature,
             annealing=self.annealing,
             annealing_rate=self.annealing_rate,
+            final_temperature=self.final_temperature,
+            p_int=self.p_int,
         )
 
     # ------------------------------------------------------------------
@@ -199,14 +203,6 @@ class VariationalInference(PyroBaseInference):
             name: [p.name for p in self.pgm.guides[name].parents]
             for name in self._latent_names
         }
-
-    @property
-    def temperature(self) -> torch.Tensor:
-        return self._temperature
-
-    def step(self) -> None:
-        self._step += 1
-        self._temperature.fill_(float(self._schedule(self._step)))
 
     # ------------------------------------------------------------------
     def _merge_observables(
@@ -316,17 +312,27 @@ class VariationalInference(PyroBaseInference):
         temperature = self.temperature
         latent_names = self._latent_names
 
+        # Teacher forcing below full strength (RandInt): the *query* carries the
+        # targets, matching ``ForwardInference``'s convention. Empty at the
+        # default ``p_int=1.0``, so those sites keep the plain ``obs=`` path and
+        # nothing changes for callers that never set the rate. ``data`` keeps its
+        # entries either way, so the guide conditions on exactly what it did.
+        teacher_forced = (
+            {n: v for n, v in query.items() if v is not None}
+            if self.p_int < 1.0 else {}
+        )
+
         if self.pgm.has_guides:
             guide_fn = lambda: self.guide_fn(data, temperature, latent_names, layer_kwargs, member_evidence)
             guide_tr = poutine.trace(guide_fn).get_trace()
-            model_fn = lambda: self.model_fn(data, temperature, latent_names, layer_kwargs=layer_kwargs, member_evidence=member_evidence)
+            model_fn = lambda: self.model_fn(data, temperature, latent_names, layer_kwargs=layer_kwargs, member_evidence=member_evidence, teacher_forced=teacher_forced)
             replayed = poutine.replay(model_fn, trace=guide_tr)
             model_tr = poutine.trace(replayed).get_trace()
             guide_params = self._align_param_keys(
                 trace_to_params(guide_tr), use_guides=True
             )
         else:
-            model_fn = lambda: self.model_fn(data, temperature, latent_names, layer_kwargs=layer_kwargs, member_evidence=member_evidence)
+            model_fn = lambda: self.model_fn(data, temperature, latent_names, layer_kwargs=layer_kwargs, member_evidence=member_evidence, teacher_forced=teacher_forced)
             model_tr = poutine.trace(model_fn).get_trace()
             guide_params = {}
 

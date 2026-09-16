@@ -165,8 +165,10 @@ class ConceptBottleneckModel(BipartiteModel):
             parametrization=[
                 self._flexible_parametrization(
                     variable=c,
-                    first=LazyConstructor(LinearEmbeddingToConcept),
-                    second=None # will be partial(...)
+                    first=LazyConstructor(LinearEmbeddingToConcept), # parameterization for the first parameter
+                    second=LazyConstructor(LinearEmbeddingToConcept), # parameterization for the second parameter
+                    # nn.Softplus() or ScaleTrilActivation will be 
+                    # attached automatically to the second head for continuous variables.
                 )
                 for c in concepts
             ],
@@ -179,7 +181,7 @@ class ConceptBottleneckModel(BipartiteModel):
                 self._flexible_parametrization(
                     variable=t,
                     first=LazyConstructor(LinearConceptToConcept),
-                    second=None # will be partial(...)
+                    second=LazyConstructor(LinearConceptToConcept),
                 )
                 for t in tasks
             ],

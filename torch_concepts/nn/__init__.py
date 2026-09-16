@@ -21,10 +21,15 @@ from .modules.low.lazy import LazyConstructor
 from .modules.low.sequential import Sequential
 
 # Priors (root-CPD parametrizations)
-from .modules.low.priors import LearnablePrior, FixedPrior
+from .modules.low.priors import LearnablePrior, FixedPrior, TiedPrior
+
+# Activations (raw layer output -> distribution-parameter domain)
+from .modules.low.scales import TrilActivation, GlobalScale
+from .modules.mid.activations import DefaultActivation
 
 # Encoders
 from .modules.low.encoders.linear import LinearEmbeddingToConcept
+from .modules.low.encoders.mlp import MLPEmbeddingToConcept
 from .modules.low.encoders.whitening import ConceptWhitening, WhitenedEmbeddingToConcept
 from .modules.low.encoders.cav import CAVEmbeddingToConcept
 
@@ -32,23 +37,30 @@ from .modules.low.encoders.cav import CAVEmbeddingToConcept
 from .modules.low.predictors.call import CallableConceptToConcept
 from .modules.low.predictors.hypernet import HyperlinearConceptEmbeddingToConcept
 from .modules.low.predictors.linear import LinearConceptToConcept
+from .modules.low.predictors.mlp import MLPConceptToConcept
 from .modules.low.predictors.rule import (
     ReconstructionRuleConceptEmbeddingToConcept,
     RuleConceptEmbeddingToConcept,
     RuleMemory,
 )
-from .modules.low.predictors.mix import MixConceptEmbeddingToConcept
+from .modules.low.predictors.mix import MixConceptEmbeddingToConcept, \
+    MixConceptEmbeddings
 
 # Dense layers
-from .modules.low.dense_layers import Dense, ResidualMLP, MLP, LinearEmbeddingEncoder, SelectorEmbeddingEncoder
+from .modules.low.dense_layers import Dense, ResidualMLP, MLP, LinearEmbeddingEncoder, MLPEmbeddingEncoder, SelectorEmbeddingEncoder
 from .modules.low.sequential import Sequential
 
 # Graph learner
 from .modules.low.graph.wanda import WANDAGraphLearner
 
 # Loss functions
-from .modules.loss import ConceptLoss, WeightedConceptLoss, DepthWeightedConceptLoss, \
-    L1LogitRegularizer, CMRBlendedLoss
+from .modules.loss import PyCLoss, ConceptLoss, ConceptSubset, WeightedConceptLoss, \
+    DepthWeightedConceptLoss, L1LogitRegularizer, CompositeLoss, \
+    MSEReconstructionLoss, KLDivergenceLoss, OrthogonalityLoss, NLLProbLoss, \
+    CMRBlendedLoss
+
+# Training callbacks
+from .modules.callbacks import LossWeightWarmup
 
 # Metrics
 from .modules.metrics import ConceptMetrics, compute_cace
@@ -60,6 +72,8 @@ from .modules.outputs import ModelOutput, InferenceOutput
 from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
 from .modules.high.models.cbm import ConceptBottleneckModel
 from .modules.high.models.cem import ConceptEmbeddingModel
+from .modules.high.models.cbvae import ConceptBottleneckVAE
+from .modules.high.models.cvae import ConditionalVAE
 from .modules.high.models.graph_cbm import GraphConceptBottleneckModel
 from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
 from .modules.high.models.cmr import ConceptMemoryReasoner
@@ -84,6 +98,7 @@ from .modules.mid.inference.torch.forward import ForwardInference
 from .modules.mid.inference.torch.deterministic import DeterministicInference
 from .modules.mid.inference.torch.independent import IndependentInference
 from .modules.mid.inference.torch.ancestral import AncestralSamplingInference
+from .modules.mid.inference.torch.map_forward import MAPForwardInference
 from .modules.mid.inference.torch.rejection import RejectionSampling
 from .modules.mid.inference.torch.importance_sampling.importance_sampling import ImportanceSampling
 from .modules.mid.inference.torch.importance_sampling.base_proposal import BaseProposal
@@ -127,40 +142,59 @@ __all__ = [
     # Priors
     "LearnablePrior",
     "FixedPrior",
+    "TiedPrior",
+
+    # Activations
+    "TrilActivation",
+    "GlobalScale",
+    "DefaultActivation",
 
     # Encoder classes
     "LinearEmbeddingToConcept",
+    "MLPEmbeddingToConcept",
     "ConceptWhitening",
     "WhitenedEmbeddingToConcept",
     "CAVEmbeddingToConcept",
 
     # Predictor classes
     "LinearConceptToConcept",
-    "RuleMemory",
-    "RuleConceptEmbeddingToConcept",
-    "ReconstructionRuleConceptEmbeddingToConcept",
+    "MLPConceptToConcept",
     "CallableConceptToConcept",
     "HyperlinearConceptEmbeddingToConcept",
     "MixConceptEmbeddingToConcept",
+    "MixConceptEmbeddings",
+    "RuleMemory",
+    "RuleConceptEmbeddingToConcept",
+    "ReconstructionRuleConceptEmbeddingToConcept",
 
     # Dense layers
     "Dense",
     "ResidualMLP",
     "MLP",
-
     "Sequential",
     "LinearEmbeddingEncoder",
+    "MLPEmbeddingEncoder",
     "SelectorEmbeddingEncoder",
 
     # COSMO
     "WANDAGraphLearner",
 
     # Loss functions
-    "CMRBlendedLoss",
+    "PyCLoss",
+    "CompositeLoss",
     "ConceptLoss",
+    "ConceptSubset",
     "WeightedConceptLoss",
     "DepthWeightedConceptLoss",
     "L1LogitRegularizer",
+    "MSEReconstructionLoss",
+    "KLDivergenceLoss",
+    "OrthogonalityLoss",
+    "NLLProbLoss",
+    "CMRBlendedLoss",
+
+    # Training callbacks
+    "LossWeightWarmup",
 
     # Metrics
     "ConceptMetrics",
@@ -175,10 +209,11 @@ __all__ = [
     "BlackBoxTaskOnly",
     "ConceptBottleneckModel",
     "ConceptEmbeddingModel",
+    "ConceptBottleneckVAE",
+    "ConditionalVAE",
     "ConceptMemoryReasoner",
     "GraphConceptBottleneckModel",
     "CausallyReliableConceptBottleneckModel",
-
     # Models (mid-level)
     "ParametricFactor",
     "ParametricCPD",
@@ -197,6 +232,7 @@ __all__ = [
     "ForwardInference",
     "DeterministicInference",
     "AncestralSamplingInference",
+    "MAPForwardInference",
     "RejectionSampling",
     "IndependentInference",
     "ImportanceSampling",

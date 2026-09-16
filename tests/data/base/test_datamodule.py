@@ -15,6 +15,7 @@ import pytest
 import torch
 import torch.nn as nn
 import tempfile
+import glob
 import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock
@@ -475,6 +476,131 @@ class TestConceptDataModuleScalers:
         dm = ConceptDataModule(dataset=toy_dataset)
         assert dm.scalers == {}
 
+    def test_no_scalers_means_nothing_fitted(self, toy_dataset):
+        """Without a configured scaler, the dataset's scaler dict stays empty."""
+        dm = ConceptDataModule(dataset=toy_dataset)
+        dm.setup('fit')
+        assert dm.dataset.scalers == {}
+
+
+class TestConceptDataModuleScalerFitting:
+    """Test that setup('fit') fits the configured scalers correctly."""
+
+    @staticmethod
+    def _continuous_dataset(n=100):
+        """Dataset whose concepts are continuous with a strong index-dependent
+        trend, so train-only statistics are distinguishable from full-data ones."""
+        from torch_concepts.data.base.dataset import ConceptDataset
+
+        annotations = Annotations(
+            labels=['a', 'b'], cardinalities=[1, 1],
+            types=['continuous', 'continuous'],
+        )
+        concepts = torch.stack([
+            torch.arange(n, dtype=torch.float32),
+            torch.arange(n, dtype=torch.float32) * 100.0,
+        ], dim=1)
+        return ConceptDataset(
+            input_data=torch.randn(n, 4),
+            concepts=concepts,
+            annotations=annotations,
+        )
+
+    def test_fits_continuous_concepts(self):
+        from torch_concepts.data.scalers import StandardScaler
+
+        dm = ConceptDataModule(
+            dataset=self._continuous_dataset(),
+            scalers={'concepts': StandardScaler()},
+            seed=0,
+        )
+        dm.setup('fit')
+
+        fitted = dm.dataset.scalers['concepts']
+        assert list(fitted.mean.annotation.labels) == ['a', 'b']
+
+    def test_statistics_use_the_train_split_only(self):
+        """The decisive property: validation/test rows must not leak into the
+        statistics the model is normalised with."""
+        from torch_concepts.data.scalers import StandardScaler
+
+        dataset = self._continuous_dataset()
+        dm = ConceptDataModule(
+            dataset=dataset, scalers={'concepts': StandardScaler()}, seed=0,
+        )
+        dm.setup('fit')
+
+        train_idx = dm.trainset.indices
+        fitted = dm.dataset.scalers['concepts']
+        expected = dataset.concepts[train_idx][:, 0].unsqueeze(-1).mean()
+        assert fitted.mean['a'].tensor.item() == pytest.approx(
+            expected.item(), rel=1e-5
+        )
+        # ...and that is genuinely not the full-dataset mean.
+        assert fitted.mean['a'].tensor.item() != pytest.approx(
+            dataset.concepts[:, 0].mean().item(), rel=1e-4
+        )
+
+    def test_dataset_data_is_not_mutated(self):
+        """Fitting stores stats on `dataset.scalers`; the concepts tensor itself
+        stays in its original scale (scaling happens per-batch in the learner)."""
+        from torch_concepts.data.scalers import StandardScaler
+
+        dataset = self._continuous_dataset()
+        before = dataset.concepts.tensor.clone()
+        dm = ConceptDataModule(
+            dataset=dataset, scalers={'concepts': StandardScaler()}, seed=0,
+        )
+        dm.setup('fit')
+        assert torch.equal(dataset.concepts.tensor, before)
+
+    def test_scalers_are_refitted_on_every_setup_call(self):
+        """Unlike the earlier `fitted_scalers` design, setup() always (re)fits
+        when called with stage in ('fit', None) — there is no fitted-once guard."""
+        from torch_concepts.data.scalers import StandardScaler
+
+        dm = ConceptDataModule(
+            dataset=self._continuous_dataset(),
+            scalers={'concepts': StandardScaler()},
+            seed=0,
+        )
+        dm.setup('fit')
+        first = dm.dataset.scalers['concepts']
+        dm.setup('fit')
+        assert dm.dataset.scalers['concepts'] is first  # same prototype instance,
+        assert dm.dataset.scalers['concepts'].mean is not None  # refit in place
+
+    def test_binary_only_dataset_warns_and_skips(self, toy_dataset):
+        """Binary/categorical concepts are class labels and are never scaled."""
+        from torch_concepts.data.scalers import StandardScaler
+
+        dm = ConceptDataModule(
+            dataset=toy_dataset, scalers={'concepts': StandardScaler()}, seed=0,
+        )
+        with pytest.warns(UserWarning, match="no continuous concepts"):
+            dm.setup('fit')
+        assert 'concepts' not in dm.dataset.scalers
+
+    def test_unknown_scaler_key_raises(self, toy_dataset):
+        from torch_concepts.data.scalers import StandardScaler
+
+        dm = ConceptDataModule(
+            dataset=toy_dataset, scalers={'targets': StandardScaler()}, seed=0,
+        )
+        with pytest.raises(RuntimeError, match="cannot find attribute 'targets'"):
+            dm.setup('fit')
+
+    def test_input_scaler_on_flat_features(self, toy_dataset):
+        """ToyDataset stores (N, 2) floats and serves (2,) — layouts line up."""
+        from torch_concepts.data.scalers import StandardScaler
+
+        dm = ConceptDataModule(
+            dataset=toy_dataset, scalers={'input': StandardScaler()}, seed=0,
+        )
+        dm.setup('fit')
+        assert 'input' in dm.dataset.scalers
+        assert dm.dataset.scalers['input'].mean.shape[-1] == toy_dataset.input_data.shape[-1]
+
 
 # =============================================================================
 # Test ConceptDataModule Edge Cases
@@ -722,6 +848,10 @@ class TestCacheEmbeddings:
     ``_compute_embeddings`` exercise the caching logic without a real model.
     """
 
+    # The cache file is named after the backbone *and* the dataset's row count,
+    # so subsets of different sizes do not overwrite one another's embeddings.
+    CACHE_NAME = 'bb_n20.pt'
+
     @staticmethod
     def _make_ds(tmp_path):
         ds = ToyDataset('xor', n_gen=20, seed=0, root=str(tmp_path))
@@ -734,7 +864,7 @@ class TestCacheEmbeddings:
 
         ds.precompute_embeddings(bb)
 
-        cache_path = os.path.join(ds.root_dir, 'bb.pt')
+        cache_path = os.path.join(ds.root_dir, self.CACHE_NAME)
         assert os.path.exists(cache_path)              # cached to disk
         ds._compute_embeddings.assert_called_once()
         assert torch.equal(ds.input_data, embs)
@@ -744,7 +874,7 @@ class TestCacheEmbeddings:
         ds, bb = self._make_ds(tmp_path)
         cached = torch.randn(len(ds), 8)
         os.makedirs(ds.root_dir, exist_ok=True)
-        torch.save(cached, os.path.join(ds.root_dir, 'bb.pt'))
+        torch.save(cached, os.path.join(ds.root_dir, self.CACHE_NAME))
 
         ds._compute_embeddings = MagicMock()  # must NOT be called
 
@@ -757,7 +887,8 @@ class TestCacheEmbeddings:
     def test_force_ignores_cache(self, tmp_path):
         ds, bb = self._make_ds(tmp_path)
         os.makedirs(ds.root_dir, exist_ok=True)
-        torch.save(torch.randn(len(ds), 8), os.path.join(ds.root_dir, 'bb.pt'))
+        torch.save(torch.randn(len(ds), 8),
+                   os.path.join(ds.root_dir, self.CACHE_NAME))
 
         fresh = torch.randn(len(ds), 8)
         ds._compute_embeddings = MagicMock(return_value=fresh)
@@ -772,7 +903,8 @@ class TestCacheEmbeddings:
         is ignored and recomputed."""
         ds, bb = self._make_ds(tmp_path)
         os.makedirs(ds.root_dir, exist_ok=True)
-        torch.save(torch.randn(5, 8), os.path.join(ds.root_dir, 'bb.pt'))  # 5 != 20
+        torch.save(torch.randn(5, 8),
+                   os.path.join(ds.root_dir, self.CACHE_NAME))  # 5 != 20
 
         fresh = torch.randn(len(ds), 8)
         ds._compute_embeddings = MagicMock(return_value=fresh)
@@ -787,7 +919,8 @@ class TestCacheEmbeddings:
         ds, bb = self._make_ds(tmp_path)
         os.makedirs(ds.root_dir, exist_ok=True)
         stale = torch.randn(len(ds), 8)
-        torch.save(stale, os.path.join(ds.root_dir, 'bb.pt'))  # must be ignored
+        cache_path = os.path.join(ds.root_dir, self.CACHE_NAME)
+        torch.save(stale, cache_path)  # must be ignored
 
         fresh = torch.randn(len(ds), 8)
         ds._compute_embeddings = MagicMock(return_value=fresh)
@@ -796,9 +929,7 @@ class TestCacheEmbeddings:
 
         ds._compute_embeddings.assert_called_once()          # cache not read
         assert torch.equal(ds.input_data, fresh)
-        assert torch.equal(                                  # cache not overwritten
-            torch.load(os.path.join(ds.root_dir, 'bb.pt')), stale
-        )
+        assert torch.equal(torch.load(cache_path), stale)    # cache not overwritten
         assert ds.embs_precomputed is True
 
     def test_datamodule_delegates_with_own_defaults(self, tmp_path):
@@ -821,8 +952,32 @@ class TestCacheEmbeddings:
 
         ds.precompute_embeddings(bb, cache_dir=other)
 
-        assert os.path.exists(os.path.join(other, 'bb.pt'))
-        assert not os.path.exists(os.path.join(ds.root_dir, 'bb.pt'))
+        assert os.path.exists(os.path.join(other, self.CACHE_NAME))
+        assert not os.path.exists(os.path.join(ds.root_dir, self.CACHE_NAME))
+
+    def test_cache_name_tracks_rows_and_seed(self, tmp_path):
+        """A subset caches under its own name, keyed by size and seed, so it
+        never overwrites the full dataset's embeddings nor another subset's."""
+        ds, bb = self._make_ds(tmp_path)
+        subset = ConceptDataModule(dataset=ds, max_samples=8, seed=3).dataset
+        subset._compute_embeddings = MagicMock(return_value=torch.randn(8, 8))
+
+        subset.precompute_embeddings(bb, cache_dir=str(tmp_path))
+
+        assert os.path.exists(os.path.join(str(tmp_path), 'bb_n8_seed3.pt'))
+        assert not os.path.exists(os.path.join(str(tmp_path), self.CACHE_NAME))
+
+    def test_unseeded_subset_is_not_cached(self, tmp_path):
+        """Its rows are redrawn every run, so no file could be matched to them."""
+        ds, bb = self._make_ds(tmp_path)
+        subset = ConceptDataModule(dataset=ds, max_samples=8).dataset
+        subset._compute_embeddings = MagicMock(return_value=torch.randn(8, 8))
+
+        with pytest.warns(UserWarning, match="unseeded subset"):
+            subset.precompute_embeddings(bb, cache_dir=str(tmp_path))
+
+        assert subset.embs_precomputed is True                # still computed
+        assert not glob.glob(os.path.join(str(tmp_path), 'bb*.pt'))  # nothing written
 
 
 class TestMaxSamplesNativeSplitter:

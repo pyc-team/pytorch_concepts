@@ -9,4 +9,9 @@ datamodule:
   max_samples: null # if null, use all samples
   concept_subset: null # if null, use all concepts
 
+  # Scalers fitted on the train split only. 
+  # 'concepts' for *continuous* concepts
+  # 'inputs' for precomputed embeddings or flat tabular features.
+  scalers: null
+
 backbone: null

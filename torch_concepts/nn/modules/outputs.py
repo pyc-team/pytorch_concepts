@@ -21,6 +21,14 @@ ParamDict = Dict[str, torch.Tensor]
 #: (``out.probs``, ``out.logits``, ...) reading ``params[<name>]``.
 QUANTITIES = ("probs", "logits", "loc", "scale", "scale_tril", "value")
 
+#: Quantities a *continuous* concept may be reported under. A continuous concept
+#: is scored on its family's primary parameter, and which family models the type
+#: is the model's choice: ``loc`` for a ``Normal``, ``value`` for a ``Delta`` (a
+#: deterministic point estimate). Consumers with no per-instance quantity config
+#: (e.g. :class:`~torch_concepts.nn.ConceptMetrics`) try both, mirroring the
+#: ``logits``/``probs`` fallback already used for discrete concepts.
+CONTINUOUS_QUANTITIES = ("loc", "value")
+
 
 class _Unset:
     """Default for the quantity constructor arguments.
@@ -91,6 +99,25 @@ class ParamsDict(Dict[str, AnnotatedTensor]):
                 f"queried variable {InferenceOutput._addressable(self)}."
             )
         return views
+
+
+def supervised_subset(tensor, target):
+    """``tensor`` restricted to the variables ``target`` provides truth for.
+
+    A quantity spans every queried variable that reports it, which need not be
+    only the supervised concepts: a generative model queried for all its
+    variables also reports ``probs`` for the reconstructed observation. Those
+    have no ground truth, so a loss or metric drops them rather than looking
+    them up in the target and failing. Returns ``None`` when nothing survives,
+    and the tensor itself when everything does (the common case, no copy).
+    """
+    if tensor is None or target is None:
+        return tensor
+    labels = list(tensor.annotation.labels)
+    keep = [n for n in labels if n in target.annotation.label_to_index]
+    if len(keep) == len(labels):
+        return tensor
+    return tensor[keep] if keep else None
 
 
 # ---------------------------------------------------------------------------

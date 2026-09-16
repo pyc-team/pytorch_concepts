@@ -119,9 +119,9 @@ class ConceptMemoryReasoner(BipartiteModel):
             train_inference_kwargs,
         )
 
-    def default_query(self, ground_truth):
-        """Train both CMR task paths in one inference query."""
-        query = super().default_query(ground_truth)
+    def default_query(self, ground_truth, step="train"):
+        """Include both CMR task paths in the standard split-aware query."""
+        query = super().default_query(ground_truth, step=step)
         query["tasks_with_rec"] = None
         return query
 

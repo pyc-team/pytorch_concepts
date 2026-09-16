@@ -28,5 +28,6 @@ dependencies:
     - transformers # State-of-the-art pretrained models
     - hydra-list-sweeper
     - datasets # HuggingFace datasets
-    - sympy # symbolic math 
-    - sympytorch # sympy to pytorch conversion 
+    - sympy # symbolic math
+    - sympytorch # sympy to pytorch conversion
+    - pyro-ppl # probabilistic programming (Pyro inference backend)

@@ -4,7 +4,7 @@ SteerlingModel — PGM concept bottleneck demo
 
 Tokenize a text prompt and run it through ``SteerlingModel``,
 which wires backbone → known/unknown concept heads → concept embedding
-mixers + residual correction → LM head through a ``ProbabilisticModel`` +
+mixers + residual correction → LM head through a ``BayesianNetwork`` +
 ``DeterministicInference``.
 
 Requirements:
@@ -15,45 +15,50 @@ Note:
 """
 
 import torch
-from torch_concepts.steerling import SteerlingModel
+import pandas as pd
+from torch_concepts.nn.modules.high.models.steerling import SteerlingModel, top_concepts
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # ── 1. Instantiate the model ──────────────────────────────────────
-model = SteerlingModel(
-    pretrained_components=['backbone', 'known_head', 'unknown_head', 'lm_head'],
-    freeze_components=['backbone', 'known_head', 'unknown_head', 'lm_head'],
-    use_unknown=True,
-    use_epsilon_correction=False,
-)
+model = SteerlingModel()
+
 model.to(device=device)
 model.eval()
 print(model)
-model.print_config()
 
 prompt = "As an italian living abroad in the US, I particularly miss"
-n_new_tokens = 1
+n_new_tokens = 20
 
 # ── 2. Sanity check: single forward on the prompt only ────────────
-input_ids, _, _ = model.build_input(prompt, n_new_tokens=0)
-input_ids = input_ids.to(device)
-print(f"\nPrompt: {prompt!r}")
-print(f"Tokens: {input_ids.shape}")
-
 with torch.no_grad():
-    out = model(input_ids)
+    input_ids, _, _ = model.build_input(prompt, n_new_tokens=0)
+    input_ids = input_ids.to(device)
+    print(f"\nPrompt: {prompt!r}")
+    print(f"Tokens: {input_ids.shape}")
+    out = model(input_ids=input_ids)
 
-parts = model.split_full_forward(out.probs)
-print(f"Input hidden states:    {parts['input'].shape}")
-print(f"Known concept scores:   {parts['known_concepts'].shape}")
-if "unknown_concepts" in parts:
-    print(f"Unknown concept scores: {parts['unknown_concepts'].shape}")
-print(f"Known latent mix:       {parts['k_hat'].shape}")
-if "u_hat" in parts:
-    print(f"Unknown latent mix:     {parts['u_hat'].shape}")
-print(f"Epsilon correction:     {parts['epsilon'].shape}, values: {parts['epsilon'][0, -1, :5]}")
-print(f"Reconstructed latent:   {parts['h_bar'].shape}")
-print(f"Next-token scores:      {parts['new_token'].shape}")
+# The default query returns known concepts + next token. Both report logits, so
+# they share one annotated tensor that is sliced by variable name. (The latents
+# h/k_hat/epsilon/h_bar are computed internally but not returned unless
+# queried — see below.)
+concept_logits = out.logits["concepts"]      # (1, T, n_known)
+token_logits   = out.logits["new_token"]     # (1, T, vocab)
+print(f"Known concept logits:  {tuple(concept_logits.shape)}")
+print(f"Next-token logits:     {tuple(token_logits.shape)}")
+
+# Top-5 known concepts at the last prompt token
+pd.set_option("display.max_colwidth", 50)
+pd.set_option("display.width", 120)
+print("\nTop-5 known concepts at last prompt token:")
+print(top_concepts(concept_logits[0, -1:], topk=5).to_string(index=False))
+
+# Latents are not in the default output — query them explicitly by name. They
+# are Delta variables, so they report `value` rather than `logits`.
+with torch.no_grad():
+    h_bar = model(input_ids=input_ids, query=["h_bar"])
+    h_bar = h_bar.value["h_bar"]
+print(f"\nReconstructed latent h_bar (queried explicitly): {tuple(h_bar.shape)}")
 
 # ── 3. Full masked diffusion generation ───────────────────────────
 model.generate(prompt, n_new_tokens=n_new_tokens, verbose=True)

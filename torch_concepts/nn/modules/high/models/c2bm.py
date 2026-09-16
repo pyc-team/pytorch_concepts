@@ -16,7 +16,7 @@ https://arxiv.org/abs/2503.04363
 """
 from typing import Optional
 
-from torch.distributions import Bernoulli, OneHotCategorical
+from torch.distributions import Bernoulli, Normal, OneHotCategorical
 
 from .....annotations import Annotations
 from .....concept_graph import ConceptGraph
@@ -57,7 +57,7 @@ class CausallyReliableConceptBottleneckModel(HomogenGraphModel):
         Forwarded to :class:`BaseModel` (e.g. ``backbone``, ``latent_size``).
     """
 
-    supported_concept_types = frozenset({"binary", "categorical"})
+    supported_concept_types = frozenset({"binary", "categorical", "continuous"})
     param_for_discrete_var = "logits"
     source_embeddings = True
     internal_embeddings = True
@@ -66,6 +66,7 @@ class CausallyReliableConceptBottleneckModel(HomogenGraphModel):
     variable_distributions = {
         'binary': Bernoulli,
         'categorical': OneHotCategorical,
+        'continuous': Normal,
     }
     variable_dist_kwargs = dict(DEFAULT_DIST_KWARGS)
 

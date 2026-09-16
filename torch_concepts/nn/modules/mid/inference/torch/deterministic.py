@@ -23,15 +23,7 @@ class DeterministicInference(ForwardInference):
         The probabilistic graphical model to query.
     p_int : float
         Teacher-forcing probability used when a query variable has a known
-        ground-truth value.  Defaults to ``1.0`` (always teacher-force).
-    activate_before_propagation : bool
-        When ``True``, each variable's propagated parameter is passed
-        through its default activation (see
-        :attr:`~torch_concepts.nn.modules.mid.distributions.DistributionSpec.activations`)
-        before being fed to child CPDs — e.g. a CPD producing ``logits``
-        propagates probabilities downstream. The parameters returned in the
-        inference output remain the raw (non-activated) values. When ``False``,
-        the raw parameter is propagated unchanged.
+        ground-truth value.  Defaults to ``0.0`` (never teacher-force).
     parallelize_levels : bool
         Evaluate conditionally independent variables in the same topological
         level concurrently (see :meth:`ForwardInference.predict_level`).
@@ -41,18 +33,26 @@ class DeterministicInference(ForwardInference):
     name = "DeterministicInference"
     is_stochastic = False
 
+    #: Map a variable parametrized by ``logits`` through its default activation
+    #: (see :attr:`~torch_concepts.nn.modules.mid.distributions.DistributionSpec.param_activations`)
+    #: before feeding it to child CPDs, so it propagates *probabilities*
+    #: downstream; ``out.params`` still reports the raw values.
+    activate_before_propagation = True
+
     def __init__(
             self,
             pgm: BayesianNetwork,
-            activate_before_propagation: bool = True,
             p_int: float = 0.,
             parallelize_levels: bool = False,
+            **temperature_kwargs,
     ):
+        # Accepted and ignored: this engine never samples, but a config that
+        # sets a schedule must not break when it swaps the engine out.
         super().__init__(
             pgm,
             p_int=p_int,
             parallelize_levels=parallelize_levels,
-            activate_before_propagation=activate_before_propagation,
+            **temperature_kwargs,
         )
 
     def _resolve(
@@ -63,7 +63,7 @@ class DeterministicInference(ForwardInference):
     ) -> torch.Tensor:
         """The family's canonical parameter — no sampling (``temperature`` unused)."""
         return propagated_value(
-            variable.distribution,
+            variable,
             params,
             activate=self.activate_before_propagation,
         )

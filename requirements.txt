@@ -8,3 +8,4 @@ pytorch-lightning
 networkx
 sympy
 sympytorch
+pyro-ppl

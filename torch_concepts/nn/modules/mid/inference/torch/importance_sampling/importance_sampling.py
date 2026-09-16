@@ -48,7 +48,7 @@ import torch.distributions as dist
 
 from ....graph.bayesian_network import BayesianNetwork
 from ....distributions import spec_for
-from ...utils import build_distribution, make_temperature_schedule
+from ...utils import build_distribution
 from .....outputs import InferenceOutput
 from ..base import TorchBaseInference
 from ..utils import build_relaxed_distribution
@@ -121,9 +121,16 @@ class ImportanceSampling(TorchBaseInference):
         initial_temperature: float = 1.0,
         annealing: Union[str, Callable[[int], float]] = "constant",
         annealing_rate: float = 0.0,
+        final_temperature: float = 1e-6,
         warn_low_ess: float = 0.01,
     ) -> None:
-        super().__init__(pgm)
+        super().__init__(
+            pgm,
+            initial_temperature=initial_temperature,
+            annealing=annealing,
+            annealing_rate=annealing_rate,
+            final_temperature=final_temperature,
+        )
         self._require_directed()
         if not isinstance(proposal, BaseProposal):
             raise TypeError(
@@ -135,18 +142,6 @@ class ImportanceSampling(TorchBaseInference):
         self.proposal = proposal
         self.n_samples = int(n_samples)
         self.warn_low_ess = float(warn_low_ess)
-        # Retained for repr/introspection; the live schedule lives in ``_schedule``.
-        self.initial_temperature = float(initial_temperature)
-        self.annealing = annealing
-        self.annealing_rate = float(annealing_rate)
-
-        self._schedule = make_temperature_schedule(
-            initial_temperature, annealing, annealing_rate
-        )
-        self._step = 0
-        self.register_buffer(
-            "_temperature", torch.tensor(float(self._schedule(self._step)))
-        )
 
     def __repr__(self) -> str:
         return self._format_repr(
@@ -155,17 +150,9 @@ class ImportanceSampling(TorchBaseInference):
             initial_temperature=self.initial_temperature,
             annealing=self.annealing,
             annealing_rate=self.annealing_rate,
+            final_temperature=self.final_temperature,
             warn_low_ess=self.warn_low_ess,
         )
-
-    @property
-    def temperature(self) -> torch.Tensor:
-        return self._temperature
-
-    def step(self) -> None:
-        """Advance the temperature schedule by one step."""
-        self._step += 1
-        self._temperature.fill_(float(self._schedule(self._step)))
 
     # ------------------------------------------------------------------
     def _model_log_joint(

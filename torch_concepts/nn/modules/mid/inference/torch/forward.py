@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import warnings
 from abc import ABC, abstractmethod
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
@@ -10,107 +9,32 @@ import torch
 
 from ...graph.bayesian_network import BayesianNetwork
 from ...variable import Variable
-from ..utils import make_temperature_schedule, reshape_value_to_event
+from ..utils import reshape_value_to_event, teacher_force
 from ....outputs import InferenceOutput
 from .base import TorchBaseInference
-
-
-def _align_gt(
-    gt: torch.Tensor, ref: torch.Tensor, name: Optional[str] = None
-) -> torch.Tensor:
-    """Cast and reshape ground-truth tensor to match the dtype and shape of ref.
-
-    Step-by-step:
-    1. Cast ``gt`` to ``ref``\'s dtype so arithmetic ops don\'t raise type errors
-       (e.g. LongTensor label vs FloatTensor network output).
-    2. If shapes already match after the cast, return immediately.
-    3. Handle the common "extra trailing 1" mismatches that arise when some
-       code paths squeeze scalars and others don\'t:
-       - ``gt`` has one more dim than ``ref`` and its last dim is 1 → squeeze it off.
-       - ``gt`` has one fewer dim than ``ref`` and ``ref``\'s last dim is 1 → unsqueeze.
-    4. Finally, broadcast ``gt`` to exactly ``ref``\'s shape so downstream ops
-       (e.g. per-element masking) can use ``gt`` in place of ``ref``.
-
-    Step 4 also silently rescues genuinely wrong targets — e.g. a ``(B,)`` label
-    stretched across a ``(B, k)`` output — so a broadcast that is not one of the
-    trailing-1 cases warns once per (name, shape) pair.
-    """
-    aligned = gt.to(ref.dtype) if gt.dtype != ref.dtype else gt
-    if aligned.shape == ref.shape:
-        return aligned
-
-    original_shape = tuple(aligned.shape)
-    if aligned.dim() == ref.dim() + 1 and aligned.shape[-1] == 1:
-        aligned = aligned.squeeze(-1)
-    elif aligned.dim() + 1 == ref.dim() and ref.shape[-1] == 1:
-        aligned = aligned.unsqueeze(-1)
-    if aligned.shape == ref.shape:
-        return aligned
-
-    _warn_broadcast(name, original_shape, tuple(ref.shape))
-    return aligned.expand_as(ref)
-
-
-# (name, target shape, reference shape) triples already warned about, so a
-# training loop reports a suspicious target once rather than every step.
-_BROADCAST_WARNED: set = set()
-
-
-def _warn_broadcast(name: Optional[str], gt_shape: tuple, ref_shape: tuple) -> None:
-    key = (name, gt_shape, ref_shape)
-    if key in _BROADCAST_WARNED:
-        return
-    _BROADCAST_WARNED.add(key)
-    target = f"for {name!r}" if name else "for a query variable"
-    warnings.warn(
-        f"Teacher forcing {target}: the target of shape {gt_shape} does not match "
-        f"the predicted shape {ref_shape} and is being broadcast to fit. This is "
-        "usually a mis-shaped label (e.g. class indices where a one-hot or "
-        "per-element target is expected); pass a target of shape "
-        f"{ref_shape} to silence this.",
-        UserWarning,
-        stacklevel=3,
-    )
-
-
-def _teacher_force(
-    nn_value: torch.Tensor,
-    gt: torch.Tensor,
-    p_int: float,
-    n_leading: int,
-    name: Optional[str] = None,
-) -> torch.Tensor:
-    """Stochastically replace nn_value with ground truth at rate p_int.
-
-    The draw is per leading (batch-like) element: ``n_leading`` says how many of
-    ``nn_value``'s dimensions are leading, so a variable is forced or not as a
-    whole, whatever its event shape and however many batch axes there are.
-    """
-    aligned = _align_gt(gt, nn_value, name)
-    if p_int >= 1.0:
-        return aligned
-    if p_int <= 0.0:
-        return nn_value
-    mask_shape = nn_value.shape[:n_leading] + (1,) * (nn_value.dim() - n_leading)
-    mask = (torch.rand(mask_shape, device=nn_value.device) < p_int).to(nn_value.dtype)
-    return mask * aligned + (1.0 - mask) * nn_value
 
 
 class ForwardInference(TorchBaseInference, ABC):
     """Abstract base class for torch based, forward-pass inference engines.
 
     Concrete subclasses (:class:`DeterministicInference`,
-    :class:`AncestralSamplingInference`) implement :meth:`_propagate` to decide
-    how each variable is resolved — deterministically (MAP estimate) or by
-    ancestral sampling — and set :attr:`is_stochastic` accordingly. All shared
-    logic (topological traversal, evidence clamping, teacher forcing,
-    temperature schedule) lives here.
+    :class:`AncestralSamplingInference`,
+    :class:`~.map_forward.MAPForwardInference`) implement :meth:`_resolve` to
+    decide how each variable is realised — by propagating its canonical
+    parameter, by ancestral sampling, or by taking the CPD's mode — and declare
+    their behaviour with the class attributes below. All shared logic
+    (topological traversal, evidence clamping, teacher forcing, temperature
+    schedule) lives here.
 
     Subclasses declare their behaviour with two class attributes:
 
-    - :attr:`is_stochastic` — whether :meth:`_propagate` draws samples. Controls
-      whether realisations are reported in ``out.samples`` and whether
-      :meth:`step` advances the temperature schedule.
+    - :attr:`is_stochastic` — whether :meth:`_resolve` produces a *realisation*
+      rather than a propagated parameter. Controls whether realisations are
+      reported in ``out.samples``, the reported :attr:`mode`, and whether
+      :meth:`temperature_step` advances the temperature schedule. Set by the
+      sampling engines and by :class:`~.map_forward.MAPForwardInference`, whose
+      hard modes are realisations too (it overrides :attr:`mode` and ignores the
+      temperature).
     - :attr:`name` — the engine name used in messages and ``repr``.
 
     Parameters
@@ -119,12 +43,11 @@ class ForwardInference(TorchBaseInference, ABC):
         The model to query. Must be directed: the pass walks ``pgm.levels`` in
         topological order, which only a ``BayesianNetwork`` provides.
     p_int : float, optional
-        Teacher-forcing probability in ``[0, 1]``: the per-sample chance of
-        propagating a query variable's ground-truth target instead of the
-        model's own prediction. ``1.0`` recovers sequential/independent CBM
-        training, ``0.0`` joint training, and an intermediate value the
-        CEM-style random-intervention regime. Only applies to query entries
-        that carry a target tensor.
+        Teacher-forcing probability in ``[0, 1]``; see
+        :class:`~torch_concepts.nn.modules.mid.inference.base.BaseInference`.
+        ``1.0`` recovers sequential/independent CBM training, ``0.0`` joint
+        training, and an intermediate value the CEM-style random-intervention
+        (RandInt) regime. Only applies to query entries that carry a target.
     initial_temperature : float, optional
         Starting temperature of the relaxed-discrete distributions. Ignored by
         the deterministic engines, which never sample.
@@ -138,11 +61,6 @@ class ForwardInference(TorchBaseInference, ABC):
         level concurrently via ``torch.jit.fork``. For a stochastic engine this
         makes the RNG draw order non-deterministic, trading reproducibility for
         speed.
-    activate_before_propagation : bool, optional
-        Deterministic engines only: pass each propagated parameter through its
-        family's default activation before feeding it to child CPDs, so a CPD
-        emitting ``logits`` propagates probabilities downstream. The parameters
-        reported in ``out.params`` stay the raw, non-activated values.
 
     Raises
     ------
@@ -160,36 +78,25 @@ class ForwardInference(TorchBaseInference, ABC):
     def __init__(
         self,
         pgm: BayesianNetwork,
-        p_int: float = 1.0,
+        p_int: float = 0.0,
         initial_temperature: float = 1.0,
         annealing: Union[str, Callable[[int], float]] = "constant",
         annealing_rate: float = 0.0,
+        final_temperature: float = 1e-6,
         parallelize_levels: bool = False,
-        activate_before_propagation: bool = True,
     ):
-        super().__init__(pgm)
+        super().__init__(
+            pgm,
+            initial_temperature=initial_temperature,
+            annealing=annealing,
+            annealing_rate=annealing_rate,
+            final_temperature=final_temperature,
+            p_int=p_int,
+        )
         self._require_directed()
-        if not 0.0 <= float(p_int) <= 1.0:
-            raise ValueError(f"p_int must be in [0, 1], got {p_int!r}.")
-        self.p_int = float(p_int)
-        # When True (deterministic engines only), the propagated parameter is
-        # passed through its default activation before being fed to child CPDs.
-        # The parameters reported in the inference output stay the raw
-        # (non-activated) values produced by the CPD.
-        self.activate_before_propagation = bool(activate_before_propagation)
         # When True, variables in the same topological level (conditionally
         # independent given the previous levels) are evaluated concurrently.
         self.parallelize_levels = bool(parallelize_levels)
-        # Retained for repr/introspection; the live schedule lives in ``_schedule``.
-        self.initial_temperature = float(initial_temperature)
-        self.annealing = annealing
-        self.annealing_rate = float(annealing_rate)
-        self._schedule = make_temperature_schedule(initial_temperature, annealing, annealing_rate)
-        self._step = 0
-        self.register_buffer(
-            "_temperature",
-            torch.tensor(float(self._schedule(self._step))),
-        )
         # Memoized required-variable sets, keyed by the (query, evidence) name
         # signature. The DAG is immutable, so a given signature always yields
         # the same set — for a training loop the signature is constant.
@@ -202,8 +109,8 @@ class ForwardInference(TorchBaseInference, ABC):
             initial_temperature=self.initial_temperature,
             annealing=self.annealing,
             annealing_rate=self.annealing_rate,
+            final_temperature=self.final_temperature,
             parallelize_levels=self.parallelize_levels,
-            activate_before_propagation=self.activate_before_propagation,
         )
 
     @property
@@ -214,22 +121,6 @@ class ForwardInference(TorchBaseInference, ABC):
         its class, not by a constructor flag.
         """
         return "ancestral" if self.is_stochastic else "deterministic"
-
-    @property
-    def temperature(self) -> torch.Tensor:
-        return self._temperature
-
-    def temperature_step(self) -> None:
-        """Advance the temperature schedule (no-op for deterministic engines).
-
-        Rebinds the ``_temperature`` buffer to a fresh scalar rather than
-        filling it in place.
-        """
-        if self.is_stochastic and self.training:
-            self._step += 1
-            self._temperature = self._temperature.new_full(
-                (), float(self._schedule(self._step))
-            )
 
     # ------------------------------------------------------------------
     # Per-variable and per-level prediction
@@ -243,11 +134,13 @@ class ForwardInference(TorchBaseInference, ABC):
         CPDs expect as input) and reshaped to ``(*leading, *variable.shape)``.
         A numel mismatch raises instead of silently broadcasting.
         """
-        try:
-            dtype = next(self.pgm.parameters()).dtype
-        except StopIteration:
-            dtype = torch.get_default_dtype()
-        return reshape_value_to_event(variable, value.to(dtype))
+        if value.is_floating_point():
+            try:
+                dtype = next(self.pgm.parameters()).dtype
+            except StopIteration:
+                dtype = torch.get_default_dtype()
+            value = value.to(dtype)
+        return reshape_value_to_event(variable, value)
 
     def _required_variables(self, query_names: set, evidence_names: set) -> set:
         """Variables whose value must be resolved to answer the query.
@@ -314,7 +207,7 @@ class ForwardInference(TorchBaseInference, ABC):
         value = self._propagate(variable, params, temperature)
         target = query.get(name)
         if target is not None:
-            value = _teacher_force(value, target, self.p_int, len(leading), name)
+            value = teacher_force(value, target, self.p_int, len(leading), name)
         # Partial-plate observation: splice the observed members over the computed
         # value (the CPD owns the column write). ``member_evidence`` is {} unless
         # this variable has individually-observed members.
@@ -372,6 +265,7 @@ class ForwardInference(TorchBaseInference, ABC):
         query: Union[List[str], Dict[str, Optional[torch.Tensor]]],
         evidence: Dict[str, torch.Tensor],
         layer_kwargs: Optional[Dict[str, Dict]] = None,
+        n_samples: Optional[int] = None,
     ) -> InferenceOutput:
         """Run a forward pass in topological order, looping over variables.
 
@@ -391,13 +285,20 @@ class ForwardInference(TorchBaseInference, ABC):
         Every tensor may carry any number of leading (batch-like) dimensions —
         ``(*leading, *event)`` — and the results come back with that same leading
         shape. The event always lives on the last axis.
+
+        ``n_samples`` sets the batch size for an **unconditional** pass, where
+        neither the evidence nor the query carries a tensor to read one from —
+        i.e. every root is drawn from its own prior. Ignored otherwise, since the
+        supplied tensors already fix the leading shape. This is how a generative
+        model is sampled: query the variables of interest, supply no evidence,
+        and ask for ``n_samples`` draws.
         """
         query = self._normalize_query(query)
         self._validate_containers(query, evidence)
         layer_kwargs = layer_kwargs or {}
 
         query_names = list(query)
-        leading = self._query_leading_shape(query, evidence)
+        leading = self._query_leading_shape(query, evidence, default=n_samples)
 
         # Whole-variable evidence clamps-and-skips its CPD; member evidence is
         # threaded to ``clamp_members`` (a no-op for the empty dict).
@@ -422,12 +323,9 @@ class ForwardInference(TorchBaseInference, ABC):
                     continue  # fully-observed variable: clamped, no params emitted
                 computed[name] = params
 
-        # advance the temperature schedule if stochastic and training mode.
-        self.temperature_step()  
-
         # Assemble once. ``params`` covers the queried names; ``samples`` covers
-        # every variable the pass actually drew, queried or not — an ancestor
-        # sampled only to reach the query is still a draw the caller may want.
+        # every variable the pass actually realised, queried or not — an ancestor
+        # resolved only to reach the query is still a value the caller may want.
         return InferenceOutput(
             params=self._assemble_params(computed, query_names),
             samples=(
@@ -448,8 +346,9 @@ class ForwardInference(TorchBaseInference, ABC):
         """Turn a CPD's parameters into a flat ``(batch, size)`` realisation.
 
         The one behavioural difference between the forward engines: a point
-        estimate (:class:`DeterministicInference`) or a reparameterised draw
-        (:class:`AncestralSamplingInference`).
+        estimate (:class:`DeterministicInference`), a reparameterised draw
+        (:class:`AncestralSamplingInference`), or the CPD's mode
+        (:class:`~.map_forward.MAPForwardInference`).
         """
 
     def _propagate(

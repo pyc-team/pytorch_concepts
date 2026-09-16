@@ -63,7 +63,7 @@ class BaseConceptLayer(ABC, torch.nn.Module):
         self,
         out_concepts: Union[int, Annotations],
         in_concepts: Union[int, Annotations] = None,
-        in_embeddings: Union[int, Annotations] = None,
+        in_embeddings: int = None,
         *args,
         **kwargs,
     ):
@@ -76,9 +76,7 @@ class BaseConceptLayer(ABC, torch.nn.Module):
         if in_concepts is not None:
             self.in_concepts_shape = in_concepts if isinstance(in_concepts, int) else in_concepts.size
 
-        self.in_embeddings_shape = None
-        if in_embeddings is not None:
-            self.in_embeddings_shape = in_embeddings if isinstance(in_embeddings, int) else in_embeddings.size
+        self.in_embeddings_shape = in_embeddings
 
         self.out_concepts_shape = out_concepts if isinstance(out_concepts, int) else out_concepts.size
 
