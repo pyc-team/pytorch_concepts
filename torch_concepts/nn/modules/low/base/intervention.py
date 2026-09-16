@@ -11,7 +11,17 @@ import torch
 import torch.nn as nn
 
 
-class BaseConceptInterventionStrategy(nn.Module, ABC):
+class InterventionStrategy(ABC):
+    """
+    Abstract base class shared by all intervention strategies.
+
+    It carries no behaviour: concept strategies override ``forward`` to rewrite a
+    layer's output, module strategies override ``transform`` to rewrite the layer
+    itself. It exists so that both kinds can be named and type-checked as one thing.
+    """
+
+
+class ConceptInterventionStrategy(nn.Module, InterventionStrategy):
     """
     Abstract base class for intervention strategies.
 
@@ -19,7 +29,7 @@ class BaseConceptInterventionStrategy(nn.Module, ABC):
     """
     def __init__(self, *args, **kwargs):
         """Initialize the intervention module."""
-        super(BaseConceptInterventionStrategy, self).__init__()
+        super(ConceptInterventionStrategy, self).__init__()
 
     @abstractmethod
     def forward(self, *args, **kwargs) -> torch.Tensor:
@@ -27,7 +37,7 @@ class BaseConceptInterventionStrategy(nn.Module, ABC):
         raise NotImplementedError
 
 
-class BaseModuleInterventionStrategy(ABC):
+class ModuleInterventionStrategy(InterventionStrategy):
     """
     Abstract base class for intervention strategies.
 
@@ -35,7 +45,7 @@ class BaseModuleInterventionStrategy(ABC):
     """
     def __init__(self, *args, **kwargs):
         """Initialize the intervention module."""
-        super(BaseModuleInterventionStrategy, self).__init__()
+        super(ModuleInterventionStrategy, self).__init__()
 
     @abstractmethod
     def transform(self, module: nn.Module, *args, **kwargs) -> nn.Module:
@@ -43,9 +53,9 @@ class BaseModuleInterventionStrategy(ABC):
         raise NotImplementedError
 
 
-class BaseInterventionPolicy(nn.Module, ABC):
+class InterventionPolicy(nn.Module, ABC):
     def __init__(self):
-        super(BaseInterventionPolicy, self).__init__()
+        super(InterventionPolicy, self).__init__()
 
     @abstractmethod
     def forward(self, x, *args, **kwargs) -> torch.Tensor:

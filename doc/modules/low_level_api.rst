@@ -107,6 +107,7 @@ Interventions
    :nosignatures:
 
    intervention
+   InterventionModule
    GroundTruthIntervention
    DoIntervention
    DistributionIntervention
@@ -134,7 +135,7 @@ Base Classes
 
    BaseConceptLayer
    BaseGraphLearner
-   BaseConceptInterventionStrategy
-   BaseModuleInterventionStrategy
-   BaseInterventionPolicy
-   BaseInterventionModule
+   InterventionStrategy
+   ConceptInterventionStrategy
+   ModuleInterventionStrategy
+   InterventionPolicy

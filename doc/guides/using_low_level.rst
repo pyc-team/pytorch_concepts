@@ -203,10 +203,10 @@ Expand each block below for an explanation and an example of how to use it.
 
     - A **strategy** decides *how* to intervene. Two kinds are supported:
 
-      - **Concept strategies** (``BaseConceptInterventionStrategy``): override the layer's
+      - **Concept strategies** (``ConceptInterventionStrategy``): override the layer's
         *output* concept values — e.g. ``DoIntervention`` (set to a constant) or
         ``GroundTruthIntervention`` (set to ground-truth labels).
-      - **Mechanism strategies** (``BaseModuleInterventionStrategy``): modify the layer's
+      - **Mechanism strategies** (``ModuleInterventionStrategy``): modify the layer's
         *weights and connections* — e.g. ``PositiveWeightsIntervention`` (force positive
         weights, making the layer monotonic).
 

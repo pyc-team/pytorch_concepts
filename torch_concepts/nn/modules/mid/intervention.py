@@ -3,9 +3,10 @@ from contextlib import contextmanager
 from typing import Callable, Dict, List, Optional, Union
 
 from ..low.base.intervention import (
-    BaseConceptInterventionStrategy,
-    BaseModuleInterventionStrategy,
-    BaseInterventionPolicy,
+    InterventionStrategy,
+    ConceptInterventionStrategy,
+    ModuleInterventionStrategy,
+    InterventionPolicy,
 )
 from ..low.intervention.intervention import InterventionModule
 from .graph.probabilistic_model import ProbabilisticModel
@@ -14,8 +15,8 @@ from .graph.probabilistic_model import ProbabilisticModel
 @contextmanager
 def intervention(
         probabilistic_model: ProbabilisticModel,
-        intervention_strategy: Union[BaseConceptInterventionStrategy, BaseModuleInterventionStrategy],
-        intervention_policy: BaseInterventionPolicy,
+        intervention_strategy: InterventionStrategy,
+        intervention_policy: InterventionPolicy,
         variable_to_intervene_on: str,
         parameter_to_intervene_on: str,
         members_to_intervene_on: Union[List[int], List[str]] = None,

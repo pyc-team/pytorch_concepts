@@ -1,9 +1,9 @@
 import torch
 
-from ...base.intervention import BaseInterventionPolicy
+from ...base.intervention import InterventionPolicy
 
 
-class RandomPolicy(BaseInterventionPolicy):
+class RandomPolicy(InterventionPolicy):
     """
     Random intervention policy that generates random values for concept selection.
 

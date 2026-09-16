@@ -1,9 +1,9 @@
 import torch
 
-from ...base.intervention import BaseInterventionPolicy
+from ...base.intervention import InterventionPolicy
 
 
-class UncertaintyInterventionPolicy(BaseInterventionPolicy):
+class UncertaintyInterventionPolicy(InterventionPolicy):
     """
     Uncertainty-based intervention policy using distance from a maximum uncertainty point.
 

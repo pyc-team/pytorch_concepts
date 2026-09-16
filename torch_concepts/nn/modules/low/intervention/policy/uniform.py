@@ -1,9 +1,9 @@
 import torch
 
-from ...base.intervention import BaseInterventionPolicy
+from ...base.intervention import InterventionPolicy
 
 
-class UniformPolicy(BaseInterventionPolicy):
+class UniformPolicy(InterventionPolicy):
     """
     Uniform intervention policy that assigns equal priority to all concepts.
 

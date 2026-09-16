@@ -516,8 +516,8 @@ from torch_concepts.nn.modules.low.intervention.strategy.positive_weights import
 class TestPositiveWeightsIntervention:
     def test_construction(self):
         strat = PositiveWeightsIntervention()
-        from torch_concepts.nn.modules.low.base.intervention import BaseModuleInterventionStrategy
-        assert isinstance(strat, BaseModuleInterventionStrategy)
+        from torch_concepts.nn.modules.low.base.intervention import ModuleInterventionStrategy
+        assert isinstance(strat, ModuleInterventionStrategy)
 
     def test_transform_makes_weights_nonnegative(self):
         enc = _make_enc()
@@ -565,8 +565,8 @@ from torch_concepts.nn.modules.low.intervention.policy.gradient import GradientP
 class TestGradientPolicy:
     def test_construction(self):
         p = GradientPolicy()
-        from torch_concepts.nn.modules.low.base.intervention import BaseInterventionPolicy
-        assert isinstance(p, BaseInterventionPolicy)
+        from torch_concepts.nn.modules.low.base.intervention import InterventionPolicy
+        assert isinstance(p, InterventionPolicy)
 
     def test_with_gradients_returns_abs(self):
         p = GradientPolicy()
@@ -623,16 +623,15 @@ class TestInterventionModuleCoverage:
         assert context_called
 
     def test_invalid_strategy_type_raises(self):
-        """Passing an object that is neither BaseConceptInterventionStrategy nor BaseModuleInterventionStrategy raises."""
+        """Passing an object that is neither ConceptInterventionStrategy nor
+        ModuleInterventionStrategy raises at construction time."""
         enc = _make_enc()
 
         class FakeStrategy:
             pass
 
-        m = InterventionModule(enc, FakeStrategy(), UniformPolicy())
-        x = torch.randn(B, enc.in_f)
-        with pytest.raises((ValueError, AttributeError)):
-            m(x)
+        with pytest.raises(ValueError):
+            InterventionModule(enc, FakeStrategy(), UniformPolicy())
 
     def test_sel_idx_string_type_raises(self):
         """String-based concept selection without Annotations raises ValueError."""
@@ -738,13 +737,13 @@ class TestInterventionModuleCoverage:
 # ===========================================================================
 
 from torch_concepts.nn.modules.low.base.intervention import (
-    BaseConceptInterventionStrategy,
-    BaseModuleInterventionStrategy,
-    BaseInterventionPolicy,
+    ConceptInterventionStrategy,
+    ModuleInterventionStrategy,
+    InterventionPolicy,
 )
 
 
-class TestBaseInterventionModuleCoverageExtra:
+class TestInterventionModuleCoverageExtra:
     def test_patch_forward_signature_exception_branch(self):
         """A forward with no inspectable signature triggers the except (ValueError/TypeError) branch (lines 99-100)."""
         class _Unpatchable(nn.Module):
@@ -760,26 +759,27 @@ class TestBaseInterventionModuleCoverageExtra:
         m = InterventionModule(enc, DoIntervention(0.5), UniformPolicy())
         assert m.original_module is enc
 
-    def test_base_build_context_raises_not_implemented(self):
-        """BaseInterventionModule.build_context raises NotImplementedError (line 128)."""
-        from torch_concepts.nn.modules.low.intervention.intervention import (
-            BaseInterventionModule,
-        )
+    def test_build_context_defaults_to_empty_dict(self):
+        """InterventionModule.build_context returns {} when no callable is supplied."""
+        enc = _make_enc()
+        m = InterventionModule(enc, DoIntervention(0.0), UniformPolicy())
+        assert m.build_context({}, enc, torch.randn(B, F)) == {}
 
-        class _Concrete(BaseInterventionModule):
+    def test_build_context_override_in_subclass(self):
+        """A subclass overriding build_context still wins over the default."""
+        class _Sub(InterventionModule):
             def build_context(self, *args, **kwargs):
-                return super().build_context(*args, **kwargs)
+                return {"marker": torch.zeros(1)}
 
         enc = _make_enc()
-        m = _Concrete(enc, DoIntervention(0.0), UniformPolicy())
-        with pytest.raises(NotImplementedError):
-            m.build_context({}, enc, torch.randn(B, F))
+        m = _Sub(enc, DoIntervention(0.0), UniformPolicy())
+        assert "marker" in m.build_context({}, enc, torch.randn(B, F))
 
 
 class TestBaseInterventionAbstractMethods:
     def test_base_concept_strategy_forward_raises(self):
-        """BaseConceptInterventionStrategy.forward raises NotImplementedError (line 27)."""
-        class _ConcreteStrategy(BaseConceptInterventionStrategy):
+        """ConceptInterventionStrategy.forward raises NotImplementedError (line 27)."""
+        class _ConcreteStrategy(ConceptInterventionStrategy):
             def forward(self, *args, **kwargs):
                 return super().forward(*args, **kwargs)
 
@@ -788,8 +788,8 @@ class TestBaseInterventionAbstractMethods:
             strat(torch.randn(2, 3))
 
     def test_base_module_strategy_transform_raises(self):
-        """BaseModuleInterventionStrategy.transform raises NotImplementedError (line 43)."""
-        class _ConcreteModuleStrategy(BaseModuleInterventionStrategy):
+        """ModuleInterventionStrategy.transform raises NotImplementedError (line 43)."""
+        class _ConcreteModuleStrategy(ModuleInterventionStrategy):
             def transform(self, module, *args, **kwargs):
                 return super().transform(module, *args, **kwargs)
 
@@ -798,8 +798,8 @@ class TestBaseInterventionAbstractMethods:
             strat.transform(nn.Linear(2, 2))
 
     def test_base_policy_forward_raises(self):
-        """BaseInterventionPolicy.forward raises NotImplementedError (line 53)."""
-        class _ConcretePolicy(BaseInterventionPolicy):
+        """InterventionPolicy.forward raises NotImplementedError (line 53)."""
+        class _ConcretePolicy(InterventionPolicy):
             def forward(self, x, *args, **kwargs):
                 return super().forward(x, *args, **kwargs)
 
