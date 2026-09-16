@@ -41,14 +41,12 @@ class MixConceptEmbeddings(nn.Module):
     def __init__(
         self,
         in_concepts: Annotations,
-        in_embeddings: Union[int, Annotations],
+        in_embeddings: int,
     ):
         super().__init__()
         self.in_concepts = in_concepts
         self.in_embeddings = in_embeddings
-        self.in_embeddings_shape = (
-            in_embeddings if isinstance(in_embeddings, int) else in_embeddings.size
-        )
+        self.in_embeddings_shape = in_embeddings
         # find positions of concepts with cardinality 1 for Bernoulli to Categorical splitting
         self.cardinalities_expanded = torch.tensor(in_concepts.cardinalities)
         self.binary_mask = torch.from_numpy(np.array(in_concepts.types) != 'continuous')
@@ -143,7 +141,7 @@ class MixConceptEmbeddingToConcept(BaseConceptLayer):
     def __init__(
         self,
         in_concepts: Annotations,
-        in_embeddings: Union[int, Annotations],
+        in_embeddings: int,
         out_concepts: Union[int, Annotations],
         bias: bool = True,
         **kwargs,
@@ -206,7 +204,7 @@ class MixSumConceptEmbeddingToConcept(BaseConceptLayer):
     def __init__(
         self,
         in_concepts: Annotations,
-        in_embeddings: Union[int, Annotations],
+        in_embeddings: int,
         out_concepts: Union[int, Annotations],
         bias: bool = True,
         **kwargs

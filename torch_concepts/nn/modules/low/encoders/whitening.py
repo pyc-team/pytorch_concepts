@@ -297,7 +297,7 @@ class WhitenedEmbeddingToConcept(BaseConceptLayer):
 
     def __init__(
         self,
-        in_embeddings: Union[int, Annotations],
+        in_embeddings: int,
         out_concepts: Union[int, Annotations],
         **kwargs,
     ):
