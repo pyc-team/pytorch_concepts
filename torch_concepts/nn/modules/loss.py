@@ -912,6 +912,8 @@ class WeightedConceptLoss(CompositeLoss):
         **loss_kwargs,
     ):
         task_names = list(task_names)
+        concept_weight = float(concept_weight)
+        task_weight = float(task_weight)
         super().__init__(
             terms=[
                 ConceptSubset(ConceptLoss(**loss_kwargs), exclude=task_names),
@@ -1055,37 +1057,26 @@ class L1LogitRegularizer(nn.Module):
             return self.scale * input[mask].abs().mean()
         return torch.zeros((), device=input.device)
 
-class CMRBlendedLoss(PyCLoss):
-    """CMR objective that switches task path based on the binary label.
 
-    Negative examples supervise the ordinary task probabilities, while positive
-    examples supervise the reconstruction-aware probabilities. Intermediate
-    concepts are supervised with ordinary binary cross entropy.
-    """
+class CMRTaskLoss(PyCLoss):
+    """The label-switched task term specific to CMR."""
 
-    def __init__(
-        self,
-        task_names,
-        concept_weight: float = 1.0,
-        task_weight: float = 1.0,
-    ):
+    def __init__(self, task_names):
         super().__init__()
         self.task_names = list(task_names)
-        self.concept_weight = float(concept_weight)
-        self.task_weight = float(task_weight)
 
     def forward(self, output: ModelOutput, target=None) -> torch.Tensor:
         target = target if target is not None else output.target
         if target is None:
-            raise ValueError("CMRBlendedLoss requires a concept-space target.")
+            raise ValueError("CMRTaskLoss requires a concept-space target.")
         if output.probs is None:
-            raise ValueError("CMRBlendedLoss requires Bernoulli probability outputs.")
+            raise ValueError("CMRTaskLoss requires Bernoulli probability outputs.")
         if (
             output.value is None
             or "tasks_with_rec" not in output.value.annotation.label_to_index
         ):
             raise ValueError(
-                "CMRBlendedLoss requires output.value[\"tasks_with_rec\"]."
+                "CMRTaskLoss requires output.value[\"tasks_with_rec\"]."
             )
 
         task_target = target[self.task_names].to(output.probs.dtype)
@@ -1095,19 +1086,6 @@ class CMRBlendedLoss(PyCLoss):
             raise ValueError(
                 "CMR task predictions and targets must have identical shapes."
             )
-
-        concept_names = [
-            name
-            for name in target.annotation.labels
-            if name not in self.task_names
-        ]
-        if concept_names:
-            concept_loss = F.binary_cross_entropy(
-                output.probs[concept_names],
-                target[concept_names].to(output.probs.dtype),
-            )
-        else:
-            concept_loss = task_pred.new_zeros(())
 
         normal_bce = F.binary_cross_entropy(
             task_pred, task_target, reduction="none"
@@ -1119,8 +1097,4 @@ class CMRBlendedLoss(PyCLoss):
             (1.0 - task_target) * normal_bce
             + task_target * rec_bce
         )
-        task_loss = switched.mean()
-        return (
-            self.concept_weight * concept_loss
-            + self.task_weight * task_loss
-        )
+        return switched.mean()

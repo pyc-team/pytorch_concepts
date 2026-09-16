@@ -23,7 +23,9 @@ engine, while evaluation keeps the default ``p_int=0.0``.
 import torch
 from torch_concepts import seed_everything
 from torch_concepts.nn import (
-    CMRBlendedLoss,
+    CMRTaskLoss,
+    CompositeLoss,
+    ConceptSubset,
     ConceptBottleneckModel,
     ConceptEmbeddingModel,
     ConceptMemoryReasoner,
@@ -210,6 +212,54 @@ def main():
     trainer_cem = Trainer(max_epochs=100)
     trainer_cem.fit(model_cem, datamodule=datamodule)
     evaluate(model_cem, datamodule, n_concepts, query)
+
+
+    # =========================================================================
+    # CMR WITH JOINT TRAINING
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("Example 4: CMR with Joint Training")
+    print("=" * 60)
+
+    task_names = ["xor"]
+    cmr_loss = CompositeLoss(
+        terms=[
+            ConceptSubset(
+                ConceptLoss(
+                    binary=torch.nn.BCELoss(),
+                    binary_param="probs",
+                ),
+                exclude=task_names,
+            ),
+            CMRTaskLoss(task_names),
+        ],
+        weights=[1.0, 1.0],
+        names=["concepts", "tasks"],
+    )
+    model_cmr = ConceptMemoryReasoner(
+        input_size=n_features,
+        annotations=annotations,
+        backbone=MLP(input_size=n_features, hidden_size=16, n_layers=1),
+        latent_size=16,
+        variable_distributions=variable_distributions,
+        task_names=task_names,
+        n_rules=10,
+        memory_latent_size=100,
+        memory_decoder_hidden_layers=1,
+        selector_hidden_layers=1,
+        hard_roles_at_eval=True,
+        inference=DeterministicInference,
+        train_inference=DeterministicInference,
+        lightning=True,
+        loss=cmr_loss,
+        rec_weight=0,
+        optim_class=optim,
+        optim_kwargs={"lr": 0.01},
+    )
+
+    trainer_cmr = Trainer(max_epochs=100)
+    trainer_cmr.fit(model_cmr, datamodule=datamodule)
+    evaluate(model_cmr, datamodule, n_concepts, query)
 
 
 if __name__ == "__main__":
