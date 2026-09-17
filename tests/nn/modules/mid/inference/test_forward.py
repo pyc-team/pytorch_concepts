@@ -235,7 +235,9 @@ class TestFormatEvidence:
         value = torch.randint(0, 4, (3, 4), dtype=torch.long)
         out = eng._format_evidence(x, value)
         assert out.dtype == torch.long
-        assert torch.equal(out, value)
+        # Read into the member layout the cache holds; the values are untouched.
+        assert out.shape == (3, 1, 4)
+        assert torch.equal(x.to_event(out), value)
 
     def test_no_parameters_falls_back_to_default_dtype(self):
         """With no learnable parameters, dtype falls back to the global default."""
@@ -452,7 +454,10 @@ class TestInferenceOutputAlias:
 # ===========================================================================
 
 from torch_concepts.nn.modules.mid.inference.torch.rejection import RejectionSampling
-from torch_concepts.nn.modules.mid.inference.torch.importance_sampling.importance_sampling import ImportanceSampling
+from torch_concepts.nn.modules.mid.inference.torch.importance_sampling.importance_sampling import (
+    ImportanceSampling,
+    _soft_match,
+)
 from torch_concepts.nn.modules.mid.inference.torch.importance_sampling.mutilated_network import MutilatedNetworkProposal
 from torch_concepts.nn.modules.mid.inference.torch.importance_sampling.base_proposal import BaseProposal, _stabilize_relaxed
 from torch_concepts.distributions import Delta
@@ -668,13 +673,28 @@ class TestRejectionSamplingValidation:
                 evidence={},
             )
 
-    def test_continuous_evidence_variable_raises(self):
-        """Providing a continuous variable as evidence should raise ValueError."""
+    def test_continuous_root_evidence_is_clamped(self):
+        """Continuous evidence on a root is clamped into the draw, not matched."""
         m = _make_mixed_model()
         eng = RejectionSampling(m, n_samples=10)
-        with pytest.raises(ValueError, match="not discrete"):
+        out = eng.query(
+            query={"c": torch.tensor([[1.0]])},
+            evidence={"x": torch.randn(1, 4)},
+        )
+        assert out.probabilities.shape == (1,)
+        assert 0.0 <= float(out.probabilities[0]) <= 1.0
+
+    def test_continuous_nonroot_evidence_raises(self):
+        """Continuous evidence below the roots would be matched exactly: it raises."""
+        a = ConceptVariable("a", distribution=dist.Bernoulli, size=1)
+        x = ConceptVariable("x", distribution=Delta, size=4)
+        cpd_a = ParametricCPD(variable=a, parametrization={"probs": FixedPrior(torch.tensor([0.5]))})
+        cpd_x = ParametricCPD(variable=x, parametrization={"value": nn.Linear(1, 4)}, parents=[a])
+        m = BayesianNetwork(variables=[a, x], factors=[cpd_a, cpd_x])
+        eng = RejectionSampling(m, n_samples=10)
+        with pytest.raises(ValueError, match="non-root evidence variable 'x'.*not discrete"):
             eng.query(
-                query={"c": torch.tensor([[1.0]])},
+                query={"a": torch.tensor([[1.0]])},
                 evidence={"x": torch.zeros(1, 4)},
             )
 
@@ -1010,6 +1030,95 @@ class TestStabilizeRelaxed:
 
 
 # ===========================================================================
+# 18b. Plate-member soundness of the estimator's internals
+# ===========================================================================
+
+class TestSoftMatchOnPlates:
+    """``_soft_match`` must *multiply* the per-member matches, not sum them.
+
+    The event of a k-member plate is flat ``(k * width)``, so contracting it
+    whole sums the per-member inner products — which reports a "probability" of
+    up to ``k`` on a full match, and a spurious ``1.0`` when only one member
+    agrees.
+    """
+
+    @staticmethod
+    def _plate():
+        return ConceptVariable(
+            "g", members=["m1", "m2", "m3"],
+            distribution=dist.OneHotCategorical, size=4,
+        )
+
+    @staticmethod
+    def _onehot(classes):
+        """(N, B, 12) with each member one-hot on its given class."""
+        t = torch.zeros(2, 5, 12)
+        for m, c in enumerate(classes):
+            t[..., m * 4 + c] = 1.0
+        return t
+
+    def test_full_match_is_one(self):
+        g, target = self._plate(), self._onehot([1, 1, 1])
+        m = _soft_match(g, target.clone(), target)
+        assert torch.allclose(m, torch.ones_like(m)), m
+        assert (m <= 1.0).all()
+
+    def test_partial_match_is_zero(self):
+        """One member agreeing out of three is not a match at all."""
+        g, target = self._plate(), self._onehot([1, 1, 1])
+        sample = self._onehot([1, 2, 3])
+        m = _soft_match(g, sample, target)
+        assert torch.allclose(m, torch.zeros_like(m)), m
+
+    def test_never_exceeds_one(self):
+        """The property the sum-contraction violated: it is a probability."""
+        torch.manual_seed(0)
+        g = self._plate()
+        sample = torch.softmax(torch.randn(2, 5, 3, 4), dim=-1).reshape(2, 5, 12)
+        m = _soft_match(g, sample, self._onehot([0, 2, 3]))
+        assert ((m >= 0.0) & (m <= 1.0)).all(), m
+
+    def test_non_plate_is_unchanged(self):
+        """A single-member variable still contracts its one class axis."""
+        v = ConceptVariable("v", distribution=dist.OneHotCategorical, size=4)
+        target = torch.zeros(2, 5, 4)
+        target[..., 2] = 1.0
+        assert torch.allclose(_soft_match(v, target.clone(), target), torch.ones(2, 5))
+
+
+class TestStabilizeRelaxedOnPlates:
+    """``_stabilize_relaxed`` renormalises *each member's* simplex.
+
+    It is handed the draw in member layout ``(*leading, n_members, width)``, so
+    the last axis is one member's simplex. Applied to a flat event it would
+    drive every member's mass to ``1/k`` and throw ``log q`` off by tens of nats.
+    """
+
+    def test_each_member_sums_to_one(self):
+        g = ConceptVariable(
+            "g", members=["m1", "m2", "m3"],
+            distribution=dist.OneHotCategorical, size=4,
+        )
+        torch.manual_seed(1)
+        sample = torch.softmax(torch.randn(7, 3, 4), dim=-1)
+        out = _stabilize_relaxed(g, sample)
+        assert out.shape == (7, 3, 4)
+        assert torch.allclose(out.sum(dim=-1), torch.ones(7, 3), atol=1e-6)
+
+    def test_boundary_draw_stays_finite(self):
+        """The reason the function exists: an exact 0 would make log_prob -inf."""
+        g = ConceptVariable(
+            "g", members=["m1", "m2"],
+            distribution=dist.OneHotCategorical, size=3,
+        )
+        sample = torch.zeros(4, 2, 3)
+        sample[..., 0] = 1.0
+        out = _stabilize_relaxed(g, sample)
+        assert (out > 0).all()
+        assert torch.allclose(out.sum(dim=-1), torch.ones(4, 2), atol=1e-6)
+
+
+# ===========================================================================
 # 11. BaseInference — direct tests
 # ===========================================================================
 
@@ -1107,7 +1216,6 @@ class TestBaseInferenceDirect:
 
 from torch_concepts.nn.modules.mid.inference.utils import (
     make_temperature_schedule,
-    reshape_value_to_event,
 )
 from torch_concepts.nn.modules.mid.inference.torch.utils import (
     build_relaxed_distribution,
@@ -1162,51 +1270,43 @@ class TestMakeTemperatureSchedule:
         assert schedule(100) == pytest.approx(0.5)
 
 
-class _ShapeStub:
-    """Duck-typed stand-in exposing only `.shape`, for testing reshape_value_to_event in isolation."""
-
-    def __init__(self, shape):
-        self.shape = shape
-
-
-class TestReshapeValueToEvent:
-    def test_empty_event_passthrough(self):
-        """A variable with no event shape returns the value untouched."""
-        value = torch.randn(3, 5)
-        out = reshape_value_to_event(_ShapeStub(()), value)
-        assert out is value
+class TestVariableAsEvent:
+    """``Variable.as_event`` reads a value in whatever layout it arrives in and
+    returns it in event layout — the replacement for the old free function
+    ``reshape_value_to_event``."""
 
     def test_flat_input_reshaped_to_event(self):
         v = ConceptVariable("c", distribution=Delta, shape=(2, 3))
-        value = torch.randn(4, 6)
-        out = reshape_value_to_event(v, value)
-        assert out.shape == (4, 2, 3)
+        assert v.as_event(torch.randn(4, 6)).shape == (4, 2, 3)
 
     def test_already_event_shaped_passthrough(self):
-        """Input already laid out as (*batch, *event) is returned unchanged."""
+        """Input already laid out as (*batch, *event) keeps its shape."""
         v = ConceptVariable("c", distribution=Delta, shape=(2, 3))
         value = torch.randn(4, 2, 3)
-        out = reshape_value_to_event(v, value)
-        assert out is value
+        out = v.as_event(value)
+        assert out.shape == (4, 2, 3)
+        assert torch.equal(out, value)
 
     def test_multiple_leading_batch_dims_flat(self):
         """A flat (B, T, size) input is expanded to (B, T, *event)."""
         v = ConceptVariable("c", distribution=Delta, shape=(2, 3))
-        value = torch.randn(4, 5, 6)
-        out = reshape_value_to_event(v, value)
-        assert out.shape == (4, 5, 2, 3)
+        assert v.as_event(torch.randn(4, 5, 6)).shape == (4, 5, 2, 3)
 
     def test_multiple_leading_batch_dims_already_event_shaped(self):
         v = ConceptVariable("c", distribution=Delta, shape=(2, 3))
         value = torch.randn(4, 5, 2, 3)
-        out = reshape_value_to_event(v, value)
-        assert out is value
+        out = v.as_event(value)
+        assert out.shape == (4, 5, 2, 3)
+        assert torch.equal(out, value)
 
     def test_single_dim_event_flat_batch(self):
         v = ConceptVariable("c", distribution=Delta, size=4)
-        value = torch.randn(3, 4)
-        out = reshape_value_to_event(v, value)
-        assert out.shape == (3, 4)
+        assert v.as_event(torch.randn(3, 4)).shape == (3, 4)
+
+    def test_no_leading_dims(self):
+        """An unbatched value is read just as well as a batched one."""
+        v = ConceptVariable("c", distribution=Delta, shape=(2, 3))
+        assert v.as_event(torch.randn(6)).shape == (2, 3)
 
 
 # ===========================================================================
@@ -1233,13 +1333,16 @@ class TestBuildRelaxedDistribution:
     def test_onehot_categorical_returns_relaxed_onehot(self):
         v = self._var(dist.OneHotCategorical, size=3)
         d = build_relaxed_distribution(v, {"probs": torch.ones(1, 3) / 3}, self._T)
-        assert isinstance(d, dist.RelaxedOneHotCategorical)
+        # Built per member, then reinterpreted as one event.
+        assert isinstance(d, dist.Independent)
+        assert isinstance(d.base_dist, dist.RelaxedOneHotCategorical)
 
     def test_relaxed_onehot_declared_returns_relaxed_onehot(self):
         """Variable declared as RelaxedOneHotCategorical should resolve to the same family."""
         v = self._var(dist.RelaxedOneHotCategorical, size=3)
         d = build_relaxed_distribution(v, {"probs": torch.ones(1, 3) / 3}, self._T)
-        assert isinstance(d, dist.RelaxedOneHotCategorical)
+        assert isinstance(d, dist.Independent)
+        assert isinstance(d.base_dist, dist.RelaxedOneHotCategorical)
 
     def test_categorical_raises(self):
         v = self._var(dist.Categorical, size=3)
@@ -1268,11 +1371,10 @@ class TestBuildRelaxedDistribution:
         v = self._var(dist.OneHotCategorical, size=3, members=["m1", "m2"])
         d = build_relaxed_distribution(v, {"logits": torch.zeros(1, 6)}, self._T)
         s = d.rsample()
-        assert s.shape == (1, 6)
+        assert s.shape == (1, 2, 3)  # member layout: one simplex per member
         # Each member's block is its own simplex (sums to 1); a single 6-way
         # distribution would make the *whole* row sum to 1 instead.
-        assert torch.allclose(s[..., :3].sum(-1), torch.ones(1), atol=1e-4)
-        assert torch.allclose(s[..., 3:].sum(-1), torch.ones(1), atol=1e-4)
+        assert torch.allclose(s.sum(-1), torch.ones(1, 2), atol=1e-4)
 
 
 # ===========================================================================
@@ -1280,6 +1382,14 @@ class TestBuildRelaxedDistribution:
 # ===========================================================================
 
 class TestPropagatedValue:
+    def test_flat_categorical_plate_params_raise(self):
+        """An engine's output is flat; activating it would take one softmax over
+        every member's classes, so it is rejected rather than silently mixed."""
+        v = ConceptVariable("c", members=["a", "b"],
+                            distribution=dist.OneHotCategorical, size=3)
+        with pytest.raises(ValueError, match="member layout"):
+            propagated_value(v, {"logits": torch.randn(4, 6)}, activate=True)
+
     def test_bernoulli_probs(self):
         p = torch.tensor([[0.3, 0.7]])
         v = ConceptVariable("c", distribution=dist.Bernoulli, size=2)
@@ -1316,8 +1426,11 @@ class TestPropagatedValue:
         """Activating logits uses the plate-aware softmax, not a flat one."""
         v = ConceptVariable("c", members=["a", "b"],
                             distribution=dist.OneHotCategorical, size=3)
-        probs = propagated_value(v, {"logits": torch.randn(4, 6)}, activate=True)
-        assert torch.allclose(probs.reshape(4, 2, 3).sum(-1), torch.ones(4, 2))
+        # Parameters arrive in member layout, as every CPD reports them.
+        logits = v.to_member(torch.randn(4, 6), "logits")
+        probs = propagated_value(v, {"logits": logits}, activate=True)
+        assert probs.shape == (4, 2, 3)
+        assert torch.allclose(probs.sum(-1), torch.ones(4, 2))
 
 
 # ===========================================================================

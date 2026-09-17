@@ -36,7 +36,7 @@ class TestForwardParentResolution:
         pgm = _model()
         B = 5
         out = pgm.factors["y"](parent_values={"concepts": torch.rand(B, 3)})
-        assert out["probs"].shape == (B, 1)
+        assert out["probs"].shape == (B, 1, 1)  # member layout (B, n_members, size)
 
     def test_member_parent_owner_key_equals_exact_key(self):
         pgm = _model()
@@ -60,7 +60,7 @@ class TestForwardParentResolution:
         pgm = _model()
         B = 5
         out = pgm.factors["concepts"](parent_values={"x": torch.randn(B, 4)})
-        assert out["probs"].shape == (B, 3)
+        assert out["probs"].shape == (B, 3, 1)  # 3 members of size 1
 
     def test_missing_parent_raises_keyerror_with_message(self):
         pgm = _model()

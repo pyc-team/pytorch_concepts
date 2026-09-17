@@ -202,9 +202,9 @@ class TestDelta(unittest.TestCase):
         self.assertEqual(dist_float64.mean.dtype, torch.float64)
 
     def test_batch_shape(self):
-        """Test batch_shape attribute."""
+        """batch_shape follows the value, so Delta composes with Independent."""
         dist = Delta([1.0, 2.0])
-        self.assertEqual(dist.batch_shape, torch.Size([]))
+        self.assertEqual(dist.batch_shape, torch.Size([2]))
 
     def test_multiple_samples_consistency(self):
         """Test that multiple samples are consistent."""

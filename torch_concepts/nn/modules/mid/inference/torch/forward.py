@@ -9,7 +9,7 @@ import torch
 
 from ...graph.bayesian_network import BayesianNetwork
 from ...variable import Variable
-from ..utils import reshape_value_to_event, teacher_force
+from ..utils import teacher_force
 from ....outputs import InferenceOutput
 from .base import TorchBaseInference
 
@@ -131,7 +131,7 @@ class ForwardInference(TorchBaseInference, ABC):
 
         Evidence bypasses the CPD, so there is no network output to align
         against: the value is cast to the PGM's parameter dtype (what child
-        CPDs expect as input) and reshaped to ``(*leading, *variable.shape)``.
+        CPDs expect as input) and read into the member layout the cache holds.
         A numel mismatch raises instead of silently broadcasting.
         """
         if value.is_floating_point():
@@ -140,7 +140,7 @@ class ForwardInference(TorchBaseInference, ABC):
             except StopIteration:
                 dtype = torch.get_default_dtype()
             value = value.to(dtype)
-        return reshape_value_to_event(variable, value)
+        return variable.to_member(value)
 
     def _required_variables(self, query_names: set, evidence_names: set) -> set:
         """Variables whose value must be resolved to answer the query.
@@ -207,7 +207,13 @@ class ForwardInference(TorchBaseInference, ABC):
         value = self._propagate(variable, params, temperature)
         target = query.get(name)
         if target is not None:
-            value = teacher_force(value, target, self.p_int, len(leading), name)
+            # A caller supplies the target in whatever layout it has — the high
+            # level builds flat rows — so read it into the member layout
+            # ``value`` is in. Without this a categorical plate would fall into
+            # ``_align_gt``'s broadcast path and force the wrong values silently.
+            value = teacher_force(
+                value, variable.to_member(target), self.p_int, len(leading), name
+            )
         # Partial-plate observation: splice the observed members over the computed
         # value (the CPD owns the column write). ``member_evidence`` is {} unless
         # this variable has individually-observed members.
@@ -293,6 +299,32 @@ class ForwardInference(TorchBaseInference, ABC):
         model is sampled: query the variables of interest, supply no evidence,
         and ask for ``n_samples`` draws.
         """
+        query_names, cache, computed = self._run(
+            query, evidence, layer_kwargs, n_samples
+        )
+        # Assemble once. ``params`` covers the queried names; ``samples`` covers
+        # every variable the pass actually realised, queried or not — an ancestor
+        # resolved only to reach the query is still a value the caller may want.
+        return InferenceOutput(
+            params=self._assemble_params(computed, query_names),
+            samples=(
+                self._assemble_samples(
+                    {name: cache[name] for name in computed}, list(computed)
+                )
+                if self.is_stochastic else None
+            ),
+        )
+
+    def _run(
+        self,
+        query: Union[List[str], Dict[str, Optional[torch.Tensor]]],
+        evidence: Dict[str, torch.Tensor],
+        layer_kwargs: Optional[Dict[str, Dict]] = None,
+        n_samples: Optional[int] = None,
+    ) -> Tuple[List[str], Dict[str, torch.Tensor], Dict[str, Dict[str, torch.Tensor]]]:
+        """The pass itself, unassembled: ``(query_names, cache, computed)``.
+        Split off :meth:`query` for ``RejectionSampling``, which needs the raw
+        per-variable values rather than an :class:`InferenceOutput`."""
         query = self._normalize_query(query)
         self._validate_containers(query, evidence)
         layer_kwargs = layer_kwargs or {}
@@ -323,18 +355,7 @@ class ForwardInference(TorchBaseInference, ABC):
                     continue  # fully-observed variable: clamped, no params emitted
                 computed[name] = params
 
-        # Assemble once. ``params`` covers the queried names; ``samples`` covers
-        # every variable the pass actually realised, queried or not — an ancestor
-        # resolved only to reach the query is still a value the caller may want.
-        return InferenceOutput(
-            params=self._assemble_params(computed, query_names),
-            samples=(
-                self._assemble_samples(
-                    {name: cache[name] for name in computed}, list(computed)
-                )
-                if self.is_stochastic else None
-            ),
-        )
+        return query_names, cache, computed
 
     @abstractmethod
     def _resolve(
@@ -343,7 +364,7 @@ class ForwardInference(TorchBaseInference, ABC):
         params: Dict[str, torch.Tensor],
         temperature: torch.Tensor,
     ) -> torch.Tensor:
-        """Turn a CPD's parameters into a flat ``(batch, size)`` realisation.
+        """Turn a CPD's parameters into a ``(*leading, n_members, *member_shape)`` realisation.
 
         The one behavioural difference between the forward engines: a point
         estimate (:class:`DeterministicInference`), a reparameterised draw
@@ -357,8 +378,7 @@ class ForwardInference(TorchBaseInference, ABC):
         params: Dict[str, torch.Tensor],
         temperature: torch.Tensor,
     ) -> torch.Tensor:
-        value = self._resolve(variable, params, temperature)
-        # Reshape the realization to the variable's event shape. Samples are then
-        # returned and cached (as parent values for downstream CPDs) as
-        # (batch, *shape); the flat parameter dict is left as the CPD produced it.
-        return reshape_value_to_event(variable, value)
+        # Every resolver already works in the member layout the CPD's
+        # parameters arrive in, so the realisation is cached as-is; the
+        # conversion for downstream CPDs happens once, in ``resolve_value``.
+        return self._resolve(variable, params, temperature)

@@ -37,7 +37,7 @@ def intervention(
 
     ``members_to_intervene_on`` restricts the intervention to a subset of the
     variable's event columns; member *names* are resolved to column indices via
-    :meth:`~torch_concepts.nn.modules.mid.variable.Variable.get_slice`.
+    :meth:`~torch_concepts.nn.modules.mid.variable.Variable.flat_columns`.
     ``None`` intervenes on every column.
     """
     # Resolve the target before entering the try block: a bad variable or
@@ -60,7 +60,7 @@ def intervention(
 
     if members_to_intervene_on is not None and members_to_intervene_on:
         if isinstance(members_to_intervene_on[0], str):
-            members_to_intervene_on = factor.variable.get_slice(members_to_intervene_on)
+            members_to_intervene_on = factor.variable.flat_columns(members_to_intervene_on)
 
     intervened_module = InterventionModule(
         original_module,

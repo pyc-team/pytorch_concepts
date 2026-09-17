@@ -90,9 +90,9 @@ class TestConceptBottleneckVAE:
     def test_a_categorical_plates_cpd_emits_one_block_per_member(self):
         """The plate's concept CPD emits one score block per member.
 
-        Asserted on the CPD's own output: the emitted width is the plate's
-        flattened width, laid out member-major so the distribution can normalise
-        each member's block independently.
+        Asserted on the CPD's own output, which is in member layout
+        ``(batch, n_members, states)``, so the distribution can normalise each
+        member's block independently.
         """
         # Same cardinality on both concepts, so they can share one plate.
         annotations = Annotations(
@@ -110,8 +110,8 @@ class TestConceptBottleneckVAE:
         model(query=list(model.pgm.variables), input=torch.rand(6, INPUT_SIZE))
 
         logits = emitted["logits"]
-        assert logits.shape == (6, 6)  # 2 members x 3 states, member-major
-        probs = logits.reshape(6, 2, 3).softmax(-1)
+        assert logits.shape == (6, 2, 3)  # 2 members x 3 states
+        probs = logits.softmax(-1)
         assert torch.allclose(probs.sum(-1), torch.ones(6, 2), atol=1e-5)
 
     def test_the_latent_prior_and_guide_produce_a_positive_scale(self, binary_annotations):

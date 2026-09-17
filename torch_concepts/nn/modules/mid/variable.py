@@ -14,7 +14,6 @@ from typing import Dict, List, Optional, Tuple, Union
 import torch
 import torch.distributions as dist
 
-from ....distributions.delta import Delta
 from .distributions import spec_for
 
 
@@ -158,10 +157,12 @@ class Variable(ABC):
             )
         spec = spec_for(distribution, f"{type(self).__name__}({names!r})")
 
-        if members is not None:
-            # Plate: a single variable holding several named members. ``size`` is
-            # the per-member size (default 1); the total event width is
-            # ``len(members) * member_size``, stacked on the last dimension.
+        # A variable IS a plate: ``members`` names them, and by default it has
+        # exactly one, coinciding with the variable's own name. There is no
+        # second kind of variable, so there is no second branch below.
+        if members is None:
+            members = [self.name]
+        else:
             if shape is not None:
                 raise ValueError(
                     f"{type(self).__name__}({names!r}): `members` and `shape` are mutually "
@@ -177,67 +178,53 @@ class Variable(ABC):
                 raise ValueError(
                     f"{type(self).__name__}({names!r}): duplicate member names in {members}."
                 )
-            member_size = 1 if size is None else size
-            if not isinstance(member_size, int) or member_size <= 0:
+
+        # The event of ONE member: ``size`` gives its width, ``shape`` its full
+        # (possibly multi-dimensional) event. Together with ``members`` this is
+        # the variable's entire structural state — ``shape``, ``size`` and
+        # ``member_size`` are all derived from it.
+        if shape is not None and size is not None:
+            raise ValueError(
+                f"{type(self).__name__}({names!r}): `shape` and `size` are mutually "
+                "exclusive — provide one or the other, not both."
+            )
+        if size is not None:
+            if not isinstance(size, int) or size <= 0:
                 raise ValueError(
-                    f"{type(self).__name__}({names!r}): per-member `size` must be a "
-                    f"positive int, got {size!r}."
+                    f"{type(self).__name__}({names!r}): `size` must be a positive int, "
+                    f"got {size!r}."
                 )
-            self._is_plate: bool = True
-            self.members: List[str] = list(members)
-            self.member_size: int = member_size
-            total = len(self.members) * member_size
-            # Per-member addressing slices a contiguous block of every parameter,
-            # so each parameter must be laid out one-scalar-per-event-element
-            # (probs/logits, loc, scale, value). MultivariateNormal's scale_tril
-            # is triangular (size*(size+1)/2), so its members aren't sliceable —
-            # model those as separate variables instead.
-            if not spec.is_per_element:
-                raise ValueError(
-                    f"{type(self).__name__}({names!r}): plate `members` need a distribution "
-                    f"with per-element parameters; {distribution.__name__} has a "
-                    "non-per-element parameter (e.g. MultivariateNormal's scale_tril). "
-                    "Model these members as separate variables instead."
-                )
-            shape = torch.Size([total])
+            member_shape = torch.Size([size])
+        elif shape is None:
+            member_shape = torch.Size([1])
         else:
-            # Ordinary variable: one member coinciding with the variable name.
-            if shape is not None and size is not None:
-                raise ValueError(
-                    f"{type(self).__name__}({names!r}): `shape` and `size` are mutually "
-                    "exclusive — provide one or the other, not both."
-                )
-            if size is not None:
-                if not isinstance(size, int) or size <= 0:
-                    raise ValueError(
-                        f"{type(self).__name__}({names!r}): `size` must be a positive int, "
-                        f"got {size!r}."
-                    )
-                shape = torch.Size([size])
-            elif shape is None:
-                shape = torch.Size([1])  # default
-            elif isinstance(shape, int):
-                shape = torch.Size([shape])
-            else:
-                shape = torch.Size(shape)
-            if len(shape) == 0:
+            member_shape = torch.Size(
+                [shape] if isinstance(shape, int) else shape
+            )
+            if len(member_shape) == 0:
                 raise ValueError("shape must be non-empty.")
-            if any(s <= 0 for s in shape):
+            if any(d <= 0 for d in member_shape):
                 raise ValueError(
                     f"{type(self).__name__}({names!r}): all shape dimensions must be "
-                    f"positive, got {tuple(shape)}."
+                    f"positive, got {tuple(member_shape)}."
                 )
-            self._is_plate: bool = False
-            self.members = [self.name]
-            self.member_size = math.prod(shape)
+
+        self.members: List[str] = list(members)
+        self._member_shape: torch.Size = member_shape
+
+        # A plate sizes one parametrization for all k members at once, from the
+        # variable's total event size — which splits per member only when each
+        # parameter is one scalar per event element. MultivariateNormal's
+        # triangular scale_tril is not, so its members get no shared head.
+        if len(self.members) > 1 and not spec.is_per_element:
+            raise ValueError(
+                f"{type(self).__name__}({names!r}): plate `members` need a distribution "
+                f"with per-element parameters; {distribution.__name__} has a "
+                "non-per-element parameter (e.g. MultivariateNormal's scale_tril). "
+                "Model these members as separate variables instead."
+            )
 
         self.distribution = distribution
-        self._shape: torch.Size = shape
-        # Dictionary mapping member name -> slice corresponding to that member.
-        self._column: Dict[str, slice] = {
-            m: slice(i * self.member_size, (i + 1) * self.member_size)
-            for i, m in enumerate(self.members)
-        }
         self.dist_kwargs: dict = dict(dist_kwargs) if dist_kwargs else {}
         self.metadata: dict = {
             "variable_type": self.variable_type,
@@ -247,21 +234,201 @@ class Variable(ABC):
 
     @property
     def is_plate(self) -> bool:
-        """Whether this variable was created with explicit named members."""
-        return self._is_plate
+        """Whether the members were named explicitly rather than defaulted.
+
+        Note this is **not** ``n_members > 1``: a one-member plate is a real
+        thing (the high level builds one for a lone concept), and its member
+        carries its own name, distinct from the variable's.
+        """
+        return self.members != [self.name]
 
     @property
     def plate(self) -> "Variable":
         """The plate this variable belongs to.
 
-        For a member handle (from :meth:`member`) this is the owning plate; for an
-        ordinary variable or a plate itself it is None. 
+        For a member handle (from :meth:`member`) this is the owning plate; an
+        ordinary variable and a plate are their own, so ``v.plate is v`` is the
+        test for "not a member handle".
         """
         return self._plate if self._plate is not None else self
 
-    def column_of(self, member: str) -> slice:
-        """The slice of the event dimension corresponding to a member."""
-        return self._column[member]
+    @property
+    def member_shape(self) -> torch.Size:
+        """Event shape of a *single* member.
+
+        ``(member_size,)`` for a plate; the variable's own :attr:`shape` for an
+        ordinary variable, which is its own single member. Together with
+        :attr:`n_members` this fully describes the canonical member layout
+        ``(*leading, n_members, *member_shape)``.
+        """
+        return self._member_shape
+
+    @property
+    def n_members(self) -> int:
+        """Number of named members: ``k`` for a plate, ``1`` otherwise."""
+        return len(self.members)
+
+    @property
+    def member_axis(self) -> int:
+        """Negative index of the member axis in the canonical member layout.
+
+        ``-1`` when a member is a scalar event, ``-2`` for the usual
+        ``(*leading, k, m)`` plate, and further left for a multi-dimensional
+        member event. Negative so it is independent of how many leading
+        (batch-like) dimensions a caller uses.
+        """
+        return - 1 - len(self._member_shape)
+
+    def param_trailing_shape(self, param: Optional[str] = None) -> Tuple[int, ...]:
+        """Trailing shape of one tensor in the canonical member layout.
+
+        ``(n_members, *member_shape)`` for a realisation or an ordinary
+        parameter. A parameter declaring ``param_event_ndims`` carries extra
+        rank on top of the member event — ``MultivariateNormal``'s
+        ``scale_tril`` is an ``(n, n)`` matrix where the member event is
+        ``(n,)`` — so those axes are appended.
+        """
+        extra = 0
+        if param is not None:
+            context = f"{type(self).__name__}({self.name!r})"
+            spec = spec_for(self.distribution, context)
+            # Check the parameter is valid for this distribution.
+            spec.check_param(param, self.distribution, context)
+            extra = spec.param_event_ndims.get(param, 0)
+        member = tuple(self._member_shape)
+        return (self.n_members, *member, *member[len(member) - extra:])
+
+    def _fit(self, tensor: torch.Tensor, trailing: Tuple[int, ...]) -> torch.Tensor:
+        """Reshape ``tensor`` so its last axes are exactly ``trailing``.
+
+        Examples:
+        (8, 3, 4)   -> (8, 3, 4)      caso 1: no change
+        (8, 12)     -> (8, 3, 4)      caso 3: reshape of the last axis
+        (12,)       -> (3, 4)         caso 3: no leading dim, reshape of the last axis
+        (2, 5, 12)  -> (2, 5, 3, 4)   caso 3: arbitrary leading dims, reshape of the last axis
+        (8, 7)      -> ValueError: cannot read a tensor of shape (8, 7) as (*leading, 3, 4)
+        """
+        n = len(trailing)
+        # Already fitted. Strict ``>`` keeps a non-empty leading shape when both
+        # readings are possible, which is the convention every engine expects.
+        if tensor.dim() > n and tuple(tensor.shape[-n:]) == trailing:
+            return tensor
+        # The event is ranked; only the member axis is missing.
+        if trailing[0] == 1 and tensor.dim() >= n - 1 and tuple(tensor.shape[-(n - 1):]) == trailing[1:]:
+            return tensor.unsqueeze(tensor.dim() - (n - 1))
+        # Flat: peel the shortest non-empty suffix that makes up one event.
+        target = math.prod(trailing)
+        seen, split = 1, tensor.dim()
+        while split > 0:
+            split -= 1
+            seen *= tensor.shape[split]
+            if seen >= target:
+                break
+        if seen != target and target == 1:
+            split, seen = tensor.dim(), 1  # a width-1 event squeezed off
+        if seen != target:
+            raise ValueError(
+                f"{type(self).__name__}({self.name!r}): cannot read a tensor of shape "
+                f"{tuple(tensor.shape)} as (*leading, {', '.join(map(str, trailing))})."
+            )
+        return tensor.reshape(*tensor.shape[:split], *trailing)
+
+    def _require_member_layout(
+        self, tensor: torch.Tensor, param: Optional[str] = None
+    ) -> None:
+        """Raise unless ``tensor`` is already in the member layout.
+
+        For helpers that treat the last axis as *one member's* event: handed a
+        flat ``(*leading, size)`` row instead, they would silently mix members
+        (a categorical plate's softmax taken over every member's classes) or
+        address the wrong axis. Unlike :meth:`to_member`, nothing is inferred —
+        the caller converts explicitly.
+        """
+        trailing = self.param_trailing_shape(param)
+        n = len(trailing)
+        if tensor.dim() >= n and tuple(tensor.shape[-n:]) == trailing:
+            return
+        what = "a value" if param is None else f"parameter {param!r}"
+        read = "to_member(tensor)" if param is None else f"to_member(tensor, {param!r})"
+        raise ValueError(
+            f"{type(self).__name__}({self.name!r}): expected {what} in member layout "
+            f"(*leading, {', '.join(map(str, trailing))}), got shape "
+            f"{tuple(tensor.shape)}. Read a flat (*leading, size) tensor with "
+            f"`variable.{read}` first."
+        )
+
+    def to_member(self, tensor: torch.Tensor, param: Optional[str] = None) -> torch.Tensor:
+        """Read ``tensor`` into the canonical ``(*leading, n_members, *member_shape)`` layout."""
+        return self._fit(tensor, self.param_trailing_shape(param))
+
+    def to_event(
+        self, tensor: torch.Tensor, param: Optional[str] = None
+    ) -> torch.Tensor:
+        """Inverse of :meth:`to_member`: fold the member axis back into the event.
+
+        PLATE c: 3 members x 4 states,  shape=(12,)
+        (8, 3, 4)      -> (8, 12)
+        (3, 4)         -> (12,)          empty leading
+        (2, 5, 3, 4)   -> (2, 5, 12)     arbitrary leading
+        (8, 12)        -> (8, 12)        already folded: no-op
+        """
+        trailing = self.param_trailing_shape(param)
+        axis = tensor.dim() - len(trailing)
+        if axis < 0 or tuple(tensor.shape[axis:]) != tuple(trailing):
+            return tensor  # already folded: idempotent, like ``to_member``
+        return tensor.flatten(axis, axis + 1)
+
+    def leading_of(
+        self, tensor: torch.Tensor, member: Optional[str] = None
+    ) -> torch.Size:
+        """Return the leading shape of ``tensor``."""
+        trailing = (1 if member is not None else self.n_members, *self._member_shape)
+        fitted = self._fit(tensor, trailing)
+        return fitted.shape[: fitted.dim() - len(trailing)]
+    
+    def as_event(
+        self, tensor: torch.Tensor, param: Optional[str] = None
+    ) -> torch.Tensor:
+        """Read ``tensor`` in whatever layout it has and return it in event layout."""
+        return self.to_event(self.to_member(tensor, param), param)
+
+    def to_flat(self, tensor: torch.Tensor) -> torch.Tensor:
+        """A realisation as one flat row: ``(*leading, size)``.
+
+        The layout realisations are reported in, so that a variable with a
+        multi-dimensional event sits on the same annotated axis as every other.
+        :meth:`to_event` keeps the event's own rank instead, which is what a
+        parametrization module and a reported *parameter* want.
+        """
+        leading = tensor.shape[: tensor.dim() + self.member_axis]
+        return tensor.reshape(*leading, self.size)
+
+    def index_of(self, member: str) -> int:
+        """Position of ``member`` along the member axis."""
+        try:
+            return self.members.index(member)
+        except ValueError:
+            raise KeyError(
+                f"{type(self).__name__}({self.name!r}) has no member {member!r}; "
+                f"members are {self.members}."
+            ) from None
+
+    def flat_columns(self, members: Union[str, List[str]]) -> List[int]:
+        """Column indices of ``members`` in the *flat* ``(*leading, size)`` event.
+
+        The flat layout is what leaves the mid level — the annotated output axis,
+        and the ``[B, F]` tensors the low-level intervention modules index — so
+        this is a boundary helper rather than the way members are addressed
+        internally (that is ``tensor.select(member_axis, index_of(name))``).
+        """
+        if isinstance(members, str):
+            members = [members]
+        width = self.member_size
+        return [
+            i * width + offset
+            for i in map(self.index_of, members)
+            for offset in range(width)
+        ]
 
     def member(self, name: str) -> "Variable":
         """A handle to a single member.
@@ -269,12 +436,7 @@ class Variable(ABC):
         The handle carries the member's name, per-member size and the plate's distribution, 
         plus a back-reference to the owning plate so the graph routes the edge from it.
         """
-        if name not in self._column:
-            raise KeyError(
-                f"{type(self).__name__}({self.name!r}) has no member {name!r}; "
-                f"members are {self.members}."
-            )
-        # Create the new member-only variable.
+        self.index_of(name)  # rejects a name that is not one of ours
         view = type(self)(
             name,
             distribution=self.distribution,
@@ -287,84 +449,64 @@ class Variable(ABC):
 
     @property
     def shape(self) -> torch.Size:
-        """Event shape as a :class:`torch.Size`, e.g. ``torch.Size([4])`` or ``torch.Size([3, 4])``."""
-        return self._shape
+        """Event shape of the whole variable: the members stacked on one axis."""
+        first, *rest = self._member_shape
+        return torch.Size([self.n_members * first, *rest])
+
+    @property
+    def member_size(self) -> int:
+        """Number of scalar elements in *one* member's event."""
+        return math.prod(self._member_shape)
 
     @property
     def size(self) -> int:
         """Total number of scalar elements: ``math.prod(self.shape)``."""
-        return math.prod(self._shape)
+        return self.n_members * self.member_size
 
-    # FIXME: there is a tricky for loop here. Maybe the same can be done without looping.
-    def get_slice(self, labels: Union[str, List[str]]) -> Union[slice, List[int]]:
-        """Flattened indices for member(s) in this variable's event dimension.
+    def member_of(
+        self, tensor: torch.Tensor, member: str, param: Optional[str] = None
+    ) -> torch.Tensor:
+        """One member's slice of ``tensor``, in event layout — a view, no copy.
 
-        The indices address event columns corresponding to the named member(s). 
-        If a single string is passed, a single slice is returned; 
-        if a list of strings is passed, a list of indices is returned.
+        ``tensor`` may be in either layout; it is read into the member layout
+        first, so a caller holding a flat row and one holding a cached value
+        get the same answer.
         """
-        if isinstance(labels, str):
-            labels = [labels]
+        trailing = self.param_trailing_shape(param)
+        fitted = self._fit(tensor, trailing)
+        return fitted.select(fitted.dim() - len(trailing), self.index_of(member))
 
-        indices = []
-        for label in labels:
-            if label not in self._column:
-                raise ValueError(f"Label '{label}' not found in members {self.members}")
-            s = self._column[label]
-            indices.extend(range(s.start, s.stop))
-
-        return indices
-
-    def select(
-        self, params: Dict[str, torch.Tensor], name: str
-    ) -> Dict[str, torch.Tensor]:
-        """Return a dictionary containing the distribution parameters for a specific member
-        of the variable. 
-        
-        If the name matches the variable's own name, return the
-        whole dictionary. Otherwise, return a dictionary with the same keys but with
-        values sliced to the columns corresponding to the member's slice.
-        """
-        if name == self.name:
-            return params
-        columns = self.column_of(name)
-        return {key: value[..., columns] for key, value in params.items()}
-
-    def select_value(self, value: torch.Tensor, name: str) -> torch.Tensor:
-        """Realised value for ``name``: the whole value, or a member's column slice."""
-        if name == self.name:
-            return value
-        return value[..., self.column_of(name)]
-
-    # FIXME: another for loop spotted here. Maybe the same can be done without looping.
     def clamp_members(
         self, value: torch.Tensor, observed: Dict[str, torch.Tensor]
     ) -> torch.Tensor:
-        """Overwrite observed members' columns with their observed values.
+        """Overwrite observed members with their observed values.
 
-        A plate's CPD/sampler produces one tensor stacking every member along
-        the last axis, but evidence may cover only some members. E.g. for a
-        plate ``"person"`` with members ``"person_1", "person_2", "person_3"``,
-        observing only ``person_2`` means ``value`` holds the model's output
-        for all three members while ``observed = {"person_2": obs}`` holds
-        just that one. This returns a copy of ``value`` with the
-        ``person_2`` column replaced by ``obs``, and the ``person_1`` /
-        ``person_3`` columns left exactly as the model produced them.
-        No-op (returns ``value`` itself) when ``observed`` is empty.
+        Evidence may cover only some of a variable's members, so this splices
+        the observed ones into a value the model produced for all of them. Both
+        sides are in member layout, so it is one masked write over the member
+        axis rather than a per-member column assignment.
 
-        NOTE: the clone is required since the caller caches this value and reuses 
-        it as a parent input for downstream factors, so writing the observed columns
-        in place would corrupt that cache and break autograd on the tensor the
-        CPD produced.
+        The result is a fresh tensor: the caller caches ``value`` and reuses it
+        as a parent input downstream, so writing in place would corrupt that
+        cache and break autograd on the tensor the CPD produced.
+
+        Raises
+        ------
+        ValueError
+            If ``value`` is not in member layout. A flat ``(*leading, size)``
+            row would put the member axis on a batch axis and overwrite rows
+            instead of members.
         """
+        self._require_member_layout(value)
         if not observed:
             return value
-        value = value.clone()
+        stacked = value.clone()
+        axis = value.dim() + self.member_axis
         for member, obs in observed.items():
-            columns = self.column_of(member)
-            slot = value[..., columns]
-            value[..., columns] = obs.to(value.dtype).reshape(slot.shape)
-        return value
+            index = self.index_of(member)
+            slot = stacked.select(axis, index)
+            slot.copy_(obs.to(value.dtype).reshape(slot.shape))
+        return stacked
 
     @property
     def param_sizes(self) -> Dict[str, int]:
