@@ -912,6 +912,8 @@ class WeightedConceptLoss(CompositeLoss):
         **loss_kwargs,
     ):
         task_names = list(task_names)
+        concept_weight = float(concept_weight)
+        task_weight = float(task_weight)
         super().__init__(
             terms=[
                 ConceptSubset(ConceptLoss(**loss_kwargs), exclude=task_names),

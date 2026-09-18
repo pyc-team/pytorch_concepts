@@ -40,6 +40,11 @@ from .modules.low.predictors.call import CallableConceptToConcept
 from .modules.low.predictors.hypernet import HyperlinearConceptEmbeddingToConcept
 from .modules.low.predictors.linear import LinearConceptToConcept
 from .modules.low.predictors.mlp import MLPConceptToConcept
+from .modules.low.predictors.rule import (
+    ReconstructionRuleConceptEmbeddingToConcept,
+    RuleConceptEmbeddingToConcept,
+    RuleMemory,
+)
 from .modules.low.predictors.mix import MixConceptEmbeddingToConcept, \
     MixConceptEmbeddings
 
@@ -72,6 +77,7 @@ from .modules.high.models.cbvae import ConceptBottleneckVAE
 from .modules.high.models.cvae import ConditionalVAE
 from .modules.high.models.graph_cbm import GraphConceptBottleneckModel
 from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
+from .modules.high.models.cmr import CMRTaskLoss, ConceptMemoryReasoner
 
 # Models (mid-level)
 from .modules.mid.factors.factor import ParametricFactor
@@ -161,6 +167,9 @@ __all__ = [
     "HyperlinearConceptEmbeddingToConcept",
     "MixConceptEmbeddingToConcept",
     "MixConceptEmbeddings",
+    "RuleMemory",
+    "RuleConceptEmbeddingToConcept",
+    "ReconstructionRuleConceptEmbeddingToConcept",
 
     # Dense layers
     "Dense",
@@ -186,6 +195,7 @@ __all__ = [
     "KLDivergenceLoss",
     "OrthogonalityLoss",
     "NLLProbLoss",
+    "CMRTaskLoss",
 
     # Training callbacks
     "LossWeightWarmup",
@@ -205,6 +215,7 @@ __all__ = [
     "ConceptEmbeddingModel",
     "ConceptBottleneckVAE",
     "ConditionalVAE",
+    "ConceptMemoryReasoner",
     "GraphConceptBottleneckModel",
     "CausallyReliableConceptBottleneckModel",
     # Models (mid-level)
