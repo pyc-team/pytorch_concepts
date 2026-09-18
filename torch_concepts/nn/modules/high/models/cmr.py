@@ -2,6 +2,7 @@
 from typing import List, Optional, Union
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 from torch.distributions import Bernoulli, OneHotCategorical
 
@@ -21,7 +22,55 @@ from ...mid.graph.bayesian_network import BayesianNetwork
 from ...mid.inference.base import BaseInference
 from ...mid.inference.torch.deterministic import DeterministicInference
 from ...mid.variable import EmbeddingVariable
+from ...loss import PyCLoss
+from ...outputs import ModelOutput
 from ..base.bipartite import BipartiteModel
+
+
+class CMRTaskLoss(PyCLoss):
+    """The label-switched task loss used by :class:`ConceptMemoryReasoner`.
+
+    Negative labels are scored using the ordinary rule prediction, while
+    positive labels are scored using the reconstruction-aware prediction.
+    """
+
+    def __init__(self, task_names):
+        super().__init__()
+        self.task_names = list(task_names)
+
+    def forward(self, output: ModelOutput, target=None) -> torch.Tensor:
+        target = target if target is not None else output.target
+        if target is None:
+            raise ValueError("CMRTaskLoss requires a concept-space target.")
+        if output.probs is None:
+            raise ValueError("CMRTaskLoss requires Bernoulli probability outputs.")
+        if (
+            output.value is None
+            or "tasks_with_rec" not in output.value.annotation.label_to_index
+        ):
+            raise ValueError(
+                "CMRTaskLoss requires output.value[\"tasks_with_rec\"]."
+            )
+
+        task_target = target[self.task_names].to(output.probs.dtype)
+        task_pred = output.probs[self.task_names]
+        rec_pred = output.value["tasks_with_rec"].to(task_pred.dtype)
+        if task_pred.shape != rec_pred.shape or task_pred.shape != task_target.shape:
+            raise ValueError(
+                "CMR task predictions and targets must have identical shapes."
+            )
+
+        normal_bce = F.binary_cross_entropy(
+            task_pred, task_target, reduction="none"
+        )
+        rec_bce = F.binary_cross_entropy(
+            rec_pred, task_target, reduction="none"
+        )
+        switched = (
+            (1.0 - task_target) * normal_bce
+            + task_target * rec_bce
+        )
+        return switched.mean()
 
 
 class ConceptMemoryReasoner(BipartiteModel):
@@ -232,6 +281,8 @@ class ConceptMemoryReasoner(BipartiteModel):
         task_cpd = ParametricCPD(
             tasks[0],
             parents=[*concepts, selector, roles],
+            # RuleConceptEmbeddingToConcept inherently computes probabilities;
+            # bind it explicitly to ``probs`` so no activation is applied.
             parametrization={
                 "probs": RuleConceptEmbeddingToConcept(
                     out_concepts=n_tasks,
@@ -251,6 +302,8 @@ class ConceptMemoryReasoner(BipartiteModel):
         rec_cpd = ParametricCPD(
             rec_tasks,
             parents=[*concepts, selector, roles],
+            # The reconstruction-aware rule layer also returns probabilities.
+            # Delta's ``value`` parameter passes them through unchanged.
             parametrization={
                 "value": ReconstructionRuleConceptEmbeddingToConcept(
                     out_concepts=n_tasks,

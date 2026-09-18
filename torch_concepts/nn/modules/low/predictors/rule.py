@@ -68,7 +68,8 @@ class RuleConceptEmbeddingToConcept(BaseConceptLayer):
     """Compute ordinary CMR task probabilities from concepts and rule embeddings.
 
     The embedding input packs the flattened selector followed by the flattened
-    rule-role tensor.
+    rule-role tensor. This layer inherently returns probabilities, not
+    logits.
 
     References:
         Debot et al. "Interpretable Concept-Based Memory Reasoning", NeurIPS 2024.
@@ -148,7 +149,9 @@ class ReconstructionRuleConceptEmbeddingToConcept(
     For each rule, this predictor multiplies its task satisfaction probability
     by its reconstruction probability raised to ``rec_weight``. A weight of
     zero disables reconstruction within this branch. Larger non-negative
-    weights make reconstruction more influential.
+    weights make reconstruction more influential. Like its parent class, this
+    layer returns probabilities rather than logits; callers must not apply an
+    additional activation.
 
     References:
         Debot et al. "Interpretable Concept-Based Memory Reasoning", NeurIPS 2024.

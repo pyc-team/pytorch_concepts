@@ -56,7 +56,7 @@ from .modules.low.graph.wanda import WANDAGraphLearner
 # Loss functions
 from .modules.loss import PyCLoss, ConceptLoss, ConceptSubset, WeightedConceptLoss, \
     DepthWeightedConceptLoss, L1LogitRegularizer, CompositeLoss, \
-    MSEReconstructionLoss, KLDivergenceLoss, OrthogonalityLoss, NLLProbLoss, CMRTaskLoss
+    MSEReconstructionLoss, KLDivergenceLoss, OrthogonalityLoss, NLLProbLoss
 
 # Training callbacks
 from .modules.callbacks import LossWeightWarmup
@@ -75,7 +75,7 @@ from .modules.high.models.cbvae import ConceptBottleneckVAE
 from .modules.high.models.cvae import ConditionalVAE
 from .modules.high.models.graph_cbm import GraphConceptBottleneckModel
 from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
-from .modules.high.models.cmr import ConceptMemoryReasoner
+from .modules.high.models.cmr import CMRTaskLoss, ConceptMemoryReasoner
 
 # Models (mid-level)
 from .modules.mid.factors.factor import ParametricFactor

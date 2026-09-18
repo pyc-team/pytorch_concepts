@@ -47,6 +47,22 @@ def test_cmr_routes_reconstruction_prediction_as_auxiliary_value():
     assert torch.isfinite(loss)
 
 
+def test_cmr_cpd_parametrizations_match_layer_output_domains():
+    model = ConceptMemoryReasoner(
+        input_size=2,
+        annotations=Annotations(
+            labels=["c1", "c2", "xor"], cardinalities=[1, 1, 1]
+        ),
+        task_names=["xor"],
+        n_rules=3,
+    )
+    factors = {factor.variable.name: factor for factor in model.pgm.factors.values()}
+
+    assert set(factors["rule_selector"].parametrization) == {"logits"}
+    assert set(factors["tasks"].parametrization) == {"probs"}
+    assert set(factors["tasks_with_rec"].parametrization) == {"value"}
+
+
 def test_cmr_composite_loss_matches_original_value_and_gradients():
     torch.manual_seed(7)
     task_names = ["y1", "y2"]
