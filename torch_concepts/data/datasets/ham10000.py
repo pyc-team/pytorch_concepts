@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 from typing import List, Optional
 from urllib.parse import urlencode
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import numpy as np
 import pandas as pd
@@ -27,6 +27,15 @@ RAW_FILENAMES = (
     "HAM10000_images_part_2.zip",
     "HAM10000_metadata.csv",
 )
+DATAVERSE_FILENAMES = {
+    "HAM10000_images_part_1.zip": "HAM10000_images_part_1.zip",
+    "HAM10000_images_part_2.zip": "HAM10000_images_part_2.zip",
+    # The current official release calls this comma-separated source file .tab.
+    "HAM10000_metadata.tab": "HAM10000_metadata.csv",
+}
+DATAVERSE_HEADERS = {
+    "User-Agent": "pytorch-concepts HAM10000 dataset downloader",
+}
 
 
 class HAM10000Dataset(ConceptDataset):
@@ -81,7 +90,7 @@ class HAM10000Dataset(ConceptDataset):
         """Discover and download the required files from Harvard Dataverse."""
         query = urlencode({"persistentId": PERSISTENT_ID})
         api_url = f"{DATAVERSE_URL}/api/datasets/:persistentId/?{query}"
-        with urlopen(api_url) as response:
+        with urlopen(Request(api_url, headers=DATAVERSE_HEADERS)) as response:
             dataset = json.load(response)
 
         files = dataset["data"]["latestVersion"]["files"]
@@ -89,12 +98,12 @@ class HAM10000Dataset(ConceptDataset):
         for file_info in files:
             data_file = file_info["dataFile"]
             filename = data_file["filename"]
-            if filename in RAW_FILENAMES:
+            if filename in DATAVERSE_FILENAMES:
                 if filename in file_ids:
                     raise RuntimeError(f"Dataverse returned multiple files named {filename!r}.")
                 file_ids[filename] = data_file["id"]
 
-        missing = set(RAW_FILENAMES) - set(file_ids)
+        missing = set(DATAVERSE_FILENAMES) - set(file_ids)
         if missing:
             raise RuntimeError(
                 "The HAM10000 Dataverse release is missing required files: "
@@ -103,16 +112,21 @@ class HAM10000Dataset(ConceptDataset):
 
         raw_dir = os.path.join(self.root_dir, "raw")
         os.makedirs(raw_dir, exist_ok=True)
-        for filename in RAW_FILENAMES:
+        for remote_filename, local_filename in DATAVERSE_FILENAMES.items():
             url = (
-                f"{DATAVERSE_URL}/api/access/datafile/{file_ids[filename]}?"
+                f"{DATAVERSE_URL}/api/access/datafile/{file_ids[remote_filename]}?"
                 "format=original"
             )
-            destination = os.path.join(raw_dir, filename)
-            if filename.endswith(".zip"):
-                download_url_wget(url, destination)
+            destination = os.path.join(raw_dir, local_filename)
+            if local_filename.endswith(".zip"):
+                download_url_wget(url, destination, headers=DATAVERSE_HEADERS)
             else:
-                download_url(url, raw_dir, filename=filename)
+                download_url(
+                    url,
+                    raw_dir,
+                    filename=local_filename,
+                    headers=DATAVERSE_HEADERS,
+                )
 
     def build(self) -> None:
         """Extract image archives and cache paths, concepts, and metadata."""
