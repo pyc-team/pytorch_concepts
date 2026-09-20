@@ -72,13 +72,6 @@ target/
 # vscode
 .vscode
 
-# local environment / secrets
-.env
-.env.*
-!.env.example
-env.py
-**/env.py
-
 # lightning logs
 examples/lightning_logs/
 lightning_logs/
@@ -99,10 +92,3 @@ outputs/
 # analysis
 results/
 examples/experiments/*.png
-*.png
-
-# checkpoints
-checkpoints/
-*.ckpt
-*.pt
-*.pth
