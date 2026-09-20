@@ -6,17 +6,31 @@ Run from the repository root with either:
     python tests/test_graph_generator.py
 """
 
+import warnings
 from functools import partial
 from types import SimpleNamespace
 
+import matplotlib
 import matplotlib.style as mpl_style
 import numpy as np
 import pytest
 import torch
 
+warnings.filterwarnings(
+    "ignore",
+    message=".*read_style_directory function was deprecated.*",
+    category=matplotlib.MatplotlibDeprecationWarning,
+)
+warnings.filterwarnings(
+    "ignore",
+    message=".*update_nested_dict function was deprecated.*",
+    category=matplotlib.MatplotlibDeprecationWarning,
+)
+
 if not hasattr(mpl_style, "core"):
     mpl_style.core = mpl_style
 
+import torch_concepts
 import torch_concepts.graph_generator as graph_module
 from torch_concepts.concept_graph import ConceptGraph
 from torch_concepts.graph_generator import (
@@ -57,6 +71,8 @@ def dataset():
 def test_base_generator_is_abstract_and_registries_are_separate():
     with pytest.raises(TypeError):
         GraphGenerator(name="x", source="x")
+    assert torch_concepts.graph_generator is graph_module
+    assert "graph_generator" in torch_concepts.__all__
     assert "GroundTruth" in GraphGeneratorFixed._sources
     assert "DAGMA_CGM" in GraphGeneratorLearnable._sources
     assert "GroundTruth" not in GraphGeneratorLearnable._sources
@@ -346,11 +362,12 @@ def test_llm_query_retries_invalid_responses_and_uses_temperature(dataset):
             calls.append((prompt, kwargs))
             return "invalid" if len(calls) == 1 else "A->B"
 
-    graph = GraphGeneratorFixed(
-        name="fake",
-        source="LLM",
-        llm_backend=Backend(),
-    ).construct_graph(dataset)
+    with pytest.warns(UserWarning, match="retrying"):
+        graph = GraphGeneratorFixed(
+            name="fake",
+            source="LLM",
+            llm_backend=Backend(),
+        ).construct_graph(dataset)
 
     assert "previous response was invalid" in calls[1][0]
     assert calls[0][1] == {"repeats": 1}
@@ -362,13 +379,16 @@ def test_llm_query_warns_and_skips_pair_after_invalid_retries(dataset):
     def backend(prompt, **kwargs):
         return "still invalid"
 
-    with pytest.warns(UserWarning, match="Falling back to None"):
+    with pytest.warns(UserWarning) as warnings:
         graph = GraphGeneratorFixed(
             name="fake",
             source="LLM",
             llm_backend=backend,
         ).construct_graph(dataset)
 
+    messages = [str(warning.message) for warning in warnings]
+    assert any("retrying" in message for message in messages)
+    assert any("Falling back to None" in message for message in messages)
     assert torch.count_nonzero(graph.data) == 0
 
 
