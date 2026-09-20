@@ -2,15 +2,20 @@
 Example: Using CausallyReliableConceptBottleneckModel
 """
 
+import os
 import re
 import time
 
+from pathlib import Path
+
+import matplotlib.style as mpl_style
+
+if not hasattr(mpl_style, "core"):
+    mpl_style.core = mpl_style
 
 from torch_concepts.graph_generator import compose_refinements, dfs_remove_cycles, refine_llm
 from torch_concepts.llm_backends import LiteLLMBackend
-from torch_concepts.env import get_env
 import torch
-from pathlib import Path
 from pytorch_lightning import Trainer
 import torchmetrics
 
@@ -114,7 +119,7 @@ def main():
 
     PLOTS_DIR = Path(__file__).resolve().parents[3] / "outputs" / "causally_reliable" / "plots"
     LLM_MODEL = "groq/openai/gpt-oss-20b"
-    api_key = get_env("GROQ_API_KEY")
+    api_key = os.environ.get("GROQ_API_KEY", "")
     
     # Generate toy data
     print("=" * 60)
@@ -130,8 +135,7 @@ def main():
                                    val_size=0.1,
                                    test_size=0.2,
                                    concept_subset=SUPERVISED_NAMES,
-                                   label_descriptions=ASIA_LABEL_DESCRIPTIONS,
-                                   autoencoder_exclude=TASK_NAMES)
+                                   label_descriptions=ASIA_LABEL_DESCRIPTIONS)
 
     if not api_key:
         raise RuntimeError("Set GROQ_API_KEY in .env before running this example.")
