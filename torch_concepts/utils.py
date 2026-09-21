@@ -11,6 +11,9 @@ from collections import Counter
 from typing import Any, Dict, Union, List, Optional
 import torch, math
 import logging
+from ._matplotlib_compat import ensure_style_core_alias
+
+ensure_style_core_alias()
 from pytorch_lightning import seed_everything as pl_seed_everything
 
 

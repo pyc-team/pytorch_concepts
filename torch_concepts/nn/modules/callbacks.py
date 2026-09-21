@@ -1,5 +1,8 @@
 """Lightning callbacks that schedule parts of the objective during training."""
 
+from ..._matplotlib_compat import ensure_style_core_alias
+
+ensure_style_core_alias()
 import pytorch_lightning as pl
 
 
