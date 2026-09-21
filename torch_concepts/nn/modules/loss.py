@@ -902,7 +902,15 @@ class MSEReconstructionLoss(PyCLoss):
         return f"variable={self.variable!r}, reduction={self.reduction!r}"
 
     def forward(self, output: ModelOutput, target=None) -> torch.Tensor:
-        predicted = output.params[self.variable]["value"]
+        params = output.params[self.variable]
+        if "value" not in params:
+            raise KeyError(
+                f"MSEReconstructionLoss expected {self.variable!r} to be a "
+                "Delta-style observation with a reported quantity 'value'; "
+                f"it is neither a reported quantity nor a deterministic "
+                f"observation. Available quantities: {tuple(params)}."
+            )
+        predicted = params["value"]
         evidence = (output.extra or {}).get("evidence", {})
         if self.variable not in evidence:
             raise KeyError(
