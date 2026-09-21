@@ -18,9 +18,6 @@ from functools import cached_property
 
 import torch
 from torch import nn
-from ....._matplotlib_compat import ensure_style_core_alias
-
-ensure_style_core_alias()
 import pytorch_lightning as pl
 from pytorch_lightning.utilities.types import Optimizer, LRScheduler
 
