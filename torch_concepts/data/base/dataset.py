@@ -6,6 +6,8 @@ for all concept-based datasets in the torch_concepts package.
 """
 from abc import abstractmethod
 import os
+import hashlib
+import json
 import logging
 import numpy as np
 import pandas as pd
@@ -166,8 +168,13 @@ class ConceptDataset(Dataset):
 
         # Store graph
         self._graph = None
+        self._graph_native = None
+        self._graph_generator = None
         if graph is not None:
             self.set_graph(graph)  # graph among all concepts
+            self._graph_native = self._graph
+            if list(self._graph.node_names) != list(self.concept_names):
+                self._graph = None
 
         self.scalers = {}  # dict of fitted scalers for input and concepts
 
@@ -444,6 +451,16 @@ class ConceptDataset(Dataset):
         """Adjacency matrix of the causal graph between concepts."""
         return self._graph
 
+    @property
+    def graph_native(self) -> Optional[ConceptGraph]:
+        """Graph supplied by the dataset before graph generation."""
+        return self._graph_native
+
+    @property
+    def graph_generator(self):
+        """Graph generator configured for this dataset."""
+        return self._graph_generator
+
     # Dataset flags #####################################################
 
     @property
@@ -635,6 +652,97 @@ class ConceptDataset(Dataset):
         finally:
             backbone.train(was_training)
         return torch.cat(embeddings_list, dim=0)
+
+
+    # Graph precomputation #############################################
+    def precompute_graph(
+        self,
+        graph_generator,
+        cache: bool = True,
+        cache_dir: Optional[str] = None,
+        force: bool = False,
+    ) -> None:
+        """Precompute a fixed graph, optionally caching it to disk."""
+        if getattr(graph_generator, "trainable", False):
+            raise TypeError(
+                "precompute_graph only accepts fixed graph generators; use "
+                "set_graph_generator for a learnable generator."
+            )
+        if (
+            graph_generator.name == "ground_truth"
+            and self.graph_native is not None
+            and list(self.graph_native.node_names) != list(self.concept_names)
+        ):
+            raise ValueError("Native graph nodes must match the selected concept names and order.")
+        self._graph_generator = graph_generator
+
+        graph = None
+        cache_path = None
+        cache_key = None
+        if cache and graph_generator.name != "ground_truth":
+            graph_generator._resolve_context(self)
+            cache_key = graph_generator._cache_key(self)
+            cache_dir = cache_dir or self.root_dir
+            os.makedirs(cache_dir, exist_ok=True)
+            digest = hashlib.sha256(
+                json.dumps(cache_key).encode("utf-8")
+            ).hexdigest()
+            cache_path = os.path.join(cache_dir, f"graph_{digest}.pt")
+            if os.path.exists(cache_path) and not force:
+                payload = torch.load(cache_path, weights_only=True)
+                if payload.get("cache_key") == cache_key:
+                    graph = ConceptGraph(
+                        payload["adjacency"],
+                        node_names=list(self.concept_names),
+                    )
+                    graph_generator._validate_graph(graph)
+                    graph_generator.graph = graph
+                    graph_generator.fitted = True
+                    logger.info(
+                        "Loading a pre-existing graph from %s; "
+                        "set force=True to recompute it.",
+                        cache_path,
+                    )
+                    warnings.warn(
+                        "Loading a pre-existing graph cache for "
+                        f"dataset={type(self).__name__}(name={self.name!r}), "
+                        f"method={graph_generator.name!r}, "
+                        f"source={graph_generator.source!r}, "
+                        f"refinement={cache_key['refinement']!r}. If refinement logic, "
+                        "prompting, descriptions, or other hidden behavior changed "
+                        "without changing this cache identity, pass force=True to "
+                        "recompute it.",
+                        UserWarning,
+                        stacklevel=2,
+                    )
+
+        if graph is None:
+            graph = graph_generator.construct_graph(self)
+            if list(graph.node_names) != list(self.concept_names):
+                graph_generator.invalidate_cache()
+                raise ValueError("Graph nodes must match the selected concept names and order.")
+            if cache_path is not None and cache_key is not None:
+                logger.info("Saving graph to %s", cache_path)
+                torch.save(
+                    {
+                        "cache_key": cache_key,
+                        "adjacency": graph.data.cpu(),
+                    },
+                    cache_path,
+                )
+        self._graph = graph
+
+    def set_graph_generator(self, graph_generator) -> None:
+        """Register a learnable graph generator without materializing or caching it."""
+        if not getattr(graph_generator, "trainable", False):
+            raise TypeError(
+                "set_graph_generator only accepts learnable graph generators; "
+                "use precompute_graph for a fixed generator."
+            )
+        if list(graph_generator.concept_names) != list(self.concept_names):
+            raise ValueError("Generator concepts must match the selected concept names and order.")
+        self._graph_generator = graph_generator
+        self._graph = None
 
     def _subset_rows(self, indices) -> None:
         """Subset every row-aligned source and rebuild selected supervision."""
@@ -842,7 +950,14 @@ class ConceptDataset(Dataset):
         else:
             selected = None
             self._ground_truth_source = None
+        previous_names = list(self.concept_names)
         self.concepts = selected
+        if previous_names != list(self.concept_names):
+            self._graph = None
+            generator = getattr(self, "_graph_generator", None)
+            if generator is not None:
+                generator.invalidate_cache()
+                self._graph_generator = None
         self._ground_truth_annotation = (
             selected.annotation if selected is not None else None
         )

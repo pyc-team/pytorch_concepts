@@ -11,6 +11,21 @@ logger = logging.getLogger(__name__)
 TYPES = ("binary", "categorical", "continuous")
 
 
+def state_embedding_counts(concept_types, cardinalities, expand_binary=False):
+    """Return the number of state embeddings required by each concept."""
+    if len(concept_types) != len(cardinalities):
+        raise ValueError("concept_types and cardinalities must have equal length.")
+    unsupported = set(concept_types) - set(TYPES)
+    if unsupported:
+        raise ValueError(f"Unsupported concept types: {sorted(unsupported)}.")
+    return [
+        cardinality if concept_type == "categorical"
+        else 1 if concept_type == "continuous" or expand_binary
+        else 2
+        for concept_type, cardinality in zip(concept_types, cardinalities)
+    ]
+
+
 def by_type(binary=None, categorical=None, continuous=None) -> Dict[str, Any]:
     """``{concept type: item}`` for the types the caller actually gave.
 
