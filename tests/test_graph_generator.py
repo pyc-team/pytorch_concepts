@@ -8,6 +8,7 @@ Run from the repository root with either:
 
 import warnings
 from functools import partial
+import time
 from types import SimpleNamespace
 
 import matplotlib
@@ -650,5 +651,39 @@ def test_dfs_remove_cycles_breaks_cycle_from_named_start(capsys):
     assert "cycle has been broken" in capsys.readouterr().out
 
 
+class _UnittestStylePytestReporter:
+    def __init__(self):
+        self.count = 0
+        self.failed = False
+
+    def pytest_runtest_logreport(self, report):
+        if report.when == "call":
+            self.count += 1
+            if report.passed:
+                print(".", end="", flush=True)
+            elif report.failed:
+                self.failed = True
+                print("F", end="", flush=True)
+        elif report.when in {"setup", "teardown"} and report.failed:
+            self.failed = True
+            print("E", end="", flush=True)
+
+
+def _main():
+    reporter = _UnittestStylePytestReporter()
+    start = time.perf_counter()
+    exit_code = pytest.main(
+        [__file__, "-s", "-p", "no:terminal"],
+        plugins=[reporter],
+    )
+    elapsed = time.perf_counter() - start
+    print()
+    print("-" * 70)
+    print(f"Ran {reporter.count} tests in {elapsed:.3f}s")
+    print()
+    print("OK" if exit_code == 0 and not reporter.failed else "FAILED")
+    return exit_code
+
+
 if __name__ == "__main__":
-    raise SystemExit(pytest.main([__file__, "-q", "-s"]))
+    raise SystemExit(_main())

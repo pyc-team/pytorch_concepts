@@ -25,9 +25,6 @@ import logging
 import warnings
 from typing import Literal, Mapping, Optional
 import torch
-from ..._matplotlib_compat import ensure_style_core_alias
-
-ensure_style_core_alias()
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset, Subset
 

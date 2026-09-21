@@ -14,8 +14,11 @@ decomposed again after each step.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import io
 import random
 import sys
+import time
 import types
 from pathlib import Path
 
@@ -888,8 +891,31 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--strict", action="store_true")
+    parser.add_argument("--verbose", action="store_true")
     args = parser.parse_args()
-    run(args.seed, args.strict)
+    start = time.perf_counter()
+    ok = False
+    try:
+        if args.verbose:
+            run(args.seed, args.strict)
+        else:
+            with contextlib.redirect_stdout(io.StringIO()):
+                run(args.seed, args.strict)
+            print(".", end="")
+        ok = True
+    except Exception:
+        if not args.verbose:
+            print("E", end="")
+        raise
+    finally:
+        elapsed = time.perf_counter() - start
+        if not args.verbose:
+            print()
+            print("-" * 70)
+            print(f"Ran 1 test in {elapsed:.3f}s")
+            print()
+            if ok:
+                print("OK")
 
 
 if __name__ == "__main__":

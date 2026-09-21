@@ -16,10 +16,6 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.style as mpl_style
-
-if not hasattr(mpl_style, "core"):
-    mpl_style.core = mpl_style
 import matplotlib.pyplot as plt
 import pandas as pd
 import torch

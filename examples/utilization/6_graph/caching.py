@@ -30,11 +30,7 @@ import os
 import time
 from pathlib import Path
 
-import matplotlib.style as mpl_style
 import torch
-
-if not hasattr(mpl_style, "core"):
-    mpl_style.core = mpl_style
 
 from torch_concepts.graph_generator import compose_refinements, dfs_remove_cycles, refine_llm
 from torch_concepts.llm_backends import LiteLLMBackend

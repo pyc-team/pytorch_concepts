@@ -18,10 +18,6 @@ from pathlib import Path
 import matplotlib
 
 matplotlib.use("Agg")
-import matplotlib.style as mpl_style
-
-if not hasattr(mpl_style, "core"):
-    mpl_style.core = mpl_style
 from matplotlib import pyplot as plt
 import networkx as nx
 import numpy as np

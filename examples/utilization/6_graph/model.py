@@ -18,11 +18,7 @@ Flow:
 4. Train all non-frozen components with a plain PyTorch loop.
 5. Run one evaluation forward and inspect the graph materialized by CausalCGM.
 """
-import matplotlib.style as mpl_style
 import torch
-
-if not hasattr(mpl_style, "core"):
-    mpl_style.core = mpl_style
 
 from torch_concepts import seed_everything
 from torch_concepts.graph_generator import GraphGeneratorLearnable

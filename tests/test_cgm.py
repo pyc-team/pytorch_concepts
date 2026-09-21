@@ -1,13 +1,8 @@
+import time
+
 import pytest
 import torch
 from torch import nn
-
-# Importing torch_concepts pulls in Lightning/TorchMetrics, which can import
-# scienceplots before matplotlib exposes the legacy ``style.core`` alias.
-import matplotlib.style as mpl_style
-
-if not hasattr(mpl_style, "core"):
-    mpl_style.core = mpl_style
 
 from torch_concepts import Annotations, ConceptGraph
 from torch_concepts.nn import CausalCGM, CGMTrainingLoss, ConceptLoss
@@ -631,5 +626,39 @@ def test_cgm_low_level_blocks_compose_for_one_manual_path():
     assert output.shape == (4, ann.size)
 
 
+class _UnittestStylePytestReporter:
+    def __init__(self):
+        self.count = 0
+        self.failed = False
+
+    def pytest_runtest_logreport(self, report):
+        if report.when == "call":
+            self.count += 1
+            if report.passed:
+                print(".", end="", flush=True)
+            elif report.failed:
+                self.failed = True
+                print("F", end="", flush=True)
+        elif report.when in {"setup", "teardown"} and report.failed:
+            self.failed = True
+            print("E", end="", flush=True)
+
+
+def _main():
+    reporter = _UnittestStylePytestReporter()
+    start = time.perf_counter()
+    exit_code = pytest.main(
+        [__file__, "-s", "-p", "no:terminal"],
+        plugins=[reporter],
+    )
+    elapsed = time.perf_counter() - start
+    print()
+    print("-" * 70)
+    print(f"Ran {reporter.count} tests in {elapsed:.3f}s")
+    print()
+    print("OK" if exit_code == 0 and not reporter.failed else "FAILED")
+    return exit_code
+
+
 if __name__ == "__main__":
-    raise SystemExit(pytest.main([__file__, "-vv", "-s"]))
+    raise SystemExit(_main())
