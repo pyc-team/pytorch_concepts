@@ -18,6 +18,7 @@ from torch_concepts import seed_everything, Backbone, ConceptGraph
 from torch_concepts.nn import MLP
 from torch_concepts.utils import ensure_list
 from torch_concepts.data.base import ConceptDataModule
+from torch_concepts.graph_generator import GraphGeneratorLearnable
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +91,41 @@ def maybe_precompute_embeddings(cfg: DictConfig, dm: ConceptDataModule, backbone
     # End-to-end: the model runs the backbone (frozen or unfrozen).
     return dm, backbone
 
+def maybe_precompute_graph(cfg: DictConfig, dm: ConceptDataModule, graph_generator=None):
+    """Route a graph generator to fixed precomputation or live learning.
+
+    Fixed generators may be materialized and cached. Learnable generators stay
+    attached to the model and never read or write a graph cache.
+    """
+    if graph_generator is None:
+        return dm, None
+
+    precompute = cfg.get("precompute_graph", True)
+    learnable = isinstance(graph_generator, GraphGeneratorLearnable)
+    if precompute:
+        if learnable:
+            raise ValueError(
+                "precompute_graph=True requires a fixed graph generator (the "
+                "materialized graph is cached and never updated). Set "
+                "precompute_graph=False to learn the graph end-to-end."
+            )
+        dm.precompute_graph(
+            graph_generator=graph_generator,
+            cache=True,
+            cache_dir=cfg.dataset.datamodule.root,
+            force=cfg.get("force_precompute_graph", False),
+        )
+        return dm, None
+
+    if not learnable:
+        raise ValueError(
+            "precompute_graph=False requires a learnable graph generator. Set "
+            "precompute_graph=True to compute and cache a fixed graph."
+        )
+
+    # Retain it for introspection without materializing it or touching cache.
+    dm.set_graph_generator(graph_generator)
+    return dm, graph_generator
 
 def resolve_graph(graph, annotations, task_names) -> ConceptGraph:
     """Return ``graph`` if given, else a default bipartite concept->task graph.
@@ -196,3 +232,5 @@ def update_config_from_data(cfg: DictConfig, dm: ConceptDataModule) -> DictConfi
                 "n_concept_states": int(sum(dm.annotations.cardinalities)),
             }
     return cfg
+
+

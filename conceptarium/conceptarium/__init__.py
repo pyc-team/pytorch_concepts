@@ -9,6 +9,10 @@ from .trainer import Trainer
 from .utils import (
     seed_everything,
     setup_run_env,
+    maybe_precompute_embeddings,
+    maybe_precompute_graph,
+    resolve_graph,
+    attach_latent_encoder,
     update_config_from_data,
 )
 from .wandb import (
@@ -29,7 +33,10 @@ __all__ = [
     # Utilities
     "seed_everything",
     "setup_run_env",
-    "clean_empty_configs",
+    "maybe_precompute_embeddings",
+    "maybe_precompute_graph",
+    "resolve_graph",
+    "attach_latent_encoder",
     "update_config_from_data",
 
     # W&B

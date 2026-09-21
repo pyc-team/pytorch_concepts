@@ -53,7 +53,8 @@ from .modules.low.graph.wanda import WANDAGraphLearner
 # Loss functions
 from .modules.loss import PyCLoss, ConceptLoss, ConceptSubset, WeightedConceptLoss, \
     DepthWeightedConceptLoss, L1LogitRegularizer, CompositeLoss, \
-    MSEReconstructionLoss, KLDivergenceLoss, OrthogonalityLoss, NLLProbLoss
+    MSEReconstructionLoss, KLDivergenceLoss, OrthogonalityLoss, NLLProbLoss, \
+    CGMTrainingLoss
 
 # Training callbacks
 from .modules.callbacks import LossWeightWarmup
@@ -72,6 +73,7 @@ from .modules.high.models.cbvae import ConceptBottleneckVAE
 from .modules.high.models.cvae import ConditionalVAE
 from .modules.high.models.graph_cbm import GraphConceptBottleneckModel
 from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
+from .modules.high.models.cgm import CausalCGM
 
 # Models (mid-level)
 from .modules.mid.factors.factor import ParametricFactor
@@ -119,6 +121,13 @@ from .modules.low.intervention.policy.uniform import UniformPolicy
 from .modules.low.intervention.policy.uncertainty import UncertaintyInterventionPolicy
 from .modules.low.intervention.policy.random import RandomPolicy
 from .modules.low.intervention.policy.gradient import GradientPolicy
+
+
+def __getattr__(name):
+    if name == "SteerlingModel":
+        from .modules.high.models.steerling import SteerlingModel
+        return SteerlingModel
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [
@@ -186,6 +195,7 @@ __all__ = [
     "KLDivergenceLoss",
     "OrthogonalityLoss",
     "NLLProbLoss",
+    "CGMTrainingLoss",
 
     # Training callbacks
     "LossWeightWarmup",
@@ -207,6 +217,8 @@ __all__ = [
     "ConditionalVAE",
     "GraphConceptBottleneckModel",
     "CausallyReliableConceptBottleneckModel",
+    "CausalCGM",
+    "SteerlingModel",
     # Models (mid-level)
     "ParametricFactor",
     "ParametricCPD",
