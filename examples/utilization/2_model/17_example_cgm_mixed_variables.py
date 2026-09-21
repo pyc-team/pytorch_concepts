@@ -13,13 +13,16 @@ and two locations/scales. MSE supervises locations, not Normal scales.
 import argparse
 from pathlib import Path
 
-import matplotlib.pyplot as plt
+import matplotlib
+
+matplotlib.use("Agg")
 import matplotlib.style as mpl_style
-import pandas as pd
-import torch
 
 if not hasattr(mpl_style, "core"):
     mpl_style.core = mpl_style
+import matplotlib.pyplot as plt
+import pandas as pd
+import torch
 
 from pytorch_lightning import Trainer
 from torchmetrics.classification import BinaryAccuracy, MulticlassAccuracy

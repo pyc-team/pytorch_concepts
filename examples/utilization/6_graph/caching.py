@@ -26,6 +26,10 @@ The refinement also requires ``litellm`` and an API key.
 The same graph API exists one level down on the dataset itself:
 ``dm.dataset.precompute_graph(generator, cache=True, force=False)``.
 """
+import os
+import time
+from pathlib import Path
+
 import matplotlib.style as mpl_style
 import torch
 
@@ -34,9 +38,6 @@ if not hasattr(mpl_style, "core"):
 
 from torch_concepts.graph_generator import compose_refinements, dfs_remove_cycles, refine_llm
 from torch_concepts.llm_backends import LiteLLMBackend
-from torch_concepts.env import get_env
-import time
-from pathlib import Path
 
 from pytorch_lightning import Trainer
 from torchmetrics.classification import BinaryAccuracy
@@ -55,8 +56,8 @@ from torch_concepts.nn.modules.mid.inference.torch.deterministic import (
 )
 
 
-LLM_MODEL = get_env("GRAPH_LLM_MODEL", "groq/openai/gpt-oss-20b")
-LLM_API_KEY = get_env("GROQ_API_KEY")
+LLM_MODEL = os.environ.get("GRAPH_LLM_MODEL", "groq/openai/gpt-oss-20b")
+LLM_API_KEY = os.environ.get("GROQ_API_KEY", "")
 DOMAIN = "medical diagnosis"
 OUTPUT_DIR = Path("output")
 
