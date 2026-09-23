@@ -302,10 +302,10 @@ class Variable(ABC):
         """Reshape ``tensor`` so its last axes are exactly ``trailing``.
 
         Examples:
-        (8, 3, 4)   -> (8, 3, 4)      caso 1: no change
-        (8, 12)     -> (8, 3, 4)      caso 3: reshape of the last axis
-        (12,)       -> (3, 4)         caso 3: no leading dim, reshape of the last axis
-        (2, 5, 12)  -> (2, 5, 3, 4)   caso 3: arbitrary leading dims, reshape of the last axis
+        (8, 3, 4)   -> (8, 3, 4)      case 1: no change
+        (8, 12)     -> (8, 3, 4)      case 3: reshape of the last axis
+        (12,)       -> (3, 4)         case 3: no leading dim, reshape of the last axis
+        (2, 5, 12)  -> (2, 5, 3, 4)   case 3: arbitrary leading dims, reshape of the last axis
         (8, 7)      -> ValueError: cannot read a tensor of shape (8, 7) as (*leading, 3, 4)
         """
         n = len(trailing)
