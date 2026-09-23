@@ -4,7 +4,7 @@ import torch
 import numpy as np
 import pandas as pd
 import logging
-from typing import List, Optional, Sequence, Tuple
+from typing import List, Optional, Tuple
 from PIL import Image, ImageDraw, ImageFont
 from tqdm import tqdm
 
@@ -12,9 +12,6 @@ from ..base.dataset import ConceptDataset
 from ...annotations import Annotations
 
 logger = logging.getLogger(__name__)
-
-#: Operator symbols a composite can use, and the default set.
-DEFAULT_OPERATORS = ('+', '-', 'x', '/')
 
 CONCEPT_NAMES = ['first_digit', 'second_digit']
 TASK_NAMES = ['result']
@@ -39,7 +36,6 @@ def _generate_arithmetic_data(
     num_samples: int,
     img_size: int,
     seed: int,
-    operators: Sequence[str] = DEFAULT_OPERATORS,
     filename_offset: int = 0,
 ):
     """Generate MNIST arithmetic composite images and save to disk.
@@ -51,7 +47,6 @@ def _generate_arithmetic_data(
         num_samples: Number of samples to generate.
         img_size: Output image size (square).
         seed: Random seed.
-        operators: Operator symbols to sample from ('+', '-', 'x', '/').
         filename_offset: Starting index for filenames (to avoid collisions).
 
     Returns:
@@ -79,7 +74,8 @@ def _generate_arithmetic_data(
 
     os.makedirs(img_dir, exist_ok=True)
 
-    operator_list = [random.choice(tuple(operators)) for _ in range(num_samples)]
+    operators = ('+', '-', 'x', '/')
+    operator_list = [random.choice(operators) for _ in range(num_samples)]
 
     filenames = []
     concepts_list = []
@@ -176,9 +172,6 @@ class MNISTArithmeticDataset(ConceptDataset):
         Output image size (square). Default: 224.
     seed : int, optional
         Random seed for reproducible generation. Default: 42.
-    operators : sequence of str, optional
-        Operator symbols composites are drawn from. A non-default set gets its
-        own cache files. Default: ``('+', '-', 'x', '/')``.
     label_descriptions: Optional dict mapping concept names to descriptions.
     """
 
@@ -190,7 +183,6 @@ class MNISTArithmeticDataset(ConceptDataset):
         val_size: float = 0.1,
         img_size: int = 224,
         seed: int = 42,
-        operators: Sequence[str] = DEFAULT_OPERATORS,
         concept_subset: Optional[list] = None,
         label_descriptions: Optional[dict] = None,
     ):
@@ -202,7 +194,7 @@ class MNISTArithmeticDataset(ConceptDataset):
         self.img_size = img_size
         self.seed = seed
 
-        self.operators = tuple(operators)
+        self.operators = ('+', '-', 'x', '/')
 
         if root is None:
             root = os.path.join(os.getcwd(), 'data', 'mnist_arithmetic')
@@ -229,20 +221,10 @@ class MNISTArithmeticDataset(ConceptDataset):
         ]
 
     @property
-    def _operators_tag(self) -> str:
-        """Cache suffix for a non-default operator set; empty for the default one."""
-        if tuple(self.operators) == DEFAULT_OPERATORS:
-            return ""
-        names = {"+": "add", "-": "sub", "x": "mul", "/": "div"}
-        return "_ops_" + "".join(names.get(op, op) for op in self.operators)
-
-    @property
     def processed_filenames(self) -> List[str]:
-        stem = (f"Ntrain_{self.num_train_samples}_Ntest_{self.num_test_samples}"
-                f"_seed_{self.seed}{self._operators_tag}")
         return [
-            f"filenames_{stem}.txt",
-            f"concepts_{stem}.pt",
+            f"filenames_Ntrain_{self.num_train_samples}_Ntest_{self.num_test_samples}_seed_{self.seed}.txt",
+            f"concepts_Ntrain_{self.num_train_samples}_Ntest_{self.num_test_samples}_seed_{self.seed}.pt",
             "annotations.pt",
             "split_mapping.h5",
         ]
@@ -284,7 +266,6 @@ class MNISTArithmeticDataset(ConceptDataset):
             num_samples=self.num_train_samples,
             img_size=self.img_size,
             seed=self.seed,
-            operators=self.operators,
             filename_offset=0,
         )
 
@@ -296,7 +277,6 @@ class MNISTArithmeticDataset(ConceptDataset):
             num_samples=self.num_test_samples,
             img_size=self.img_size,
             seed=self.seed + 1,
-            operators=self.operators,
             filename_offset=self.num_train_samples,
         )
 

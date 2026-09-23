@@ -115,9 +115,7 @@ class DSpritesRegressionDataset(ConceptDataset):
     @property
     def processed_filenames(self) -> List[str]:
         return [
-            # .npy, not .pt: the images are ~3 GB, and `load_raw` memory-maps
-            # them (see there).
-            f"images.npy",
+            f"images.pt",
             f"concepts.pt",
             f"annotations.pt",
         ]
@@ -126,7 +124,8 @@ class DSpritesRegressionDataset(ConceptDataset):
         """"Download the dSprites dataset from the original source and save to root directory."""
 
         url = "https://github.com/google-deepmind/dsprites-dataset/raw/master/dsprites_ndarray_co1sh3sc6or40x32y32_64x64.npz"
-        filepath = self.raw_paths[0]
+        filename = self.raw_filenames[0]
+        filepath = os.path.join(self.root, filename)
 
         print(f"Downloading dSprites dataset...")
         print(f"Source: {url}")
@@ -145,7 +144,7 @@ class DSpritesRegressionDataset(ConceptDataset):
         logger.info(f"Building DSprites regression dataset")
 
         # Load dsprties npz file
-        dsprites_path = self.raw_paths[0]
+        dsprites_path = os.path.join(self.root, self.raw_filenames[0])
         dsprites_data = np.load(dsprites_path, allow_pickle=True)
         N = dsprites_data['imgs'].shape[0]
 
@@ -198,10 +197,7 @@ class DSpritesRegressionDataset(ConceptDataset):
         images = dsprites_data['imgs']
 
         os.makedirs(self.root_dir, exist_ok=True)
-        # `np.save` writes the ~3 GB image block in chunks, where a single
-        # `torch.save` of a blob that size has to hold and hand over the whole
-        # buffer at once.
-        np.save(self.processed_paths[0], images)
+        torch.save(torch.from_numpy(images), self.processed_paths[0])
         torch.save(cy, self.processed_paths[1])
         torch.save(annotations, self.processed_paths[2])
 
@@ -211,11 +207,7 @@ class DSpritesRegressionDataset(ConceptDataset):
         self.maybe_build()
         logger.info(f"Loading DSprites regression dataset from {self.root_dir}")
 
-        # Memory-mapped: the images are ~3 GB and every read is one sample
-        # (`__getitem__` copies it into a tensor), so nothing needs them all in
-        # memory at once. Mode 'c' keeps the array writable, which
-        # `torch.from_numpy` in the base class requires.
-        input_data = np.load(self.processed_paths[0], mmap_mode="c")
+        input_data = torch.load(self.processed_paths[0], weights_only=False).numpy()
         concepts = torch.load(self.processed_paths[1], weights_only=False)
         annotations = torch.load(self.processed_paths[2], weights_only=False)
 
