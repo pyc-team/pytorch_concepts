@@ -61,9 +61,9 @@ Expand each block below for an explanation and an example.
        from torch_concepts.nn import ConceptBottleneckModel, MLP
 
        annotations = pyc.Annotations(
-           labels=["smoking", "genotype", "tar"],
-           cardinalities=[1, 3, 1],
-           types=["binary", "categorical", "continuous"],
+           labels=["smoking", "genotype", "tar", "cancer"],
+           cardinalities=[1, 3, 1, 1],
+           types=["binary", "categorical", "continuous", "binary"],
        )
        n_features = 64
 
@@ -97,44 +97,14 @@ Expand each block below for an explanation and an example.
        from torch_concepts.nn import ConceptLoss
 
        loss = ConceptLoss(
-           annotations=annotations,
            binary=torch.nn.BCEWithLogitsLoss(),
            categorical=torch.nn.CrossEntropyLoss(),
            continuous=torch.nn.MSELoss(),
        )
 
-    **Composing losses.** Pass a list of terms per type and optional per-term weights.
-    Terms are summed with those weights. Here binary concepts are supervised with BCE
-    and additionally regularised with an L1 penalty at weight 0.01:
-
-    .. code-block:: python
-
-       from torch_concepts.nn import ConceptLoss, L1LogitRegularizer
-
-       loss = ConceptLoss(
-           annotations=annotations,
-           binary=[torch.nn.BCEWithLogitsLoss(), L1LogitRegularizer(scale=1.0)],
-           binary_weights=[1.0, 0.01],
-           categorical=torch.nn.CrossEntropyLoss(),
-           continuous=torch.nn.MSELoss(),
-       )
-
-    **Weighting concepts vs tasks differently.** :class:`~torch_concepts.nn.WeightedConceptLoss`
-    splits the loss into a concept term and a task term, each with its own scalar weight:
-
-    .. code-block:: python
-
-       from torch_concepts.nn import WeightedConceptLoss
-
-       loss = WeightedConceptLoss(
-           annotations=annotations,
-           concept_weight=0.5,
-           task_weight=1.0,
-           task_names=['cancer'],
-           binary=torch.nn.BCEWithLogitsLoss(),
-           categorical=torch.nn.CrossEntropyLoss(),
-           continuous=torch.nn.MSELoss(),
-       )
+    Terms can also be stacked and weighted per type, extra terms added on top of
+    concept supervision, and custom terms written against the output — see
+    :doc:`Losses <using_loss>` for the full contract.
 
     **Metrics.** :class:`~torch_concepts.nn.ConceptMetrics` follows the same type-aware pattern.
     Each type accepts a ``dict`` of ``name → torchmetrics.Metric`` — any
@@ -177,12 +147,12 @@ Expand each block below for an explanation and an example.
        model = ConceptBottleneckModel(
            input_size=n_features,
            annotations=annotations,
-           task_names=['xor'],
+           task_names=['cancer'],
            backbone=MLP(input_size=n_features, hidden_size=128, n_layers=1),
            latent_size=128,
        )
 
-       query = ['c1', 'c2', 'xor']
+       query = ['smoking', 'genotype', 'tar', 'cancer']
        optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
        loss_fn = torch.nn.BCEWithLogitsLoss()
 
@@ -206,7 +176,7 @@ Expand each block below for an explanation and an example.
        model = ConceptBottleneckModel(
            input_size=n_features,
            annotations=annotations,
-           task_names=['xor'],
+           task_names=['cancer'],
            backbone=MLP(input_size=n_features, hidden_size=128, n_layers=1),
            latent_size=128,
            lightning=True,
@@ -218,6 +188,12 @@ Expand each block below for an explanation and an example.
 
        trainer = Trainer(max_epochs=100)
        trainer.fit(model, datamodule=datamodule)
+
+    The step builds the query for you: training observes the concepts (so that certain 
+    inference strategies can do teacher-forcing, e.g., IndependentInference), while
+    validation and test leave them latent so evaluation measures the model unaided.
+    Override ``default_query`` (or ``default_evidence``), both of which take the split as
+    ``step``, to change what a split observes.
 
 
 .. dropdown:: Putting It Together: Concept Bottleneck Model
@@ -246,7 +222,6 @@ Expand each block below for an explanation and an example.
 
        # Type-aware loss
        loss = ConceptLoss(
-           annotations=annotations,
            binary=torch.nn.BCEWithLogitsLoss(),
            categorical=torch.nn.CrossEntropyLoss(),
        )

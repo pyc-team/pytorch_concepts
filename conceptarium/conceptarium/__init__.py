@@ -9,7 +9,6 @@ from .trainer import Trainer
 from .utils import (
     seed_everything,
     setup_run_env,
-    clean_empty_configs,
     update_config_from_data,
 )
 from .wandb import (

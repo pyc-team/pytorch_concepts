@@ -1,0 +1,39 @@
+# =============================================================
+# ELBO for a conditional VAE: conf/loss/cbvae.yaml minus the
+# orthogonality term (no unsupervised context to push away from
+# anything). Three terms:
+#
+#   reconstruction  0.5 * || input - decoder(z, concepts) ||^2
+#   KL              KL( q(z|input,concepts) || p(z|concepts) )
+#   concept         fits the MARGINAL p(c)
+#
+# The concept term trains no predictor: a CVAE reads its concepts
+# and never infers them, and no gradient runs from p(c) to the
+# decoder. It fits p(c) to the empirical frequencies so that an
+# UNCONDITIONAL draw (for FID) gets a plausible condition — not a
+# trade-off against reconstruction, so 1.0 is fine.
+# =============================================================
+_target_: "torch_concepts.nn.CompositeLoss"
+
+weights: [0.5, 1.0, 1.0]
+
+terms:
+  # Identical to conf/loss/cbvae.yaml, so the two models' losses are comparable.
+  - _target_: "torch_concepts.nn.MSEReconstructionLoss"
+    variable: input
+
+  - _target_: "torch_concepts.nn.KLDivergenceLoss"
+    latents: [z]
+    free_bits: 0.1   # nats per latent dimension
+
+  # The model reports `logits`, so the logit-space losses.
+  - _target_: "torch_concepts.nn.ConceptLoss"
+    binary:
+      _target_: "torch.nn.BCEWithLogitsLoss"
+    categorical:
+      _target_: "torch.nn.CrossEntropyLoss"
+    continuous:
+      _target_: "torch.nn.MSELoss"
+
+# Same short names as cbvae.yaml, so the logged terms line up across the two.
+names: [reco, kl, concept]

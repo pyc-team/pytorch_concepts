@@ -5,6 +5,26 @@ Composable interpretable layers and intervention utilities. See the
 :doc:`Low-Level user guide </guides/using_low_level>` for explanations and examples; the docstrings
 of each class below document their parameters and behaviour.
 
+Annotations & Tensors
+----------------------
+
+.. currentmodule:: torch_concepts
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   Annotations
+   AnnotatedTensor
+
+.. currentmodule:: torch_concepts.annotations
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   Concept
+
 .. currentmodule:: torch_concepts.nn
 
 Encoders
@@ -15,8 +35,13 @@ Encoders
    :nosignatures:
 
    LinearEmbeddingToConcept
+   MLPEmbeddingToConcept
    LinearEmbeddingEncoder
+   MLPEmbeddingEncoder
    SelectorEmbeddingEncoder
+   ConceptWhitening
+   WhitenedEmbeddingToConcept
+   CAVEmbeddingToConcept
 
 Predictors
 ----------
@@ -26,9 +51,11 @@ Predictors
    :nosignatures:
 
    LinearConceptToConcept
+   MLPConceptToConcept
    CallableConceptToConcept
    HyperlinearConceptEmbeddingToConcept
    MixConceptEmbeddingToConcept
+   MixConceptEmbeddings
 
 Dense Layers
 ------------
@@ -51,6 +78,17 @@ Priors
 
    LearnablePrior
    FixedPrior
+   TiedPrior
+
+Activations
+-----------
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   TrilActivation
+   GlobalScale
 
 Graph Learners
 --------------
@@ -69,6 +107,7 @@ Interventions
    :nosignatures:
 
    intervention
+   InterventionModule
    GroundTruthIntervention
    DoIntervention
    DistributionIntervention
@@ -96,7 +135,7 @@ Base Classes
 
    BaseConceptLayer
    BaseGraphLearner
-   BaseConceptInterventionStrategy
-   BaseModuleInterventionStrategy
-   BaseInterventionPolicy
-   BaseInterventionModule
+   InterventionStrategy
+   ConceptInterventionStrategy
+   ModuleInterventionStrategy
+   InterventionPolicy

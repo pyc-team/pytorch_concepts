@@ -1,7 +1,8 @@
 defaults:
   - _commons
   - _self_
-  
-_target_: "torch_concepts.nn.BlackBoxTaskOnly"
 
-task_names: ${dataset.default_task_names}
+model_cls:
+  _target_: "torch_concepts.nn.BlackBoxTaskOnly"
+
+  task_names: ${dataset.default_task_names}

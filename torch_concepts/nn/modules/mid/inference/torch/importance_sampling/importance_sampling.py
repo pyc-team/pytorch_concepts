@@ -30,36 +30,31 @@ Let ``z`` denote the non-evidence variables (query ``Q`` and hidden ``H``).
 Inputs / Outputs
 ----------------
 ``query`` maps each query variable to its **target** tensor ``q`` (shape
-``(B, *event)``); ``evidence`` maps each observed variable to ``e``. Query
-variables must be discrete (Bernoulli / Categorical / OneHotCategorical
-families). Evidence may be continuous. ``out.probabilities`` is a ``(B,)``
-tensor of ``P(Q=q | E=e)``.
+``(*leading, *event)``, with at least one leading batch-like dimension);
+``evidence`` maps each observed variable to ``e``. Query variables must be
+discrete (Bernoulli / Categorical / OneHotCategorical families). Evidence may be
+continuous. ``out.probabilities`` is a ``(*leading,)`` tensor of
+``P(Q=q | E=e)``.
 """
+
 from __future__ import annotations
 
+import math
 import warnings
 from typing import Callable, Dict, List, Set, Union
 
 import torch
 import torch.distributions as dist
 
-from ....models.bayesian_network import BayesianNetwork
-from ...utils import build_distribution, make_temperature_schedule
+from ....graph.bayesian_network import BayesianNetwork
+from ....distributions import spec_for
+from ...utils import build_distribution
 from .....outputs import InferenceOutput
 from ..base import TorchBaseInference
 from ..utils import build_relaxed_distribution
 from .base_proposal import BaseProposal
 
 
-# Discrete families admissible as query variables (relaxed variants included:
-# a variable declared as RelaxedBernoulli is conceptually a binary node).
-_DISCRETE = (
-    dist.Bernoulli,
-    dist.RelaxedBernoulli,
-    dist.Categorical,
-    dist.OneHotCategorical,
-    dist.RelaxedOneHotCategorical,
-)
 _BERNOULLI = (dist.Bernoulli, dist.RelaxedBernoulli)
 _ONEHOT = (dist.OneHotCategorical, dist.RelaxedOneHotCategorical)
 
@@ -74,7 +69,8 @@ def _soft_match(
     ``1[sample == target]`` as the relaxation temperature goes to zero.
 
     * Bernoulli family: ``prod_d  s_d if t_d == 1 else (1 - s_d)``.
-    * OneHotCategorical family: ``<s, t>`` over the class (last) axis.
+    * OneHotCategorical family: ``<s, t>`` over one member's class axis, then
+      the product over members.
     """
     D = variable.distribution
     s = sample
@@ -83,8 +79,13 @@ def _soft_match(
         m = t * s + (1.0 - t) * (1.0 - s)
         return m.flatten(2).prod(dim=-1)
     if issubclass(D, _ONEHOT):
-        m = (s * t).sum(dim=-1)  # contract the class axis
-        while m.dim() > 2:       # product over any remaining event axes
+        # Read into member layout first. The event of a k-member plate is flat
+        # (k * width), so contracting it whole would *sum* the per-member inner
+        # products where the joint match is their *product* — which on a plate
+        # reports a "probability" of up to k. One member's classes contract;
+        # the members multiply.
+        m = (variable.to_member(s) * variable.to_member(t)).sum(dim=-1)
+        while m.dim() > 2:       # product over members and any further axes
             m = m.prod(dim=-1)
         return m
     raise ValueError(
@@ -117,7 +118,6 @@ class ImportanceSampling(TorchBaseInference):
     """
 
     name = "ImportanceSampling"
-    _DISCRETE = _DISCRETE
 
     def __init__(
         self,
@@ -127,9 +127,17 @@ class ImportanceSampling(TorchBaseInference):
         initial_temperature: float = 1.0,
         annealing: Union[str, Callable[[int], float]] = "constant",
         annealing_rate: float = 0.0,
+        final_temperature: float = 1e-6,
         warn_low_ess: float = 0.01,
     ) -> None:
-        super().__init__(pgm)
+        super().__init__(
+            pgm,
+            initial_temperature=initial_temperature,
+            annealing=annealing,
+            annealing_rate=annealing_rate,
+            final_temperature=final_temperature,
+        )
+        self._require_directed()
         if not isinstance(proposal, BaseProposal):
             raise TypeError(
                 f"{self.name}: `proposal` must be a BaseProposal subclass, "
@@ -140,18 +148,6 @@ class ImportanceSampling(TorchBaseInference):
         self.proposal = proposal
         self.n_samples = int(n_samples)
         self.warn_low_ess = float(warn_low_ess)
-        # Retained for repr/introspection; the live schedule lives in ``_schedule``.
-        self.initial_temperature = float(initial_temperature)
-        self.annealing = annealing
-        self.annealing_rate = float(annealing_rate)
-
-        self._schedule = make_temperature_schedule(
-            initial_temperature, annealing, annealing_rate
-        )
-        self._step = 0
-        self.register_buffer(
-            "_temperature", torch.tensor(float(self._schedule(self._step)))
-        )
 
     def __repr__(self) -> str:
         return self._format_repr(
@@ -160,17 +156,9 @@ class ImportanceSampling(TorchBaseInference):
             initial_temperature=self.initial_temperature,
             annealing=self.annealing,
             annealing_rate=self.annealing_rate,
+            final_temperature=self.final_temperature,
             warn_low_ess=self.warn_low_ess,
         )
-
-    @property
-    def temperature(self) -> torch.Tensor:
-        return self._temperature
-
-    def step(self) -> None:
-        """Advance the temperature schedule by one step."""
-        self._step += 1
-        self._temperature.fill_(float(self._schedule(self._step)))
 
     # ------------------------------------------------------------------
     def _model_log_joint(
@@ -201,10 +189,14 @@ class ImportanceSampling(TorchBaseInference):
                     for k, v in params.items()
                 }
             else:
-                parent_values = {p.name: samples[p.name] for p in cpd.parents}
-                params = cpd(parent_values=parent_values, **layer_kwargs.get(name, {}))
+                # ``samples`` (whole-variable keyed, member columns already forced)
+                # is passed straight through; the CPD resolves each parent.
+                params = cpd(parent_values=samples, **layer_kwargs.get(name, {}))
 
-            value = samples[name].reshape(batch_size, var.size)
+            # Member layout: both builders below lay a plate out as one
+            # distribution per member, so the value must carry the member
+            # axis too — a flat (batch, size) row would not broadcast.
+            value = var.to_member(samples[name])
             if name in evidence_names:
                 d = build_distribution(var, params)
             else:
@@ -221,16 +213,30 @@ class ImportanceSampling(TorchBaseInference):
         evidence: Dict[str, torch.Tensor] = None,
         layer_kwargs: Dict[str, Dict] = {},
     ) -> InferenceOutput:
-        """Estimate ``P(Q=q | E=e)`` for a batch via importance sampling."""
+        """Estimate ``P(Q=q | E=e)`` for a batch via importance sampling.
+
+        Query and evidence accept plate-member names. Whole-variable evidence is
+        conditioning; member evidence is **value forcing** — the member's column
+        is forced on the sampled plate value, scored identically by proposal and
+        model, contributing no likelihood of its own.
+
+        Tensors may carry any number of leading (batch-like) dimensions. The
+        estimator packs samples and observations into a single axis, so those
+        dimensions are collapsed for the run and restored on
+        ``out.probabilities``, which comes back shaped ``(*leading,)``.
+        """
         if evidence is None:
             evidence = {}
-        B = self._validate(query, evidence)
+        self._validate(query, evidence)
+        leading = self._query_leading_shape(query, evidence)
+        query = self._collapse_leading(query, leading)
+        evidence = self._collapse_leading(evidence, leading)
+        B = math.prod(leading)
 
         N = self.n_samples
         M = N * B
         temperature = self.temperature
         query_names: Set[str] = set(query.keys())
-        evidence_names: Set[str] = set(evidence.keys())
 
         # Pack the N importance draws and the B observations into one leading
         # axis of size M = N * B (row m corresponds to sample n = m // B,
@@ -239,13 +245,20 @@ class ImportanceSampling(TorchBaseInference):
         def _expand(t: torch.Tensor) -> torch.Tensor:
             return t.unsqueeze(0).expand(N, *t.shape).reshape(M, *t.shape[1:])
 
+        # Whole-variable evidence is conditioned (scored exactly); member evidence
+        # is forced onto the plate value in both proposal and model (value forcing).
+        evidence, member_evidence = self._split_evidence(evidence)
         evidence_M = {name: _expand(val) for name, val in evidence.items()}
+        member_evidence_M = {
+            owner: {m: _expand(v) for m, v in members.items()}
+            for owner, members in member_evidence.items()
+        }
 
         samples, log_q = self.proposal.sample(
-            query_names, evidence_M, M, temperature, layer_kwargs
+            query_names, evidence_M, M, temperature, layer_kwargs, member_evidence_M
         )
         log_p = self._model_log_joint(
-            samples, evidence_names, temperature, M, layer_kwargs
+            samples, set(evidence), temperature, M, layer_kwargs
         )
 
         log_w = (log_p - log_q).reshape(N, B)
@@ -253,18 +266,16 @@ class ImportanceSampling(TorchBaseInference):
 
         match = torch.ones(N, B, device=temperature.device)
         for name, target in query.items():
-            var = self.pgm.variables[name]
-            sample_nb = samples[name].reshape(N, B, *var.shape)
-            target_nb = _expand(target).reshape(N, B, *var.shape)
-            match = match * _soft_match(var, sample_nb, target_nb)
+            sample = self.pgm.extract(name, samples)  # (M, k): k = member or full size
+            sample_nb = sample.reshape(N, B, *sample.shape[1:])
+            target_nb = _expand(target).reshape(N, B, *sample.shape[1:])
+            match = match * _soft_match(self.pgm.resolve(name), sample_nb, target_nb)
 
         prob = (w_tilde * match).sum(dim=0)  # (B,)
 
         self._warn_ess(w_tilde)
 
-        out = InferenceOutput()
-        out.probabilities = prob
-        return out
+        return InferenceOutput(probabilities=self._restore_leading(prob, leading))
 
     # ------------------------------------------------------------------
     def _warn_ess(self, w_tilde: torch.Tensor) -> None:
@@ -285,8 +296,8 @@ class ImportanceSampling(TorchBaseInference):
         self,
         query: Dict[str, torch.Tensor],
         evidence: Dict[str, torch.Tensor],
-    ) -> int:
-        """Validate inputs and return ``B`` (the batch size)."""
+    ) -> None:
+        """Validate the query/evidence containers."""
         if not isinstance(query, dict) or not query:
             raise ValueError(
                 f"{self.name}.query() requires a non-empty 'query' dict mapping "
@@ -309,33 +320,37 @@ class ImportanceSampling(TorchBaseInference):
             )
 
         all_tensors = {**query, **evidence}
+
+        unknown = set(all_tensors.keys()) - self.pgm.queryable_names
+        if unknown:
+            raise ValueError(f"{self.name}: unknown variable names {sorted(unknown)}.")
+
         for vname, val in all_tensors.items():
             if val.dim() < 2:
                 raise ValueError(
                     f"{self.name}: tensor for '{vname}' has shape {tuple(val.shape)} "
-                    "but a leading batch dimension is required, e.g. (B, *event). "
-                    "Use tensor.unsqueeze(0) for a single observation."
+                    "but at least one leading batch dimension is required, e.g. "
+                    "(*leading, *event). Use tensor.unsqueeze(0) for a single observation."
                 )
 
-        batch_sizes = {name: v.shape[0] for name, v in all_tensors.items()}
-        if len(set(batch_sizes.values())) > 1:
-            raise ValueError(f"{self.name}: mismatched batch sizes {batch_sizes}.")
-
-        all_names = {v.name for v in self.pgm.variables.values()}
-        unknown = set(all_tensors.keys()) - all_names
-        if unknown:
-            raise ValueError(f"{self.name}: unknown variable names {sorted(unknown)}.")
+        leadings = {
+            name: tuple(self._leading_shape(name, v)) for name, v in all_tensors.items()
+        }
+        if len(set(leadings.values())) > 1:
+            raise ValueError(
+                f"{self.name}: mismatched leading (batch) dimensions {leadings}."
+            )
 
         self._require_discrete(list(query.keys()))
-        return next(iter(batch_sizes.values()))
 
     def _require_discrete(self, names: List[str]) -> None:
         for name in names:
-            v = self.pgm.variables[name]
-            if not issubclass(v.distribution, self._DISCRETE):
+            v = self.pgm.resolve(name)  # a member's family is its plate's family
+            spec = spec_for(v.distribution, f"{self.name}: {name!r}")
+            if not spec.is_discrete:
                 raise ValueError(
                     f"{self.name}: query variable {name!r} has distribution "
-                    f"{v.distribution.__name__!r}, which is continuous. Only "
-                    "Bernoulli, Categorical and OneHotCategorical query variables "
-                    "are supported (the soft indicator needs a discrete target)."
+                    f"{v.distribution.__name__!r}, which is not discrete. Only "
+                    "discrete query variables are supported (the soft indicator "
+                    "needs a discrete target)."
                 )

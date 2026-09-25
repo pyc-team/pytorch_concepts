@@ -9,9 +9,9 @@ import torch
 import torch.nn as nn
 import torch.distributions as dist
 
-from torch_concepts.nn.modules.mid.models.variable import ConceptVariable
-from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
-from torch_concepts.nn.modules.mid.models.bayesian_network import BayesianNetwork
+from torch_concepts.nn.modules.mid.variable import ConceptVariable
+from torch_concepts.nn.modules.mid.factors.cpd import ParametricCPD
+from torch_concepts.nn.modules.mid.graph.bayesian_network import BayesianNetwork
 from torch_concepts.nn.modules.mid.inference.torch.deterministic import DeterministicInference
 from torch_concepts.nn.modules.mid.inference.torch.ancestral import AncestralSamplingInference
 from torch_concepts.nn.modules.low.priors import LearnablePrior, FixedPrior
@@ -43,6 +43,13 @@ def _make_chain_model():
     return BayesianNetwork(variables=[x, a, b], factors=[cpd_x, cpd_a, cpd_b])
 
 
+def _make_no_param_model():
+    """x (delta root, size=4), backed entirely by a fixed (non-learnable) prior."""
+    x = ConceptVariable("x", distribution=Delta, size=4)
+    cpd_x = ParametricCPD(variable=x, parametrization={"value": FixedPrior(torch.zeros(4))})
+    return BayesianNetwork(variables=[x], factors=[cpd_x])
+
+
 def _make_plate_model():
     """x (delta) -> g (plate: [m1, m2], bernoulli) -> y (bernoulli)."""
     x = ConceptVariable("x", distribution=Delta, size=4)
@@ -61,27 +68,27 @@ def _make_plate_model():
 class TestDeterministicInferenceConstruction:
     def test_basic_construction(self):
         m = _make_simple_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         assert isinstance(eng, DeterministicInference)
 
     def test_mode_is_deterministic(self):
         m = _make_simple_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         assert eng.mode == "deterministic"
 
     def test_default_p_int_zero(self):
         m = _make_simple_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         assert eng.p_int == 0.0
 
     def test_custom_p_int(self):
         m = _make_simple_model()
-        eng = DeterministicInference(m, activate_before_propagation=False, p_int=0.5)
+        eng = DeterministicInference(m, p_int=0.5)
         assert eng.p_int == 0.5
 
     def test_parallelize_levels_default_false(self):
         m = _make_simple_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         assert eng.parallelize_levels is False
 
 
@@ -96,10 +103,12 @@ class TestAncestralSamplingInferenceConstruction:
         eng = AncestralSamplingInference(m)
         assert eng.mode == "ancestral"
 
-    def test_default_p_int_one(self):
+    def test_default_p_int_zero(self):
+        # Every engine defaults to never teacher-forcing, so swapping one for
+        # another does not silently change the training regime.
         m = _make_simple_model()
         eng = AncestralSamplingInference(m)
-        assert eng.p_int == 1.0
+        assert eng.p_int == 0.0
 
     def test_initial_temperature_stored(self):
         m = _make_simple_model()
@@ -114,55 +123,55 @@ class TestAncestralSamplingInferenceConstruction:
 class TestDeterministicQuery:
     def test_returns_inference_output(self):
         m = _make_simple_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         out = eng.query(query=["c"], evidence={})
         assert isinstance(out, InferenceOutput)
 
     def test_params_key_present(self):
         m = _make_simple_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         out = eng.query(query=["c"], evidence={})
-        assert "c" in out.params
+        assert "c" in out.variables
 
     def test_probs_shape_no_batch(self):
         m = _make_simple_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         out = eng.query(query=["c"], evidence={})
-        assert out.params["c"]["probs"].shape == (1, 2)
+        assert out.probs["c"].shape == (1, 2)
 
     def test_probs_shape_with_batch(self):
         m = _make_simple_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         B = 5
         out = eng.query(query=["c"], evidence={"x": torch.randn(B, 4)})
-        assert out.params["c"]["probs"].shape == (B, 2)
+        assert out.probs["c"].shape == (B, 2)
 
     def test_no_samples_in_deterministic_mode(self):
         m = _make_simple_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         out = eng.query(query=["c"], evidence={})
-        assert len(out.samples) == 0
+        assert out.samples is None
 
     def test_probs_in_valid_range(self):
         m = _make_simple_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         out = eng.query(query=["c"], evidence={})
-        probs = out.params["c"]["probs"]
+        probs = out.probs["c"]
         assert (probs >= 0).all() and (probs <= 1).all()
 
     def test_querying_root_returns_value(self):
         m = _make_simple_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         out = eng.query(query=["x", "c"], evidence={})
-        assert "x" in out.params
-        assert "value" in out.params["x"]
+        assert "x" in out.variables
+        assert "x" in out.value
 
     def test_list_query_format(self):
         m = _make_simple_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         out = eng.query(query=["x", "c"], evidence={})
-        assert "x" in out.params
-        assert "c" in out.params
+        assert "x" in out.variables
+        assert "c" in out.variables
 
 
 # ===========================================================================
@@ -172,36 +181,72 @@ class TestDeterministicQuery:
 class TestEvidenceClamping:
     def test_evidence_variable_skips_cpd(self):
         m = _make_simple_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         B = 3
         x_obs = torch.randn(B, 4)
         out = eng.query(query=["c"], evidence={"x": x_obs})
-        assert "x" not in out.params
-        assert "c" in out.params
+        assert "x" not in out.variables
+        assert "c" in out.variables
 
     def test_evidence_shape_passes_through(self):
         m = _make_chain_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         B = 4
         x_obs = torch.randn(B, 4)
         out = eng.query(query=["a", "b"], evidence={"x": x_obs})
-        assert out.params["a"]["probs"].shape == (B, 2)
-        assert out.params["b"]["probs"].shape == (B, 1)
+        assert out.probs["a"].shape == (B, 2)
+        assert out.probs["b"].shape == (B, 1)
 
     def test_evidence_clamped_in_chain(self):
         m = _make_chain_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         B = 2
         a_obs = torch.ones(B, 2)
         out = eng.query(query=["b"], evidence={"a": a_obs})
-        assert "b" in out.params
+        assert "b" in out.variables
 
     def test_query_and_evidence_overlap_accepted(self):
         m = _make_chain_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         B = 2
         out = eng.query(query=["a"], evidence={"a": torch.ones(B, 2)})
         assert out is not None
+
+
+# ===========================================================================
+# 3b. _format_evidence — dtype casting and StopIteration fallback
+# ===========================================================================
+
+class TestFormatEvidence:
+    def test_floating_evidence_cast_to_param_dtype(self):
+        """Float64 evidence is cast to the PGM parameters' dtype (float32)."""
+        m = _make_simple_model()
+        eng = DeterministicInference(m)
+        x = eng.pgm.resolve("x")
+        value = torch.randn(3, 4, dtype=torch.float64)
+        out = eng._format_evidence(x, value)
+        assert out.dtype == torch.float32
+
+    def test_non_floating_evidence_dtype_preserved(self):
+        """Integer evidence (e.g. token ids) is left untouched, only reshaped."""
+        m = _make_simple_model()
+        eng = DeterministicInference(m)
+        x = eng.pgm.resolve("x")
+        value = torch.randint(0, 4, (3, 4), dtype=torch.long)
+        out = eng._format_evidence(x, value)
+        assert out.dtype == torch.long
+        # Read into the member layout the cache holds; the values are untouched.
+        assert out.shape == (3, 1, 4)
+        assert torch.equal(x.to_event(out), value)
+
+    def test_no_parameters_falls_back_to_default_dtype(self):
+        """With no learnable parameters, dtype falls back to the global default."""
+        m = _make_no_param_model()
+        eng = DeterministicInference(m)
+        x = eng.pgm.resolve("x")
+        value = torch.randn(2, 4, dtype=torch.float64)
+        out = eng._format_evidence(x, value)
+        assert out.dtype == torch.get_default_dtype()
 
 
 # ===========================================================================
@@ -211,19 +256,19 @@ class TestEvidenceClamping:
 class TestTeacherForcing:
     def test_teacher_force_at_p_int_1(self):
         m = _make_simple_model()
-        eng = DeterministicInference(m, activate_before_propagation=False, p_int=1.0)
+        eng = DeterministicInference(m, p_int=1.0)
         B = 3
         gt_c = torch.ones(B, 2)
         out = eng.query(query={"c": gt_c}, evidence={"x": torch.randn(B, 4)})
-        assert "c" in out.params
+        assert "c" in out.variables
 
     def test_teacher_force_no_error_at_p_int_0(self):
         m = _make_simple_model()
-        eng = DeterministicInference(m, activate_before_propagation=False, p_int=0.0)
+        eng = DeterministicInference(m, p_int=0.0)
         B = 3
         gt_c = torch.ones(B, 2)
         out = eng.query(query={"c": gt_c}, evidence={"x": torch.randn(B, 4)})
-        assert "c" in out.params
+        assert "c" in out.variables
 
 
 # ===========================================================================
@@ -241,7 +286,7 @@ class TestAncestralQuerySamples:
         m = _make_simple_model()
         eng = AncestralSamplingInference(m)
         out = eng.query(query=["c"], evidence={})
-        assert len(out.samples) > 0
+        assert out.samples is not None
 
     def test_samples_contain_queried_variable(self):
         m = _make_simple_model()
@@ -260,7 +305,7 @@ class TestAncestralQuerySamples:
         m = _make_simple_model()
         eng = AncestralSamplingInference(m)
         out = eng.query(query=["c"], evidence={})
-        assert "c" in out.params
+        assert "c" in out.variables
 
 
 # ===========================================================================
@@ -270,35 +315,35 @@ class TestAncestralQuerySamples:
 class TestPlateQueries:
     def test_query_plate_name(self):
         m = _make_plate_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         B = 3
         out = eng.query(query=["g"], evidence={"x": torch.randn(B, 4)})
-        assert "g" in out.params
-        assert out.params["g"]["probs"].shape == (B, 2)
+        assert "g" in out.variables
+        assert out.probs["g"].shape == (B, 2)
 
     def test_query_member_name(self):
         m = _make_plate_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         B = 3
         out = eng.query(query=["m1"], evidence={"x": torch.randn(B, 4)})
-        assert "m1" in out.params
-        assert out.params["m1"]["probs"].shape == (B, 1)
+        assert "m1" in out.variables
+        assert out.probs["m1"].shape == (B, 1)
 
     def test_query_both_members(self):
         m = _make_plate_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         B = 3
         out = eng.query(query=["m1", "m2"], evidence={"x": torch.randn(B, 4)})
-        assert "m1" in out.params
-        assert "m2" in out.params
+        assert "m1" in out.variables
+        assert "m2" in out.variables
 
     def test_member_probs_shapes(self):
         m = _make_plate_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         B = 2
         out2 = eng.query(query=["m1", "m2"], evidence={"x": torch.randn(B, 4)})
-        assert out2.params["m1"]["probs"].shape == (B, 1)
-        assert out2.params["m2"]["probs"].shape == (B, 1)
+        assert out2.probs["m1"].shape == (B, 1)
+        assert out2.probs["m2"].shape == (B, 1)
 
     def test_ancestral_samples_plate(self):
         m = _make_plate_model()
@@ -309,11 +354,11 @@ class TestPlateQueries:
 
     def test_member_evidence_partial_observation(self):
         m = _make_plate_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         B = 2
         m1_obs = torch.ones(B, 1)
         out = eng.query(query=["g"], evidence={"x": torch.randn(B, 4), "m1": m1_obs})
-        assert "g" in out.params
+        assert "g" in out.variables
 
 
 # ===========================================================================
@@ -323,13 +368,13 @@ class TestPlateQueries:
 class TestRequiredVariablesMemoization:
     def test_cache_populated_after_first_call(self):
         m = _make_chain_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         eng.query(query=["b"], evidence={})
         assert len(eng._required_cache) > 0
 
     def test_cache_hit_same_query(self):
         m = _make_chain_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         eng.query(query=["b"], evidence={})
         first = dict(eng._required_cache)
         eng.query(query=["b"], evidence={})
@@ -337,7 +382,7 @@ class TestRequiredVariablesMemoization:
 
     def test_different_queries_separate_cache_entries(self):
         m = _make_chain_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         eng.query(query=["a"], evidence={})
         eng.query(query=["b"], evidence={})
         assert len(eng._required_cache) == 2
@@ -350,22 +395,22 @@ class TestRequiredVariablesMemoization:
 class TestParallelizeLevels:
     def test_parallelize_levels_produces_same_shape(self):
         m = _make_chain_model()
-        eng_seq = DeterministicInference(m, activate_before_propagation=False, parallelize_levels=False)
-        eng_par = DeterministicInference(m, activate_before_propagation=False, parallelize_levels=True)
+        eng_seq = DeterministicInference(m, parallelize_levels=False)
+        eng_par = DeterministicInference(m, parallelize_levels=True)
         B = 3
         ev = {"x": torch.randn(B, 4)}
         out_seq = eng_seq.query(query=["b"], evidence=ev)
         out_par = eng_par.query(query=["b"], evidence=ev)
-        assert out_seq.params["b"]["probs"].shape == out_par.params["b"]["probs"].shape
+        assert out_seq.probs["b"].shape == out_par.probs["b"].shape
 
     def test_parallelize_levels_flag_stored(self):
         m = _make_simple_model()
-        eng = DeterministicInference(m, activate_before_propagation=False, parallelize_levels=True)
+        eng = DeterministicInference(m, parallelize_levels=True)
         assert eng.parallelize_levels is True
 
 
 # ===========================================================================
-# 9. step() and temperature annealing
+# 9. temperature_step() and temperature annealing
 # ===========================================================================
 
 class TestTemperatureAnnealing:
@@ -374,19 +419,19 @@ class TestTemperatureAnnealing:
         eng = AncestralSamplingInference(m, initial_temperature=1.0)
         assert float(eng.temperature) == pytest.approx(1.0)
 
-    def test_step_increments_in_ancestral(self):
+    def test_temperature_step_increments_in_ancestral(self):
         m = _make_simple_model()
         eng = AncestralSamplingInference(m, initial_temperature=2.0, annealing="exponential", annealing_rate=0.1)
         t0 = float(eng.temperature)
-        eng.step()
+        eng.temperature_step()
         t1 = float(eng.temperature)
         assert t1 != t0
 
-    def test_step_noop_in_deterministic(self):
+    def test_temperature_step_noop_in_deterministic(self):
         m = _make_simple_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         t0 = float(eng.temperature)
-        eng.step()
+        eng.temperature_step()
         t1 = float(eng.temperature)
         assert t0 == pytest.approx(t1)
 
@@ -398,7 +443,7 @@ class TestTemperatureAnnealing:
 class TestInferenceOutputAlias:
     def test_model_params_alias(self):
         m = _make_simple_model()
-        eng = DeterministicInference(m, activate_before_propagation=False)
+        eng = DeterministicInference(m)
         out = eng.query(query=["c"], evidence={})
         # model_params alias was removed; params is the canonical field
         assert hasattr(out, 'params')
@@ -409,7 +454,10 @@ class TestInferenceOutputAlias:
 # ===========================================================================
 
 from torch_concepts.nn.modules.mid.inference.torch.rejection import RejectionSampling
-from torch_concepts.nn.modules.mid.inference.torch.importance_sampling.importance_sampling import ImportanceSampling
+from torch_concepts.nn.modules.mid.inference.torch.importance_sampling.importance_sampling import (
+    ImportanceSampling,
+    _soft_match,
+)
 from torch_concepts.nn.modules.mid.inference.torch.importance_sampling.mutilated_network import MutilatedNetworkProposal
 from torch_concepts.nn.modules.mid.inference.torch.importance_sampling.base_proposal import BaseProposal, _stabilize_relaxed
 from torch_concepts.distributions import Delta
@@ -603,7 +651,7 @@ class TestRejectionSamplingValidation:
     def test_mismatched_batch_sizes_raises(self):
         m = _make_bernoulli_model()
         eng = RejectionSampling(m, n_samples=10)
-        with pytest.raises(ValueError, match="mismatched batch sizes"):
+        with pytest.raises(ValueError, match="mismatched leading"):
             eng.query(
                 query={"b": torch.ones(2, 1)},
                 evidence={"a": torch.ones(3, 1)},
@@ -619,19 +667,34 @@ class TestRejectionSamplingValidation:
         """Delta is continuous — querying it should raise ValueError."""
         m = _make_mixed_model()
         eng = RejectionSampling(m, n_samples=10)
-        with pytest.raises(ValueError, match="continuous"):
+        with pytest.raises(ValueError, match="not discrete"):
             eng.query(
                 query={"x": torch.zeros(1, 4)},
                 evidence={},
             )
 
-    def test_continuous_evidence_variable_raises(self):
-        """Providing a continuous variable as evidence should raise ValueError."""
+    def test_continuous_root_evidence_is_clamped(self):
+        """Continuous evidence on a root is clamped into the draw, not matched."""
         m = _make_mixed_model()
         eng = RejectionSampling(m, n_samples=10)
-        with pytest.raises(ValueError, match="continuous"):
+        out = eng.query(
+            query={"c": torch.tensor([[1.0]])},
+            evidence={"x": torch.randn(1, 4)},
+        )
+        assert out.probabilities.shape == (1,)
+        assert 0.0 <= float(out.probabilities[0]) <= 1.0
+
+    def test_continuous_nonroot_evidence_raises(self):
+        """Continuous evidence below the roots would be matched exactly: it raises."""
+        a = ConceptVariable("a", distribution=dist.Bernoulli, size=1)
+        x = ConceptVariable("x", distribution=Delta, size=4)
+        cpd_a = ParametricCPD(variable=a, parametrization={"probs": FixedPrior(torch.tensor([0.5]))})
+        cpd_x = ParametricCPD(variable=x, parametrization={"value": nn.Linear(1, 4)}, parents=[a])
+        m = BayesianNetwork(variables=[a, x], factors=[cpd_a, cpd_x])
+        eng = RejectionSampling(m, n_samples=10)
+        with pytest.raises(ValueError, match="non-root evidence variable 'x'.*not discrete"):
             eng.query(
-                query={"c": torch.tensor([[1.0]])},
+                query={"a": torch.tensor([[1.0]])},
                 evidence={"x": torch.zeros(1, 4)},
             )
 
@@ -740,8 +803,9 @@ class TestImportanceSamplingQuery:
             m, proposal=proposal, n_samples=50,
             initial_temperature=2.0, annealing="exponential", annealing_rate=0.5,
         )
+        eng.train()
         t0 = float(eng.temperature)
-        eng.step()
+        eng.temperature_step()
         t1 = float(eng.temperature)
         assert t1 != t0
 
@@ -749,8 +813,9 @@ class TestImportanceSamplingQuery:
         m = _make_bernoulli_model()
         proposal = MutilatedNetworkProposal(m)
         eng = ImportanceSampling(m, proposal=proposal, n_samples=50)
+        eng.train()
         assert eng._step == 0
-        eng.step()
+        eng.temperature_step()
         assert eng._step == 1
 
     def test_query_evidence_none_treated_as_empty(self):
@@ -828,7 +893,7 @@ class TestImportanceSamplingValidation:
         m = _make_bernoulli_model()
         proposal = MutilatedNetworkProposal(m)
         eng = ImportanceSampling(m, proposal=proposal, n_samples=10)
-        with pytest.raises(ValueError, match="mismatched batch sizes"):
+        with pytest.raises(ValueError, match="mismatched leading"):
             eng.query(
                 query={"b": torch.ones(2, 1)},
                 evidence={"a": torch.ones(3, 1)},
@@ -849,7 +914,7 @@ class TestImportanceSamplingValidation:
         m = _make_mixed_model()
         proposal = MutilatedNetworkProposal(m)
         eng = ImportanceSampling(m, proposal=proposal, n_samples=10)
-        with pytest.raises(ValueError, match="continuous"):
+        with pytest.raises(ValueError, match="not discrete"):
             eng.query(
                 query={"x": torch.zeros(1, 4)},
                 evidence={},
@@ -965,6 +1030,95 @@ class TestStabilizeRelaxed:
 
 
 # ===========================================================================
+# 18b. Plate-member soundness of the estimator's internals
+# ===========================================================================
+
+class TestSoftMatchOnPlates:
+    """``_soft_match`` must *multiply* the per-member matches, not sum them.
+
+    The event of a k-member plate is flat ``(k * width)``, so contracting it
+    whole sums the per-member inner products — which reports a "probability" of
+    up to ``k`` on a full match, and a spurious ``1.0`` when only one member
+    agrees.
+    """
+
+    @staticmethod
+    def _plate():
+        return ConceptVariable(
+            "g", members=["m1", "m2", "m3"],
+            distribution=dist.OneHotCategorical, size=4,
+        )
+
+    @staticmethod
+    def _onehot(classes):
+        """(N, B, 12) with each member one-hot on its given class."""
+        t = torch.zeros(2, 5, 12)
+        for m, c in enumerate(classes):
+            t[..., m * 4 + c] = 1.0
+        return t
+
+    def test_full_match_is_one(self):
+        g, target = self._plate(), self._onehot([1, 1, 1])
+        m = _soft_match(g, target.clone(), target)
+        assert torch.allclose(m, torch.ones_like(m)), m
+        assert (m <= 1.0).all()
+
+    def test_partial_match_is_zero(self):
+        """One member agreeing out of three is not a match at all."""
+        g, target = self._plate(), self._onehot([1, 1, 1])
+        sample = self._onehot([1, 2, 3])
+        m = _soft_match(g, sample, target)
+        assert torch.allclose(m, torch.zeros_like(m)), m
+
+    def test_never_exceeds_one(self):
+        """The property the sum-contraction violated: it is a probability."""
+        torch.manual_seed(0)
+        g = self._plate()
+        sample = torch.softmax(torch.randn(2, 5, 3, 4), dim=-1).reshape(2, 5, 12)
+        m = _soft_match(g, sample, self._onehot([0, 2, 3]))
+        assert ((m >= 0.0) & (m <= 1.0)).all(), m
+
+    def test_non_plate_is_unchanged(self):
+        """A single-member variable still contracts its one class axis."""
+        v = ConceptVariable("v", distribution=dist.OneHotCategorical, size=4)
+        target = torch.zeros(2, 5, 4)
+        target[..., 2] = 1.0
+        assert torch.allclose(_soft_match(v, target.clone(), target), torch.ones(2, 5))
+
+
+class TestStabilizeRelaxedOnPlates:
+    """``_stabilize_relaxed`` renormalises *each member's* simplex.
+
+    It is handed the draw in member layout ``(*leading, n_members, width)``, so
+    the last axis is one member's simplex. Applied to a flat event it would
+    drive every member's mass to ``1/k`` and throw ``log q`` off by tens of nats.
+    """
+
+    def test_each_member_sums_to_one(self):
+        g = ConceptVariable(
+            "g", members=["m1", "m2", "m3"],
+            distribution=dist.OneHotCategorical, size=4,
+        )
+        torch.manual_seed(1)
+        sample = torch.softmax(torch.randn(7, 3, 4), dim=-1)
+        out = _stabilize_relaxed(g, sample)
+        assert out.shape == (7, 3, 4)
+        assert torch.allclose(out.sum(dim=-1), torch.ones(7, 3), atol=1e-6)
+
+    def test_boundary_draw_stays_finite(self):
+        """The reason the function exists: an exact 0 would make log_prob -inf."""
+        g = ConceptVariable(
+            "g", members=["m1", "m2"],
+            distribution=dist.OneHotCategorical, size=3,
+        )
+        sample = torch.zeros(4, 2, 3)
+        sample[..., 0] = 1.0
+        out = _stabilize_relaxed(g, sample)
+        assert (out > 0).all()
+        assert torch.allclose(out.sum(dim=-1), torch.ones(4, 2), atol=1e-6)
+
+
+# ===========================================================================
 # 11. BaseInference — direct tests
 # ===========================================================================
 
@@ -1010,7 +1164,7 @@ class TestBaseInferenceDirect:
     def test_validate_containers_mismatched_batch_sizes(self):
         m = _make_chain_model()
         eng = _ConcreteInference(m)
-        with pytest.raises(ValueError, match="mismatched batch sizes"):
+        with pytest.raises(ValueError, match="mismatched leading"):
             eng._validate_containers(
                 {"a": torch.randn(2, 2)},
                 {"x": torch.randn(3, 4)}
@@ -1060,7 +1214,9 @@ class TestBaseInferenceDirect:
 # 12. make_temperature_schedule and build_distribution utility tests
 # ===========================================================================
 
-from torch_concepts.nn.modules.mid.inference.utils import make_temperature_schedule
+from torch_concepts.nn.modules.mid.inference.utils import (
+    make_temperature_schedule,
+)
 from torch_concepts.nn.modules.mid.inference.torch.utils import (
     build_relaxed_distribution,
     propagated_value,
@@ -1094,10 +1250,63 @@ class TestMakeTemperatureSchedule:
         assert schedule(0) == pytest.approx(1.0)
         assert schedule(10) < 1.0
 
+    @pytest.mark.parametrize("annealing, rate", [("exponential", 0.5), ("linear", 0.5)])
+    def test_decay_settles_on_the_final_temperature(self, annealing, rate):
+        """Both decays reach a floor and stay there, rather than sliding to zero."""
+        schedule = make_temperature_schedule(2.0, annealing, rate, final_temperature=0.1)
+        assert schedule(0) == pytest.approx(2.0)
+        assert 0.1 < schedule(2) < 2.0                 # still decaying
+        assert schedule(500) == pytest.approx(0.1)     # settled
+        assert schedule(10_000) == pytest.approx(0.1)  # and stays
+
+    def test_a_callable_schedule_is_not_floored(self):
+        """A user-supplied schedule owns its own floor."""
+        schedule = make_temperature_schedule(1.0, lambda s: 1e-9, 0.0, final_temperature=0.5)
+        assert schedule(3) == pytest.approx(1e-9)
+
     def test_constant_schedule(self):
         schedule = make_temperature_schedule(0.5, "constant", 0.0)
         assert schedule(0) == pytest.approx(0.5)
         assert schedule(100) == pytest.approx(0.5)
+
+
+class TestVariableAsEvent:
+    """``Variable.as_event`` reads a value in whatever layout it arrives in and
+    returns it in event layout — the replacement for the old free function
+    ``reshape_value_to_event``."""
+
+    def test_flat_input_reshaped_to_event(self):
+        v = ConceptVariable("c", distribution=Delta, shape=(2, 3))
+        assert v.as_event(torch.randn(4, 6)).shape == (4, 2, 3)
+
+    def test_already_event_shaped_passthrough(self):
+        """Input already laid out as (*batch, *event) keeps its shape."""
+        v = ConceptVariable("c", distribution=Delta, shape=(2, 3))
+        value = torch.randn(4, 2, 3)
+        out = v.as_event(value)
+        assert out.shape == (4, 2, 3)
+        assert torch.equal(out, value)
+
+    def test_multiple_leading_batch_dims_flat(self):
+        """A flat (B, T, size) input is expanded to (B, T, *event)."""
+        v = ConceptVariable("c", distribution=Delta, shape=(2, 3))
+        assert v.as_event(torch.randn(4, 5, 6)).shape == (4, 5, 2, 3)
+
+    def test_multiple_leading_batch_dims_already_event_shaped(self):
+        v = ConceptVariable("c", distribution=Delta, shape=(2, 3))
+        value = torch.randn(4, 5, 2, 3)
+        out = v.as_event(value)
+        assert out.shape == (4, 5, 2, 3)
+        assert torch.equal(out, value)
+
+    def test_single_dim_event_flat_batch(self):
+        v = ConceptVariable("c", distribution=Delta, size=4)
+        assert v.as_event(torch.randn(3, 4)).shape == (3, 4)
+
+    def test_no_leading_dims(self):
+        """An unbatched value is read just as well as a batched one."""
+        v = ConceptVariable("c", distribution=Delta, shape=(2, 3))
+        assert v.as_event(torch.randn(6)).shape == (2, 3)
 
 
 # ===========================================================================
@@ -1124,13 +1333,16 @@ class TestBuildRelaxedDistribution:
     def test_onehot_categorical_returns_relaxed_onehot(self):
         v = self._var(dist.OneHotCategorical, size=3)
         d = build_relaxed_distribution(v, {"probs": torch.ones(1, 3) / 3}, self._T)
-        assert isinstance(d, dist.RelaxedOneHotCategorical)
+        # Built per member, then reinterpreted as one event.
+        assert isinstance(d, dist.Independent)
+        assert isinstance(d.base_dist, dist.RelaxedOneHotCategorical)
 
     def test_relaxed_onehot_declared_returns_relaxed_onehot(self):
         """Variable declared as RelaxedOneHotCategorical should resolve to the same family."""
         v = self._var(dist.RelaxedOneHotCategorical, size=3)
         d = build_relaxed_distribution(v, {"probs": torch.ones(1, 3) / 3}, self._T)
-        assert isinstance(d, dist.RelaxedOneHotCategorical)
+        assert isinstance(d, dist.Independent)
+        assert isinstance(d.base_dist, dist.RelaxedOneHotCategorical)
 
     def test_categorical_raises(self):
         v = self._var(dist.Categorical, size=3)
@@ -1153,34 +1365,140 @@ class TestBuildRelaxedDistribution:
         s.sum().backward()
         assert probs.grad is not None
 
+    def test_categorical_plate_splits_per_member(self):
+        """A k-member categorical plate is k independent relaxed simplices, not
+        one over the flattened ``k * member_size`` classes."""
+        v = self._var(dist.OneHotCategorical, size=3, members=["m1", "m2"])
+        d = build_relaxed_distribution(v, {"logits": torch.zeros(1, 6)}, self._T)
+        s = d.rsample()
+        assert s.shape == (1, 2, 3)  # member layout: one simplex per member
+        # Each member's block is its own simplex (sums to 1); a single 6-way
+        # distribution would make the *whole* row sum to 1 instead.
+        assert torch.allclose(s.sum(-1), torch.ones(1, 2), atol=1e-4)
+
 
 # ===========================================================================
-# 20. propagated_value — new relaxed entries in _PRIMARY_PARAM
+# 20. propagated_value — relaxed families resolve via their DistributionSpec
 # ===========================================================================
 
 class TestPropagatedValue:
+    def test_flat_categorical_plate_params_raise(self):
+        """An engine's output is flat; activating it would take one softmax over
+        every member's classes, so it is rejected rather than silently mixed."""
+        v = ConceptVariable("c", members=["a", "b"],
+                            distribution=dist.OneHotCategorical, size=3)
+        with pytest.raises(ValueError, match="member layout"):
+            propagated_value(v, {"logits": torch.randn(4, 6)}, activate=True)
+
     def test_bernoulli_probs(self):
         p = torch.tensor([[0.3, 0.7]])
-        assert torch.allclose(propagated_value(dist.Bernoulli, {"probs": p}), p)
+        v = ConceptVariable("c", distribution=dist.Bernoulli, size=2)
+        assert torch.allclose(propagated_value(v, {"probs": p}), p)
 
     def test_bernoulli_logits_fallback(self):
         lg = torch.zeros(1, 2)
-        assert torch.allclose(propagated_value(dist.Bernoulli, {"logits": lg}), lg)
+        v = ConceptVariable("c", distribution=dist.Bernoulli, size=2)
+        assert torch.allclose(propagated_value(v, {"logits": lg}), lg)
 
     def test_relaxed_bernoulli_probs(self):
-        """RelaxedBernoulli is in _PRIMARY_PARAM — should resolve to probs."""
+        """RelaxedBernoulli's spec has primary_param="probs"."""
         p = torch.tensor([[0.4, 0.6]])
-        assert torch.allclose(propagated_value(dist.RelaxedBernoulli, {"probs": p}), p)
+        v = ConceptVariable("c", distribution=dist.RelaxedBernoulli, size=2)
+        assert torch.allclose(propagated_value(v, {"probs": p}), p)
 
     def test_relaxed_onehot_probs(self):
-        """RelaxedOneHotCategorical is in _PRIMARY_PARAM — should resolve to probs."""
+        """RelaxedOneHotCategorical's spec has primary_param="probs"."""
         p = torch.ones(1, 3) / 3
-        assert torch.allclose(propagated_value(dist.RelaxedOneHotCategorical, {"probs": p}), p)
+        v = ConceptVariable("c", distribution=dist.RelaxedOneHotCategorical, size=3)
+        assert torch.allclose(propagated_value(v, {"probs": p}), p)
 
     def test_normal_loc(self):
         loc = torch.zeros(1, 2)
-        assert torch.allclose(propagated_value(dist.Normal, {"loc": loc}), loc)
+        v = ConceptVariable("c", distribution=dist.Normal, size=2)
+        assert torch.allclose(propagated_value(v, {"loc": loc}), loc)
 
-    def test_unsupported_raises(self):
-        with pytest.raises(ValueError, match="Unsupported distribution"):
-            propagated_value(dist.Poisson, {"rate": torch.ones(1, 1)})
+    def test_missing_param_raises(self):
+        v = ConceptVariable("c", distribution=dist.Normal, size=2)
+        with pytest.raises(ValueError, match="cannot propagate a value"):
+            propagated_value(v, {"scale": torch.ones(1, 2)})
+
+    def test_categorical_plate_logits_normalise_per_member(self):
+        """Activating logits uses the plate-aware softmax, not a flat one."""
+        v = ConceptVariable("c", members=["a", "b"],
+                            distribution=dist.OneHotCategorical, size=3)
+        # Parameters arrive in member layout, as every CPD reports them.
+        logits = v.to_member(torch.randn(4, 6), "logits")
+        probs = propagated_value(v, {"logits": logits}, activate=True)
+        assert probs.shape == (4, 2, 3)
+        assert torch.allclose(probs.sum(-1), torch.ones(4, 2))
+
+
+# ===========================================================================
+# Variable-first params access (ParamsDict)
+# ===========================================================================
+
+class TestVariableFirstParams:
+    """``out.params[<variable>]`` returns ``{quantity: view}`` for that variable."""
+
+    def _mixed_model(self):
+        """x (delta) -> g (plate: [m1, m2], bernoulli) + n (normal) -> y."""
+        x = ConceptVariable("x", distribution=Delta, size=4)
+        g = ConceptVariable("g", members=["m1", "m2"], distribution=dist.Bernoulli)
+        n = ConceptVariable("n", distribution=dist.Normal, size=3)
+        y = ConceptVariable("y", distribution=dist.Bernoulli, size=1)
+        return BayesianNetwork(
+            variables=[x, g, n, y],
+            factors=[
+                ParametricCPD(variable=x, parametrization={"value": FixedPrior(torch.zeros(4))}),
+                ParametricCPD(variable=g, parametrization={"logits": nn.Linear(4, 2)}, parents=[x]),
+                ParametricCPD(variable=n, parametrization={
+                    "loc": nn.Linear(4, 3),
+                    "scale": nn.Sequential(nn.Linear(4, 3), nn.Softplus()),
+                }, parents=[x]),
+                ParametricCPD(variable=y, parametrization={"logits": nn.Linear(5, 1)}, parents=[g, n]),
+            ],
+        )
+
+    def test_member_label_returns_quantity_views(self):
+        out = DeterministicInference(self._mixed_model()).query(
+            query=["g", "n", "y"], evidence={"x": torch.zeros(4, 4)})
+        p = out.params["m1"]
+        assert set(p) == {"logits"}
+        assert torch.equal(p["logits"].tensor, out.logits["m1"].tensor)
+
+    def test_multi_quantity_variable(self):
+        out = DeterministicInference(self._mixed_model()).query(
+            query=["n"], evidence={"x": torch.zeros(4, 4)})
+        p = out.params["n"]
+        assert set(p) == {"loc", "scale"}
+        assert p["loc"].shape == (4, 3)
+
+    def test_plate_name_spans_members(self):
+        out = DeterministicInference(self._mixed_model()).query(
+            query=["g"], evidence={"x": torch.zeros(4, 4)})
+        assert out.params["g"]["logits"].shape == (4, 2)
+
+    def test_views_share_storage(self):
+        out = DeterministicInference(self._mixed_model()).query(
+            query=["g", "y"], evidence={"x": torch.zeros(4, 4)})
+        view = out.params["m1"]["logits"].tensor
+        whole = out.logits.tensor
+        assert view.untyped_storage().data_ptr() == whole.untyped_storage().data_ptr()
+
+    def test_quantity_first_and_dict_semantics_unchanged(self):
+        out = DeterministicInference(self._mixed_model()).query(
+            query=["g", "y"], evidence={"x": torch.zeros(4, 4)})
+        assert out.params["logits"] is out.logits
+        assert "logits" in out.params and "m1" not in out.params
+        assert tuple(out.quantities) == tuple(out.params)
+
+    def test_unknown_key_raises(self):
+        out = DeterministicInference(self._mixed_model()).query(
+            query=["y"], evidence={"x": torch.zeros(4, 4)})
+        with pytest.raises(KeyError, match="neither a reported quantity"):
+            out.params["nope"]
+
+    def test_leading_dims(self):
+        out = DeterministicInference(self._mixed_model()).query(
+            query=["g"], evidence={"x": torch.zeros(2, 4, 4)})
+        assert out.params["m2"]["logits"].shape == (2, 4, 1)

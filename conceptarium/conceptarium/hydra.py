@@ -55,9 +55,9 @@ def parse_hyperparams(cfg: DictConfig) -> dict[str, any]:
          'lr': 0.001, 'seed': 42, 'hydra_cfg': {...}}
     """
     hyperparams = {
-        "dataset": target_classname(cfg.dataset).replace("Dataset", "").lower(),
-        "model": target_classname(cfg.model).lower(),
-        "lr": cfg.model.optim_kwargs.lr,
+        "dataset": target_classname(cfg.dataset.datamodule).replace("Dataset", "").lower(),
+        "model": target_classname(cfg.model.model_cls).lower(),
+        "lr": cfg.model.model_cls.optim_kwargs.lr,
         "seed": cfg.get("seed"),
         "hydra_cfg": OmegaConf.to_container(cfg),
     }

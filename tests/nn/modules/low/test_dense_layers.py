@@ -15,6 +15,7 @@ from torch_concepts.nn.modules.low.dense_layers import (
     Dense,
     MLP,
     ResidualMLP,
+    MLPEmbeddingEncoder,
     SelectorEmbeddingEncoder,
 )
 
@@ -277,6 +278,56 @@ class TestResidualMLP(unittest.TestCase):
         self.assertIsNotNone(x.grad)
         # Gradients should not vanish
         self.assertTrue((x.grad.abs() > 1e-10).any())
+
+
+class TestMLPEmbeddingEncoder(unittest.TestCase):
+    """Test MLPEmbeddingEncoder."""
+
+    def test_forward_shape(self):
+        encoder = MLPEmbeddingEncoder(
+            in_features=128, hidden_size=256, out_features=16, n_embeddings=5,
+        )
+        self.assertEqual(encoder(torch.randn(4, 128)).shape, (4, 5, 16))
+
+    def test_extra_leading_axes_pass_through(self):
+        """An inference engine's sample dimension must survive untouched."""
+        encoder = MLPEmbeddingEncoder(
+            in_features=128, hidden_size=256, out_features=16, n_embeddings=5,
+        )
+        self.assertEqual(encoder(torch.randn(2, 4, 128)).shape, (2, 4, 5, 16))
+
+    def test_out_features_defaults_to_hidden_size(self):
+        """Without an explicit `out_features`, the output width must fall back
+        to `hidden_size` rather than crash."""
+        encoder = MLPEmbeddingEncoder(in_features=8, hidden_size=16, n_embeddings=3)
+        self.assertEqual(encoder(torch.randn(2, 8)).shape, (2, 3, 16))
+
+    def test_norm_none_skips_normalisation(self):
+        encoder = MLPEmbeddingEncoder(
+            in_features=8, hidden_size=16, out_features=4, n_embeddings=2, norm=None,
+        )
+        self.assertIsNone(encoder.norm_layer)
+        self.assertEqual(encoder(torch.randn(3, 8)).shape, (3, 2, 4))
+
+    def test_norm_batch_shape(self):
+        encoder = MLPEmbeddingEncoder(
+            in_features=8, hidden_size=16, out_features=4, n_embeddings=2, norm='batch',
+        )
+        self.assertIsInstance(encoder.norm_layer, nn.BatchNorm1d)
+        self.assertEqual(encoder(torch.randn(3, 8)).shape, (3, 2, 4))
+
+    def test_invalid_norm_raises(self):
+        with self.assertRaises(ValueError):
+            MLPEmbeddingEncoder(in_features=8, hidden_size=16, norm='none')
+
+    def test_gradient_flow(self):
+        encoder = MLPEmbeddingEncoder(
+            in_features=8, hidden_size=16, out_features=4, n_embeddings=2,
+        )
+        x = torch.randn(2, 8, requires_grad=True)
+        encoder(x).sum().backward()
+        self.assertIsNotNone(x.grad)
+        self.assertTrue(any(p.grad is not None for p in encoder.parameters()))
 
 
 class TestSelectorEmbeddingEncoder(unittest.TestCase):

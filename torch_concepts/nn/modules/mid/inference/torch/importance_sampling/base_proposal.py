@@ -40,9 +40,8 @@ import torch.nn as nn
 
 import torch.distributions as dist
 
-from ....models.bayesian_network import BayesianNetwork
-from ....models.variable import Variable
-from ...utils import reshape_value_to_event
+from ....graph.bayesian_network import BayesianNetwork
+from ....variable import Variable
 from ..utils import build_relaxed_distribution
 
 
@@ -64,6 +63,13 @@ def _stabilize_relaxed(variable: Variable, sample: torch.Tensor, eps: float = 1e
     if issubclass(D, _BERNOULLI):
         return sample.clamp(eps, 1.0 - eps)
     if issubclass(D, _ONEHOT):
+        # NOTE: ``sample`` arrives in **member layout**
+        # ``(*leading, n_members, *member_shape)`` — see
+        # ``build_relaxed_distribution``, which builds a plate as k independent
+        # RelaxedOneHotCategoricals — so the last axis is *one* member's
+        # simplex and this renormalises each member back onto its own. Applied
+        # to a flat ``(*leading, k * width)`` event it would instead drive every
+        # member's mass to ``1/k`` and throw ``log q`` off by tens of nats.
         s = sample.clamp_min(eps)
         return s / s.sum(dim=-1, keepdim=True)
     return sample
@@ -124,9 +130,11 @@ class BaseProposal(nn.Module, ABC):
         variable : Variable
             The (non-evidence) variable to propose.
         parent_values : dict[str, Tensor]
-            Already-resolved values of this variable's **BN parents** — both
-            clamped evidence parents and previously sampled ones — each shaped
-            ``(batch_size, *parent.shape)``. Empty for root variables.
+            The sampler's whole value cache, keyed by whole-variable name (both
+            clamped evidence and previously sampled variables). Pass it straight
+            to ``cpd(parent_values=...)``; the CPD resolves each parent (slicing
+            member-handle parents out of their plate's value). Empty for the first
+            (root) variable.
         evidence : dict[str, Tensor]
             The full evidence dict for this query, each shaped
             ``(batch_size, *var.shape)``. Available to *every* factor so a root
@@ -151,6 +159,7 @@ class BaseProposal(nn.Module, ABC):
         batch_size: int,
         temperature: torch.Tensor,
         layer_kwargs: Dict[str, Dict] = {},
+        member_evidence: Dict[str, Dict[str, torch.Tensor]] = {},
     ) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
         """Sample the joint :math:`q_\\phi(z \\mid e)` and accumulate ``log q``.
 
@@ -175,6 +184,9 @@ class BaseProposal(nn.Module, ABC):
             Relaxation temperature.
         layer_kwargs : dict[str, dict]
             Per-variable extra module kwargs.
+        member_evidence : dict[str, dict[str, Tensor]]
+            Individually-observed plate members grouped by owner; forced onto the
+            drawn plate value (value forcing), scored identically by the model.
 
         Returns
         -------
@@ -194,22 +206,23 @@ class BaseProposal(nn.Module, ABC):
             name = var.name
             if name in evidence:
                 # Clamped observation: carry the value forward, no q-density.
-                value = evidence[name].reshape(evidence[name].shape[0], var.size)
-                samples[name] = reshape_value_to_event(var, value)
+                samples[name] = var.as_event(evidence[name])
                 continue
 
             cpd = pgm.factors[name]
-            parent_values = {p.name: samples[p.name] for p in cpd.parents}
             params = self.propose(
-                var, parent_values, evidence, batch_size, temperature,
+                var, samples, evidence, batch_size, temperature,
                 layer_kwargs.get(name, {}),
             )
             # validate_args=False: at low temperature a relaxed draw lands on
             # the simplex / unit-interval boundary, which torch rejects in
             # log_prob even though it is expected here.
             d = build_relaxed_distribution(var, params, temperature, validate_args=False)
-            s = _stabilize_relaxed(var, d.rsample())
+            # Force observed plate members onto the draw before stabilising and
+            # scoring, so the proposal and the model score the same value.
+            s = cpd.clamp_members(d.rsample(), member_evidence.get(name, {}))
+            s = _stabilize_relaxed(var, s)
             log_q = log_q + d.log_prob(s)
-            samples[name] = reshape_value_to_event(var, s.reshape(batch_size, var.size))
+            samples[name] = var.as_event(s)
 
         return samples, log_q

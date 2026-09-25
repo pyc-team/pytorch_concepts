@@ -1,9 +1,9 @@
 import torch
 
-from ...base.intervention import BaseModuleInterventionStrategy
+from ...base.intervention import ModuleInterventionStrategy
 
 
-class PositiveWeightsIntervention(BaseModuleInterventionStrategy):
+class PositiveWeightsIntervention(ModuleInterventionStrategy):
     """
     Intervention that replaces predicted concepts with ground truth values.
 

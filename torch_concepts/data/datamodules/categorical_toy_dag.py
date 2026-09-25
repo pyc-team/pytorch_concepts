@@ -7,7 +7,6 @@ import numpy as np
 
 from ..datasets.categorical_toy_dag import ToyDAGDataset
 from ..base.datamodule import ConceptDataModule
-from ...typing import BackboneType
 
 
 class ToyDAGDataModule(ConceptDataModule):
@@ -17,7 +16,7 @@ class ToyDAGDataModule(ConceptDataModule):
     with support for concept-based learning.
     
     This datamodule wraps the ToyDAGDataset and provides standard train/val/test splits
-    along with optional backbone feature extraction and embedding caching.
+    along with splitting and DataLoader creation.
     
     Args:
         variables: List of all variable names in the DAG.
@@ -30,9 +29,6 @@ class ToyDAGDataModule(ConceptDataModule):
         val_size: Validation set size (fraction or absolute count).
         test_size: Test set size (fraction or absolute count).
         batch_size: Batch size for dataloaders.
-        backbone: Model backbone to use (if applicable).
-        precompute_embs: Whether to precompute embeddings from backbone.
-        force_recompute: Force recomputation of cached embeddings.
         n_gen: Total number of samples to generate.
         target_variable: Name of the target variable (optional).
         latent_variables: List of latent variable names.
@@ -54,9 +50,6 @@ class ToyDAGDataModule(ConceptDataModule):
         val_size: int | float = 0.1,
         test_size: int | float = 0.2,
         batch_size: int = 512,
-        backbone: BackboneType = None,
-        precompute_embs: bool = False,
-        force_recompute: bool = False,
         n_gen: int = 10000,
         target_variable: Optional[str] = None,
         latent_variables: Optional[List[str]] = None,
@@ -88,9 +81,7 @@ class ToyDAGDataModule(ConceptDataModule):
             val_size=val_size,
             test_size=test_size,
             batch_size=batch_size,
-            backbone=backbone,
-            precompute_embs=precompute_embs,
-            force_recompute=force_recompute,
             workers=workers,
             seed=seed,
+            **kwargs,
         )

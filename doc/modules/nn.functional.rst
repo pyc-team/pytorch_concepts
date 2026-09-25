@@ -14,6 +14,7 @@ Concept Operations
    :nosignatures:
 
    grouped_concept_exogenous_mixture
+   concept_orthogonality
    selection_eval
    confidence_selection
    soft_select
@@ -40,8 +41,11 @@ Evaluation Metrics
 
    completeness_score
    intervention_score
+   tcav_score
    cace_score
    residual_concept_causal_effect
+   number_of_effective_concepts
+   number_of_contributing_concepts
 
 Calibration and Selection
 -------------------------

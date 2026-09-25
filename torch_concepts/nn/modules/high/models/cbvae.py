@@ -1,0 +1,407 @@
+"""Concept Bottleneck Generative Model (CBGM), the VAE variant.
+
+Where the discriminative models run ``input → latent → concepts → tasks``, this
+one runs the generative direction ``z → concepts → input`` (Ismail et al.,
+ICLR 2024). A latent ``z ~ N(0, I)`` produces per-concept state embeddings; each
+concept is decoded from its own embeddings; the embeddings are mixed by the
+predicted concept probabilities (the CEM mixture, reused verbatim); and the
+resulting bottleneck — the ``k`` mixed concept contexts plus one *unsupervised*
+context — is decoded back into the observation.
+
+The model is assembled by a single builder, :meth:`_build_model`, and shares the
+CEM's level factories: concepts and their embeddings are grouped identically by
+:meth:`~torch_concepts.nn.modules.high.base.model.BaseModel.build_concept_variables`
+and
+:meth:`~torch_concepts.nn.modules.high.base.model.BaseModel.build_concept_embedding_variables`,
+so the two lists align element-by-element.
+
+Inference is variational: the guide ``q(z | input)`` is registered with the Pyro
+:class:`~torch_concepts.nn.VariationalInference` engine, which therefore requires
+``pyro-ppl``.
+
+References
+----------
+Ismail et al. "Concept Bottleneck Generative Models", ICLR 2024.
+https://openreview.net/forum?id=L9U5MJJleF
+"""
+
+from typing import Optional
+
+import torch
+import torch.nn as nn
+
+from torch.distributions import Bernoulli, Normal, OneHotCategorical
+
+import torch_concepts as pyc
+from .....annotations import Annotations
+from .....concept_graph import ConceptGraph
+from .....distributions import Delta
+from ...low.dense_layers import MLPEmbeddingEncoder
+from ...low.encoders.linear import LinearEmbeddingToConcept
+from ...low.predictors.mix import MixConceptEmbeddings
+from ...low.priors import FixedPrior
+from ...mid.inference.base import BaseInference
+from ...mid.inference.pyro.variational import VariationalInference
+from ...mid.graph.bayesian_network import BayesianNetwork
+from ...mid.factors.cpd import ParametricCPD
+from ...mid.variable import EmbeddingVariable
+from ...mid.distributions import DEFAULT_DIST_KWARGS
+from ..base.graph import DirectedGraphModel
+
+
+class ConceptBottleneckVAE(DirectedGraphModel):
+    """Concept Bottleneck Generative Model (VAE variant).
+
+    Generative process ``z → concepts → input``, trained as a VAE through a
+    variational guide ``q(z | input)``. The concept bottleneck layer
+    (:class:`~torch_concepts.nn.MixConceptEmbeddings`) sits between the
+    two halves of the decoder, so intervening on a concept steers the generated
+    output.
+
+    Parameters
+    ----------
+    input_size : int
+        Dimensionality of one observation (the generated variable).
+    annotations : Annotations
+        Concept annotations (labels, cardinalities, types). Every concept is
+        supervised; there are no task variables.
+    encoder : nn.Module
+        The guide's trunk, mapping an observation (``input_size``) to the
+        features its ``loc``/``scale`` readouts share. Any feature extractor
+        goes here — this model takes no ``backbone``, since the guide reads the
+        raw observation.
+    decoder : nn.Module
+        The post-concept-bottleneck network, mapping the flattened bottleneck
+        (``embedding_size * (n_concepts + 1)``) to ``input_size`` values. The
+        observation is a ``Delta``.
+    latent_size : int, default 64
+        Dimensionality of ``z``.
+    embedding_size : int, default 16
+        Width ``m`` of a single context embedding.
+    use_unknown : bool, default True
+        Whether the bottleneck carries the *unsupervised* context. ``True`` is
+        the paper's ``w = [w_1, ..., w_k, w_{k+1}]``. ``False`` removes the slot
+        entirely, shrinking the bottleneck to ``m * k`` and making the
+        orthogonality penalty vacuous.
+    concepts_to_decoder : bool, default False
+        Also feed the concept scores to the decoder, so an intervention reaches 
+        the concept directly rather than only through the state embedding it selects. 
+        Widens the decoder's input by `sum(cardinalities)``.
+    context_net_kwargs : dict, optional
+        Arguments for the default ``MLPEmbeddingEncoder`` context network
+        mapping 'z' to the context embeddings — ``hidden_size``
+        (defaults to ``latent_size``//2), ``n_layers``, ``activation``,
+        ``norm``, ``dropout``.
+    inference, inference_kwargs, train_inference, train_inference_kwargs
+        Inference engine configuration. Defaults to
+        :class:`~torch_concepts.nn.VariationalInference`, with the guide on
+        ``z`` injected into ``inference_kwargs['latents']``.
+    lightning : bool, default False
+        If True, adds Lightning training capabilities.
+    plate : bool or None, default False.
+    **kwargs
+        Forwarded to :class:`BaseModel`.
+
+    Examples
+    --------
+    >>> import torch
+    >>> from torch_concepts.annotations import Annotations
+    >>> from torch_concepts.nn import ConceptBottleneckVAE, MLP
+    >>>
+    >>> ann = Annotations(labels=['digit', 'color'], cardinalities=[10, 2],
+    ...                   types=['categorical', 'categorical'])
+    >>> model = ConceptBottleneckVAE(
+    ...     input_size=784, annotations=ann,
+    ...     encoder=MLP(784, 128, 32),
+    ...     # The decoder's output is the reconstruction, unactivated.
+    ...     decoder=MLP(3 * 8, 128, 784),
+    ...     latent_size=32, embedding_size=8,
+    ... )  # doctest: +SKIP
+    >>> out = model(query=list(model.pgm.variables), input=torch.rand(4, 784))  # doctest: +SKIP
+
+    See Also
+    --------
+    torch_concepts.nn.MixConceptEmbeddings : the concept bottleneck layer
+    torch_concepts.nn.functional.concept_orthogonality : the orthogonality penalty
+    """
+
+    supported_concept_types = frozenset({"binary", "categorical", "continuous"})
+    param_for_discrete_var = "logits"
+
+    variable_distributions = {
+        'binary': Bernoulli,
+        'categorical': OneHotCategorical,
+        'continuous': Normal,
+    }
+    variable_dist_kwargs = dict(DEFAULT_DIST_KWARGS)
+
+    def __init__(
+        self,
+        input_size: int,
+        annotations: Annotations,
+        encoder: nn.Module = None,
+        decoder: nn.Module = None,
+        latent_size: int = 64,
+        embedding_size: int = 16,
+        use_unknown: bool = True,
+        concepts_to_decoder: bool = False,
+        context_net_kwargs: Optional[dict] = None,
+        inference: Optional[BaseInference] = VariationalInference,
+        inference_kwargs: Optional[dict] = None,
+        train_inference: Optional[BaseInference] = None,
+        train_inference_kwargs: Optional[dict] = None,
+        lightning: bool = False,
+        plate: Optional[bool] = False,
+        **kwargs,
+    ):
+        if kwargs.pop("backbone", None) is not None:
+            raise TypeError(
+                f"{type(self).__name__} does not accept a `backbone` parameter. "
+                "The guide reads the raw observation directly, so any feature "
+                "extractor belongs in `encoder`."
+            )
+        super().__init__(
+            input_size=input_size,
+            annotations=annotations,
+            latent_size=latent_size,
+            lightning=lightning,
+            plate=plate,
+            **kwargs,
+        )
+        self.embedding_size = embedding_size
+        self.use_unknown = bool(use_unknown)
+        self.concepts_to_decoder = bool(concepts_to_decoder)
+        self.context_net_kwargs = dict(context_net_kwargs or {})
+        self.encoder = encoder if encoder is not None else nn.Identity()
+        self.decoder = decoder if decoder is not None else nn.Identity()
+
+        self.pgm = self._build_model()
+
+        # The guide q(z | input). Whether the engine's discrete draws are soft or
+        # hard is not set here: it follows from the concepts' declared family
+        # (see `variable_distributions`).
+        guide = {"latents": {"z": self._build_guide()}}
+        self.setup_inference(
+            inference,
+            {**guide, **(inference_kwargs or {})},
+            train_inference,
+            {**guide, **(train_inference_kwargs or {})},
+        )
+
+    def __repr__(self):
+        # The base reports `backbone`, which this model has none of: the guide's
+        # trunk is `encoder`, and the bottleneck's width is what sizes `decoder`.
+        fields = (
+            f"input_size={self.input_size}, "
+            f"latent_size={self.latent_size}, "
+            f"n_concepts={len(self.concept_names)}, "
+            f"embedding_size={self.embedding_size}, "
+            f"use_unknown={self.use_unknown}, "
+            f"encoder={self.encoder.__class__.__name__}, "
+            f"decoder={self.decoder.__class__.__name__}"
+        )
+        if self.plate:
+            fields += f", plate={self.plate}"
+        return f"{self.__class__.__name__}({fields})"
+
+    # ------------------------------------------------------------------
+    # Graph
+    # ------------------------------------------------------------------
+    def _resolve_graph(self) -> ConceptGraph:
+        """Build the edgeless concept graph.
+
+        A CBGM's concepts are conditionally independent given ``z``
+        """
+        labels = list(self.concept_names)
+        return ConceptGraph(
+            torch.zeros(len(labels), len(labels)),
+            node_names=labels,
+        )
+
+    # ------------------------------------------------------------------
+    # Training hooks
+    # ------------------------------------------------------------------
+
+    def default_query(self, c, step='train'):
+        """Always query **every** variables. During train, observe concepts.
+        During validation and test, do not observe any variables.
+
+        Widens the base concept-only query
+        (:meth:`~torch_concepts.nn.modules.high.base.model.BaseModel.default_query`):
+        :class:`~torch_concepts.nn.VariationalInference` requires all variables
+        in the query — observed ones with values, latents absent or ``None`` —
+        and the generative loss terms need the ones it would otherwise leave out:
+        ``input`` for the reconstruction and ``mixing``/``unknown`` for the
+        orthogonality penalty.
+        """
+        return {
+            **{name: None for name in self.pgm.variables},
+            **super().default_query(c, step),
+        }
+
+    def default_extra(self, evidence, query=None):
+        """Publish the evidence so :class:`~torch_concepts.nn.MSEReconstructionLoss`
+        can score the observed variable (e.g. ``input``) against it."""
+        return {"evidence": evidence}
+
+    # ------------------------------------------------------------------
+    # Model assembly
+    # ------------------------------------------------------------------
+
+    def _build_guide(self) -> ParametricCPD:
+        """The variational posterior ``q(z | input)``, a Normal CPD on ``z``.
+
+        The feature extractor is the CPD's **trunk**, not part of either
+        parameter's head: ``loc`` and ``scale`` are two small linear readouts of
+        the same features, so the backbone runs once per step. Sharing is safe
+        here because both heads are independently learnable ``Linear`` layers —
+        put the *scoring* layer in a trunk instead and the scale would collapse
+        to a fixed function of the location.
+        """
+        z = self.pgm.variables["z"]
+        observed = self.pgm.variables["input"]
+
+        # Width of the trunk's output: declared when the encoder exposes it
+        # (MLP, nn.Linear), else measured with a dry run — the trick
+        # `backbone.py` uses for torchvision models.
+        width = getattr(self.encoder, "out_features", None)
+        if width is None:
+            with torch.no_grad():
+                width = self.encoder(torch.zeros(1, *observed.shape)).shape[-1]
+
+        return ParametricCPD(
+            variable=z,
+            parents=[observed],
+            trunk=self.encoder,
+            parametrization=self._flexible_parametrization(
+                variable=z,
+                first=nn.Linear(width, z.size),
+                second=nn.Linear(width, z.size),
+            ),
+        )
+
+    def _build_model(self) -> BayesianNetwork:
+        """Assemble the CBGM Bayesian network.
+
+        ``z → {embeddings, unknown} → concepts → context → input``: the standard
+        Normal prior on ``z`` produces one embedding matrix per concept group
+        plus one unsupervised context; each group's concepts are decoded from
+        their embeddings; the concept bottleneck layer mixes them and appends the
+        unsupervised context; the decoder turns that bottleneck into the
+        observation's distribution parameters.
+
+        With ``use_unknown=False`` the unsupervised context is left out of the
+        graph entirely — variable, encoder and decoder parent alike — so the
+        decoder reads the ``k`` mixed concept contexts and nothing else.
+        """
+
+        # --- variables ---
+        observed = EmbeddingVariable("input", distribution=Delta, shape=self.input_size)
+        latent = EmbeddingVariable("z", distribution=Normal, size=self.latent_size)
+        # Concepts and their embeddings share the grouping, hence align 1:1.
+        concepts = self.build_concept_variables(self.concept_names, plate_name="concepts")
+        embeddings = self.build_concept_embedding_variables(
+            self.concept_names,
+            self.embedding_size,
+            plate_name="embeddings",
+        )
+        # The pre-defined concepts are incomplete in a generative setting, so the
+        # bottleneck carries one extra, unsupervised context embedding.
+        unknowns = [
+            EmbeddingVariable(
+                "unknown",
+                distribution=Delta,
+                shape=(1, self.embedding_size),
+            )
+        ] if self.use_unknown else []
+        ordered_names = [m for cvar in concepts for m in cvar.members]
+        reordered_axis = self.concept_annotations.subset(ordered_names)
+        n_concepts = len(ordered_names)
+        mixing = EmbeddingVariable(
+            "mixing",
+            distribution=Delta,
+            shape=(n_concepts, self.embedding_size),
+        )
+    
+
+        # --- factors ---
+        # p(z) = N(0, I): fixed, not learned, so the guide has a fixed target.
+        latent_cpd = ParametricCPD(
+            latent,
+            parents=[],
+            parametrization={
+                "loc": FixedPrior(torch.zeros(self.latent_size)),
+                "scale": FixedPrior(torch.ones(self.latent_size)),
+            },
+        )
+        # z -> embeddings: one context network per group.
+        emb_encoders = ParametricCPD(
+            variable=[*embeddings, *unknowns],
+            parents=[latent],
+            parametrization=[
+                {"value": MLPEmbeddingEncoder(
+                    in_features=self.latent_size,
+                    out_features=self.embedding_size,
+                    n_embeddings=e.shape[0],
+                    **{'hidden_size': self.latent_size // 2, **self.context_net_kwargs},
+                )}
+                for e in [*embeddings, *unknowns]
+            ],
+        )
+        # embeddings → concepts: one score per state embedding (per group).
+        c_encoders = [
+            ParametricCPD(
+                variable=cvar,
+                parents=[evar],
+                parametrization=self._flexible_parametrization(
+                    variable=cvar,
+                    first=pyc.nn.Sequential(
+                        LinearEmbeddingToConcept(
+                            in_embeddings=self.embedding_size,
+                            out_concepts=1,
+                        ),
+                        # Collapse the (n_concepts, 1) score dims -> n_concepts
+                        nn.Flatten(start_dim=-2),
+                    ),
+                    second="copy",
+                ),
+            )
+            for cvar, evar in zip(concepts, embeddings)
+        ]
+
+        mixing_cpd = ParametricCPD(
+            variable=mixing,
+            parents=[*concepts, *embeddings],
+            parametrization={
+                "value": MixConceptEmbeddings(
+                    in_concepts=reordered_axis, # require Annotations as in_concepts
+                    in_embeddings=self.embedding_size,
+            )},
+            # Default concatenation is along dim=-1; embeddings need dim=-2
+            aggregate=lambda concepts, embeddings: {
+                "concepts": torch.cat(list(concepts.values()), dim=-1),
+                "embeddings": torch.cat(list(embeddings.values()), dim=-2),
+            },
+        )
+
+        def decoder_inputs(inputs):
+            """Contexts concatenated on dim=-2 and flattened, then the concept
+            scores (present only under `concepts_to_decoder`) on dim=-1."""
+            contexts = [t for v, t in inputs.items() if v.variable_type == "embedding"]
+            scores = [t for v, t in inputs.items() if v.variable_type == "concept"]
+            flat = torch.cat(contexts, dim=-2).flatten(start_dim=-2)
+            return torch.cat([flat, *scores], dim=-1) if scores else flat
+
+        decoder_cpd = ParametricCPD(
+            variable=observed,
+            parents=[mixing, *unknowns, *(concepts if self.concepts_to_decoder else [])],
+            parametrization={
+                'value': self.decoder
+            },
+            aggregate=decoder_inputs,
+        )
+
+        return BayesianNetwork(
+            variables=[latent, *embeddings, *unknowns, *concepts, mixing, observed],
+            factors=[latent_cpd, *emb_encoders, *c_encoders, mixing_cpd, decoder_cpd],
+        )

@@ -7,6 +7,8 @@ neural network architectures in concept-based models.
 Reference: https://torch-spatiotemporal.readthedocs.io/en/latest/
 """
 
+from typing import Optional
+
 import torch
 from torch import nn
 import torch.nn.functional as F
@@ -149,6 +151,11 @@ class MLP(nn.Module):
         else:
             self.register_parameter('readout', None)
 
+        # Declared like ``nn.Linear``/``Backbone`` do, so anything that sizes a
+        # downstream layer from its input can read it off an MLP too (a CPD
+        # trunk, ``BaseModel._setup_backbone``, ``LazyConstructor``).
+        self.out_features = output_size if output_size is not None else hidden_size
+
     def reset_parameters(self) -> None:
         """Reset all layer parameters to initial random values."""
         for module in self.mlp._modules.values():
@@ -276,6 +283,10 @@ class LinearEmbeddingEncoder(torch.nn.Module):
         >>> out.shape
         torch.Size([4, 5, 16])
 
+    See Also:
+        MLPEmbeddingEncoder: the same interface with an MLP trunk and
+            optional normalisation, for when a linear map is not enough.
+
     References:
         Espinosa Zarlenga et al. "Concept Embedding Models: Beyond the
         Accuracy-Explainability Trade-Off", NeurIPS 2022.
@@ -320,6 +331,122 @@ class LinearEmbeddingEncoder(torch.nn.Module):
         """
         return self.encoder(x)
 
+
+class MLPEmbeddingEncoder(torch.nn.Module):
+    """
+    MLP-based encoder that transforms a latent into a set of embeddings.
+
+    Generalizes :class:`LinearEmbeddingEncoder` with an :class:`MLP` trunk
+    (hidden layers, dropout) and an optional normalisation on each output
+    embedding row. Reach for it when the input is a latent the model will
+    later sample from a *prior* rather than from the posterior it was trained
+    on, as in a concept bottleneck generative model: a linear map extrapolates
+    without bound, so an unusual latent produces embeddings that land far
+    outside anything the downstream decoder ever saw. A hidden layer gives the
+    map somewhere to bend; ``norm='layer'`` bounds what comes out of it.
+
+    Args:
+        in_features (int): Number of input features.
+        hidden_size (int): Hidden width per output embedding.
+        out_features (int, optional): Feature dimension of each output
+            embedding. Defaults to ``hidden_size`` (no separate readout layer).
+        n_embeddings (int, optional): Number of output embeddings. (default: 1)
+        n_layers (int, optional): Number of hidden layers. (default: 1)
+        activation (str, optional): Activation after each hidden layer.
+            (default: ``'relu'``)
+        dropout (float, optional): Dropout probability. (default: 0.)
+        norm (str or None, optional): ``'layer'`` or ``'batch'``, applied to
+            each output embedding row; ``None`` for no normalisation.
+            Defaults to ``'layer'``. ``'batch'`` is a ``BatchNorm1d`` over the
+            flat projection, which accepts a single batch axis only — it
+            raises under an inference engine that adds a leading sample
+            dimension, and it makes one generated sample decode differently
+            from a batch of them. ``'layer'`` has neither problem.
+
+    Example:
+        >>> import torch
+        >>> from torch_concepts.nn import MLPEmbeddingEncoder
+        >>>
+        >>> encoder = MLPEmbeddingEncoder(
+        ...     in_features=128,
+        ...     hidden_size=256,
+        ...     out_features=16,
+        ...     n_embeddings=5,
+        ... )
+        >>> encoder(torch.randn(4, 128)).shape
+        torch.Size([4, 5, 16])
+
+        Extra leading axes — an inference engine's sample dimension — pass
+        through untouched:
+
+        >>> encoder(torch.randn(2, 4, 128)).shape
+        torch.Size([2, 4, 5, 16])
+
+    See Also:
+        LinearEmbeddingEncoder: the single-projection version.
+    """
+
+    def __init__(
+        self,
+        in_features: int,
+        hidden_size: int,
+        out_features: Optional[int] = None,
+        n_embeddings: int = 1,
+        n_layers: int = 1,
+        activation: str = 'relu',
+        dropout: float = 0.,
+        norm: Optional[str] = 'layer',
+    ):
+        super().__init__()
+
+        if norm is not None and norm not in ('layer', 'batch'):
+            raise ValueError(
+                f"{type(self).__name__}: norm must be 'layer', 'batch' or "
+                f"None, got {norm!r}."
+            )
+        self.norm = norm
+        resolved_out = out_features if out_features is not None else hidden_size
+        self.out_shape = (n_embeddings, resolved_out)
+
+        self.mlp = MLP(
+            in_features,
+            n_embeddings * hidden_size,
+            n_embeddings * out_features if out_features is not None else None,
+            n_layers,
+            activation,
+            dropout,
+        )
+
+        # 'batch' goes before the unflatten so it normalises the flat projection
+        # the way the reference does; 'layer' after it, so each embedding row is
+        # normalised on its own rather than the concatenation of all of them.
+        if norm == 'batch':
+            self.norm_layer = torch.nn.BatchNorm1d(n_embeddings * resolved_out)
+        elif norm == 'layer':
+            self.norm_layer = torch.nn.LayerNorm(resolved_out)
+        else:
+            self.norm_layer = None
+
+        self.reshape = torch.nn.Unflatten(-1, self.out_shape)
+
+    def forward(self, x: torch.Tensor):
+        """
+        Encode into a set of embeddings.
+
+        Args:
+            x: Input tensor of shape ``(..., in_features)``.
+
+        Returns:
+            torch.Tensor: Embeddings of shape ``(..., n_embeddings, out_features)``.
+        """
+        out = self.mlp(x)
+
+        if self.norm == 'batch':
+            return self.reshape(self.norm_layer(out))
+        elif self.norm == 'layer':
+            return self.norm_layer(self.reshape(out))
+        else:
+            return self.reshape(out)
 
 
 class SelectorEmbeddingEncoder(torch.nn.Module):

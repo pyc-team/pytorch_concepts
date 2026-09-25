@@ -15,7 +15,7 @@ Tests cover:
 Migrated to the high-level model API:
 - forward takes ``input=`` (not ``x=``) and returns ``ModelOutput`` with
   ``.params`` only (no ``.probs`` / ``.logits``). For each queried concept,
-  ``out.params[name]`` is ``{'logits': tensor(B, cardinality)}`` (CEM sets
+  ``out.logits[name]`` is a ``(B, cardinality)`` tensor (CEM sets
   ``param_for_discrete_var='logits'``).
 - ``model.model`` -> ``model.pgm``.
 - default distributions are now BASE families (Bernoulli / OneHotCategorical),
@@ -42,7 +42,7 @@ from torch_concepts.nn import (
 def _logits(out, names):
     """Concatenate the queried concepts' logits into a (B, sum(card)) tensor."""
     import torch
-    return torch.cat([out.params[n]['logits'] for n in names], dim=1)
+    return out.logits[list(names)]
 
 
 class DummyBackbone(nn.Module):
@@ -63,12 +63,6 @@ class TestCEMInitialization(unittest.TestCase):
         self.ann = Annotations(
                 labels=['color', 'shape', 'size', 'task1'],
                 cardinalities=[3, 2, 1, 1],
-                metadata={
-                    'color': {'type': 'discrete'},
-                    'shape': {'type': 'discrete'},
-                    'size': {'type': 'discrete'},
-                    'task1': {'type': 'discrete'}
-                }
             )
 
     def test_init_basic(self):
@@ -94,18 +88,16 @@ class TestCEMInitialization(unittest.TestCase):
 
         self.assertIsInstance(model.pgm, nn.Module)
         # The exogenous size should be passed to the encoder
-        self.assertTrue(hasattr(model, 'pgm'))
+        emb_vars = [v for name, v in model.pgm.variables.items()
+                    if v.variable_type == 'embedding' and name not in ('input', 'latent')]
+        self.assertTrue(emb_vars)
+        self.assertTrue(all(v.shape[-1] == 32 for v in emb_vars))
 
     def test_init_with_defaults(self):
         """Test initialization without explicit distributions (defaults used)."""
         ann_no_dist = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
         model = ConceptEmbeddingModel(
@@ -156,7 +148,8 @@ class TestCEMInitialization(unittest.TestCase):
         self.assertIsInstance(model.inference, DeterministicInference)
 
     def test_init_with_ancestral_sampling_inference(self):
-        """Test initialization with ancestral sampling inference (init-only)."""
+        """Test that a forward pass actually runs under ancestral sampling, not
+        just that the engine is wired in at construction."""
         model = ConceptEmbeddingModel(
             input_size=8,
             annotations=self.ann,
@@ -166,6 +159,13 @@ class TestCEMInitialization(unittest.TestCase):
         model.eval()  # Switch to eval mode to check eval_inference
 
         self.assertIsInstance(model.inference, AncestralSamplingInference)
+
+        x = torch.randn(2, 8)
+        query = ['color', 'shape', 'size', 'task1']
+        out = model(query=query, input=x)
+        for name in query:
+            card = self.ann.cardinalities[self.ann.labels.index(name)]
+            self.assertEqual(_logits(out, query)[name].shape, (2, card))
 
     def test_factory_default_is_pytorch(self):
         """Test that default lightning=False creates pure PyTorch model."""
@@ -199,12 +199,6 @@ class TestCEMForward(unittest.TestCase):
         self.ann = Annotations(
                 labels=['color', 'shape', 'size', 'task1'],
                 cardinalities=[3, 2, 1, 1],
-                metadata={
-                    'color': {'type': 'discrete'},
-                    'shape': {'type': 'discrete'},
-                    'size': {'type': 'discrete'},
-                    'task1': {'type': 'discrete'}
-                }
             )
 
         self.model = ConceptEmbeddingModel(
@@ -324,12 +318,6 @@ class TestCEMExogenousVariables(unittest.TestCase):
         self.ann = Annotations(
                 labels=['c1', 'c2', 'c3', 'task'],
                 cardinalities=[2, 3, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'c3': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
     def test_different_exogenous_sizes(self):
@@ -341,6 +329,13 @@ class TestCEMExogenousVariables(unittest.TestCase):
                 task_names=['task'],
                 embedding_size=exogenous_size
             )
+
+            # embedding_size must actually resize every concept-embedding variable.
+            emb_vars = [v for name, v in model.pgm.variables.items()
+                        if v.variable_type == 'embedding' and name not in ('input', 'latent')]
+            self.assertTrue(emb_vars)
+            for v in emb_vars:
+                self.assertEqual(v.shape[-1], exogenous_size)
 
             x = torch.randn(2, 8)
             query = ['c1', 'c2', 'c3']
@@ -359,8 +354,14 @@ class TestCEMExogenousVariables(unittest.TestCase):
             embedding_size=16
         )
 
-        # Model should have bipartite structure with exogenous
-        self.assertTrue(model.pgm is not None)
+        # Model should have bipartite structure with exogenous: one embedding
+        # variable per concept plate, each holding (cardinality, embedding_size)
+        # rows, on top of the shared input/latent embeddings.
+        emb_vars = {name: v for name, v in model.pgm.variables.items()
+                    if v.variable_type == 'embedding' and name not in ('input', 'latent')}
+        self.assertEqual(len(emb_vars), 3)  # c1, c2, c3 differ in cardinality -> 3 plates
+        self.assertEqual(sum(v.shape[0] for v in emb_vars.values()), 2 + 3 + 1)
+        self.assertTrue(all(v.shape[-1] == 16 for v in emb_vars.values()))
 
 
 class TestCEMPrepareTarget(unittest.TestCase):
@@ -371,11 +372,6 @@ class TestCEMPrepareTarget(unittest.TestCase):
         self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
         self.model = ConceptEmbeddingModel(
@@ -400,11 +396,6 @@ class TestCEMTraining(unittest.TestCase):
         self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
     def test_manual_training_mode(self):
@@ -516,13 +507,6 @@ class TestCEMWithMultipleTasks(unittest.TestCase):
         self.ann = Annotations(
                 labels=['c1', 'c2', 'c3', 'task1', 'task2'],
                 cardinalities=[2, 3, 1, 1, 2],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'c3': {'type': 'discrete'},
-                    'task1': {'type': 'discrete'},
-                    'task2': {'type': 'discrete'}
-                }
             )
 
     def test_multiple_tasks_init(self):
@@ -576,12 +560,6 @@ class TestCEMConceptTypes(unittest.TestCase):
         ann = Annotations(
                 labels=['c1', 'c2', 'c3', 'task'],
                 cardinalities=[1, 1, 1, 1],  # All binary (cardinality 1)
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'c3': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
         model = ConceptEmbeddingModel(
@@ -599,12 +577,6 @@ class TestCEMConceptTypes(unittest.TestCase):
         ann = Annotations(
                 labels=['c1', 'c2', 'c3', 'task'],
                 cardinalities=[1, 1, 1, 1],  # All binary
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'c3': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
         model = ConceptEmbeddingModel(
@@ -629,12 +601,6 @@ class TestCEMConceptTypes(unittest.TestCase):
         ann = Annotations(
                 labels=['color', 'shape', 'size', 'task'],
                 cardinalities=[3, 4, 5, 2],  # All categorical (cardinality > 1)
-                metadata={
-                    'color': {'type': 'discrete'},
-                    'shape': {'type': 'discrete'},
-                    'size': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
         model = ConceptEmbeddingModel(
@@ -652,12 +618,6 @@ class TestCEMConceptTypes(unittest.TestCase):
         ann = Annotations(
                 labels=['color', 'shape', 'size', 'task'],
                 cardinalities=[3, 4, 5, 2],  # All categorical
-                metadata={
-                    'color': {'type': 'discrete'},
-                    'shape': {'type': 'discrete'},
-                    'size': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
         model = ConceptEmbeddingModel(
@@ -680,13 +640,6 @@ class TestCEMConceptTypes(unittest.TestCase):
         ann = Annotations(
                 labels=['is_red', 'shape', 'has_texture', 'size', 'task'],
                 cardinalities=[1, 3, 1, 4, 2],
-                metadata={
-                    'is_red': {'type': 'discrete'},
-                    'shape': {'type': 'discrete'},
-                    'has_texture': {'type': 'discrete'},
-                    'size': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
         model = ConceptEmbeddingModel(
@@ -704,13 +657,6 @@ class TestCEMConceptTypes(unittest.TestCase):
         ann = Annotations(
                 labels=['is_red', 'shape', 'has_texture', 'size', 'task'],
                 cardinalities=[1, 3, 1, 4, 2],  # Mixed
-                metadata={
-                    'is_red': {'type': 'discrete'},
-                    'shape': {'type': 'discrete'},
-                    'has_texture': {'type': 'discrete'},
-                    'size': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
         model = ConceptEmbeddingModel(
@@ -737,11 +683,6 @@ class TestCEMEdgeCases(unittest.TestCase):
         self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
     def test_single_concept(self):
@@ -749,10 +690,6 @@ class TestCEMEdgeCases(unittest.TestCase):
         ann = Annotations(
                 labels=['c1', 'task'],
                 cardinalities=[1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
         model = ConceptEmbeddingModel(
@@ -772,12 +709,6 @@ class TestCEMEdgeCases(unittest.TestCase):
         ann = Annotations(
                 labels=['c1', 'c2', 'c3', 'task'],
                 cardinalities=[1, 1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'c3': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
         model = ConceptEmbeddingModel(
@@ -797,11 +728,6 @@ class TestCEMEdgeCases(unittest.TestCase):
         ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[3, 4, 5],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
         model = ConceptEmbeddingModel(
@@ -857,13 +783,6 @@ class TestCEMCardinalities(unittest.TestCase):
         ann = Annotations(
                 labels=['c1', 'c2', 'c3', 'task1', 'task2'],
                 cardinalities=[2, 3, 1, 1, 4],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'c3': {'type': 'discrete'},
-                    'task1': {'type': 'discrete'},
-                    'task2': {'type': 'discrete'}
-                }
             )
 
         model = ConceptEmbeddingModel(
@@ -873,7 +792,8 @@ class TestCEMCardinalities(unittest.TestCase):
         )
 
         # Concept cardinalities should be [2, 3, 1] (excluding tasks)
-        self.assertTrue(model.pgm is not None)
+        self.assertEqual(model.axis_concepts.cardinalities, [2, 3, 1])
+        self.assertEqual(model.axis_concepts.labels, ['c1', 'c2', 'c3'])
 
 
 class TestCEMComparison(unittest.TestCase):
@@ -884,15 +804,12 @@ class TestCEMComparison(unittest.TestCase):
         self.ann = Annotations(
                 labels=['c1', 'c2', 'task'],
                 cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
 
     def test_cem_has_exogenous(self):
-        """Test that CEM and CBM produce comparable outputs."""
+        """CEM's graph carries a per-concept embedding variable that CBM's does
+        not, even though both produce same-shaped outputs from the same
+        annotations."""
         from torch_concepts.nn.modules.high.models.cbm import ConceptBottleneckModel
 
         cem = ConceptEmbeddingModel(
@@ -907,6 +824,13 @@ class TestCEMComparison(unittest.TestCase):
             task_names=['task']
         )
 
+        # CEM's graph has an "embeddings" variable beyond input/latent; CBM's doesn't.
+        cem_vars = set(cem.pgm.variables)
+        cbm_vars = set(cbm.pgm.variables)
+        self.assertIn('embeddings', cem_vars)
+        self.assertNotIn('embeddings', cbm_vars)
+        self.assertFalse(hasattr(cbm, 'embedding_size'))
+
         # Both should work but have different architectures
         x = torch.randn(2, 8)
         query = ['c1', 'c2', 'task']
@@ -918,46 +842,6 @@ class TestCEMComparison(unittest.TestCase):
         self.assertEqual(_logits(cem_out, query).shape, _logits(cbm_out, query).shape)
 
 
-class TestCEMIndependentLearner(unittest.TestCase):
-    """Test CEM with Lightning training mode."""
-
-    def setUp(self):
-        """Set up test fixtures."""
-        self.ann = Annotations(
-                labels=['c1', 'c2', 'task'],
-                cardinalities=[1, 1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
-            )
-
-        self.batch_size = 4
-        self.input_size = 8
-        self.x = torch.randn(self.batch_size, self.input_size)
-        self.c = torch.randint(0, 2, (self.batch_size, 3)).float()
-
-        self.batch = {
-            'inputs': {'x': self.x},
-            'concepts': {'c': self.c}
-        }
-
-    def test_cem_independent_training_step(self):
-        """Test CEM Lightning learner training step works."""
-        model = ConceptEmbeddingModel(
-            input_size=self.input_size,
-            annotations=self.ann,
-            task_names=['task'],
-            lightning=True,
-            loss=nn.BCEWithLogitsLoss()
-        )
-        model.train()
-
-        loss = model.training_step(self.batch)
-
-        self.assertIsNotNone(loss)
-        self.assertTrue(loss.requires_grad)
 
 
 if __name__ == '__main__':

@@ -1,10 +1,10 @@
 import torch
 from typing import Optional
 
-from ...base.intervention import BaseInterventionPolicy
+from ...base.intervention import InterventionPolicy
 
 
-class GradientPolicy(BaseInterventionPolicy):
+class GradientPolicy(InterventionPolicy):
     """
     Gradient-based intervention policy.
 

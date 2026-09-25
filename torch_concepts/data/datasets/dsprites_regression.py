@@ -22,8 +22,10 @@ class DSpritesRegressionDataset(ConceptDataset):
     """DSprites regression dataset with sympy formula-based targets.
 
     Each sample is a 64x64 grayscale image of a simple shape with known
-    generative factors (concepts). A per-shape sympy formula over the concept
-    values produces the regression target.
+    generative factors (concepts), served as ``(3, 64, 64)`` (the single
+    channel is replicated so pretrained RGB backbones can consume it). A
+    per-shape sympy formula over the concept values produces the regression
+    target.
 
     Parameters
     ----------
@@ -218,18 +220,12 @@ class DSpritesRegressionDataset(ConceptDataset):
         return inputs, concepts, annotations, graph
 
     def __getitem__(self, item):
+        sample = super().__getitem__(item)
         if self.embs_precomputed:
-            x = self.input_data[item]
-        else:
-            image = torch.tensor(self.input_data[item], dtype=torch.float32)
-            x = image.unsqueeze(0)  # (1, 64, 64)
-
-        c = self.concepts[item]
-
-        return {
-            'inputs': {'x': x},
-            'concepts': {'c': c},
-        }
+            return sample
+        image = torch.tensor(self.input_data[item], dtype=torch.float32)
+        sample['inputs']['x'] = image.unsqueeze(0).expand(3, -1, -1)
+        return sample
 
     @property
     def n_samples(self) -> int:

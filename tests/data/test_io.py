@@ -1,7 +1,9 @@
 """Tests for data I/O utilities."""
 import os
+import subprocess
 import tempfile
 import pickle
+import urllib.error
 import zipfile
 import tarfile
 from pathlib import Path
@@ -19,6 +21,17 @@ from torch_concepts.data.io import (
     wget_available,
     DownloadProgressBar,
 )
+
+
+def _run_or_skip(func, *args, **kwargs):
+    """Run a real network download, skipping the test on transient network
+    failures (offline CI, GitHub rate-limits / HTTP 429) so they don't turn a
+    green suite red. A genuine bug in the download code raises a different
+    exception and still fails."""
+    try:
+        return func(*args, **kwargs)
+    except (urllib.error.URLError, subprocess.CalledProcessError, ConnectionError) as e:
+        pytest.skip(f"network unavailable for live-download test: {e}")
 
 
 class TestPickle:
@@ -117,10 +130,10 @@ class TestDownloadUrl:
         with tempfile.TemporaryDirectory() as tmpdir:
             # Use a small test file from GitHub
             url = "https://raw.githubusercontent.com/pytorch/pytorch/main/README.md"
-            
+
             # Download
-            path = download_url(url, tmpdir, verbose=False)
-            
+            path = _run_or_skip(download_url, url, tmpdir, verbose=False)
+
             # Verify
             assert os.path.exists(path)
             assert os.path.basename(path) == "README.md"
@@ -148,10 +161,10 @@ class TestDownloadUrl:
         with tempfile.TemporaryDirectory() as tmpdir:
             url = "https://raw.githubusercontent.com/pytorch/pytorch/main/README.md"
             custom_name = "custom_readme.md"
-            
+
             # Download with custom name
-            path = download_url(url, tmpdir, filename=custom_name, verbose=False)
-            
+            path = _run_or_skip(download_url, url, tmpdir, filename=custom_name, verbose=False)
+
             # Verify
             assert os.path.exists(path)
             assert os.path.basename(path) == custom_name
@@ -205,7 +218,7 @@ class TestDownloadUrlWget:
         with tempfile.TemporaryDirectory() as tmpdir:
             url = "https://raw.githubusercontent.com/pytorch/pytorch/main/README.md"
             dest = os.path.join(tmpdir, "README.md")
-            download_url_wget(url, dest)
+            _run_or_skip(download_url_wget, url, dest)
             assert os.path.exists(dest)
             assert os.path.getsize(dest) > 0
 
@@ -215,10 +228,10 @@ class TestDownloadUrlWget:
             url = "https://raw.githubusercontent.com/pytorch/pytorch/main/README.md"
             dest = os.path.join(tmpdir, "README.md")
             # First download
-            download_url_wget(url, dest)
+            _run_or_skip(download_url_wget, url, dest)
             size_first = os.path.getsize(dest)
             # Second download (resume / skip)
-            download_url_wget(url, dest)
+            _run_or_skip(download_url_wget, url, dest)
             size_second = os.path.getsize(dest)
             assert size_second >= size_first
 

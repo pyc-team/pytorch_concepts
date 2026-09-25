@@ -8,12 +8,12 @@ import torch
 import torch.nn as nn
 import torch.distributions as dist
 
-from torch_concepts.nn.modules.mid.models.variable import (
+from torch_concepts.nn.modules.mid.variable import (
     ConceptVariable,
     EmbeddingVariable,
 )
-from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
-from torch_concepts.nn.modules.mid.models.bayesian_network import BayesianNetwork
+from torch_concepts.nn.modules.mid.factors.cpd import ParametricCPD
+from torch_concepts.nn.modules.mid.graph.bayesian_network import BayesianNetwork
 from torch_concepts.nn.modules.low.priors import LearnablePrior
 from torch_concepts.nn.modules.low.lazy import LazyConstructor
 from torch_concepts.nn.modules.low.predictors.linear import LinearConceptToConcept
@@ -164,7 +164,7 @@ class TestLazyConstructorCPD:
         B = 5
         out = cpd(parent_values={"x": torch.randn(B, 8)})
         assert "probs" in out
-        assert out["probs"].shape == (B, 3)
+        assert out["probs"].shape == (B, 1, 3)  # member layout (B, n_members, size)
 
 
 # ===========================================================================

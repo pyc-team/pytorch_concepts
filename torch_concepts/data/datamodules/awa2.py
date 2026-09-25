@@ -1,7 +1,6 @@
 from ..datasets.awa2 import AWA2Dataset
 
 from ..base.datamodule import ConceptDataModule
-from ...typing import BackboneType
 from ..base.splitter import Splitter
 from ..splitters.random import RandomSplitter
 
@@ -32,13 +31,6 @@ class AWA2DataModule(ConceptDataModule):
         exists for AwA2, so the datamodule owns the split).
     batch_size : int, optional
         Number of samples per batch.  Default: 512.
-    backbone : BackboneType, optional
-        Backbone model for feature extraction (e.g. ``'resnet50'``).
-        Default: ``None``.
-    precompute_embs : bool, optional
-        Whether to precompute and cache backbone embeddings.  Default: ``True``.
-    force_recompute : bool, optional
-        Recompute embeddings even if a cache exists.  Default: ``False``.
     concept_subset : list of str, optional
         Subset of concept names to retain.  Default: ``None`` (all 86).
     label_descriptions : dict, optional
@@ -48,14 +40,11 @@ class AWA2DataModule(ConceptDataModule):
 
     Examples
     --------
+    >>> from torch_concepts import ImageBackbone
     >>> from torch_concepts.data import AWA2DataModule
     >>>
-    >>> dm = AWA2DataModule(
-    ...     root="./data/AWA2",
-    ...     backbone="resnet50",
-    ...     precompute_embs=True,
-    ...     batch_size=64,
-    ... )
+    >>> dm = AWA2DataModule(root="./data/AWA2", batch_size=64)
+    >>> dm.precompute_embeddings(ImageBackbone("resnet50"))  # optional
     >>> dm.setup()
     >>> train_loader = dm.train_dataloader()
 
@@ -74,9 +63,6 @@ class AWA2DataModule(ConceptDataModule):
         test_size: float = 0.2,
         splitter: Splitter = RandomSplitter(),
         batch_size: int = 512,
-        backbone: BackboneType = None,
-        precompute_embs: bool = True,
-        force_recompute: bool = False,
         concept_subset: list | None = None,
         label_descriptions: dict | None = None,
         workers: int = 0,
@@ -94,10 +80,8 @@ class AWA2DataModule(ConceptDataModule):
             val_size=val_size,
             test_size=test_size,
             batch_size=batch_size,
-            backbone=backbone,
-            precompute_embs=precompute_embs,
-            force_recompute=force_recompute,
             workers=workers,
             splitter=splitter,
             seed=seed,
+            **kwargs,
         )

@@ -15,7 +15,6 @@ Annotations & Configuration
    :nosignatures:
 
    Annotations
-   GroupConfig
    AnnotatedTensor
    ConceptGraph
 
@@ -38,6 +37,8 @@ Models
 
    ConceptBottleneckModel
    ConceptEmbeddingModel
+   ConceptBottleneckVAE
+   ConditionalVAE
    GraphConceptBottleneckModel
    CausallyReliableConceptBottleneckModel
    BlackBox

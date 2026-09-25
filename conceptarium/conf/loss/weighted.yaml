@@ -11,5 +11,5 @@ binary:
   _target_: "torch.nn.BCEWithLogitsLoss"
 categorical: 
   _target_: "torch.nn.CrossEntropyLoss"
-# continuous: 
-  # ... not supported yet
+continuous:
+  _target_: "torch.nn.MSELoss"

@@ -5,9 +5,9 @@ import torch
 import torch.nn as nn
 import torch.distributions as dist
 
-from torch_concepts.nn.modules.mid.models.variable import ConceptVariable, EmbeddingVariable
-from torch_concepts.nn.modules.mid.models.cpd import ParametricCPD
-from torch_concepts.nn.modules.low.priors import LearnablePrior, FixedPrior
+from torch_concepts.nn.modules.mid.variable import ConceptVariable, EmbeddingVariable
+from torch_concepts.nn.modules.mid.factors.cpd import ParametricCPD
+from torch_concepts.nn.modules.low.priors import LearnablePrior, FixedPrior, TiedPrior
 from torch_concepts.distributions import Delta
 
 
@@ -185,11 +185,12 @@ class TestParametricCPDForwardRoot:
         cpd = ParametricCPD(variable=v, parametrization={"logits": prior})
         out = cpd(parent_values={})
         assert "logits" in out
-        assert out["logits"].shape == (3,)
+        # Member layout (n_members, *member_shape): a root has no leading dims.
+        assert out["logits"].shape == (1, 3)
 
     def test_root_fixed_probs(self):
         v = _bernoulli_var(size=2)
-        cpd = ParametricCPD(variable=v, parametrization={"probs": FixedPrior([0.3, 0.7])})
+        cpd = ParametricCPD(variable=v, parametrization={"probs": FixedPrior(torch.tensor([0.3, 0.7]))})
         out = cpd(parent_values={})
         assert "probs" in out
         assert torch.allclose(out["probs"], torch.tensor([0.3, 0.7]))
@@ -200,7 +201,7 @@ class TestParametricCPDForwardRoot:
         cpd = ParametricCPD(variable=v, parametrization={"value": prior})
         out = cpd(parent_values={})
         assert "value" in out
-        assert out["value"].shape == (4,)
+        assert out["value"].shape == (1, 4)
 
 
 # ===========================================================================
@@ -215,7 +216,7 @@ class TestParametricCPDForwardNonRoot:
         B = 5
         out = cpd(parent_values={"x": torch.randn(B, 4)})
         assert "probs" in out
-        assert out["probs"].shape == (B, 1)
+        assert out["probs"].shape == (B, 1, 1)
 
     def test_nonroot_normal(self):
         x = _delta_var(size=6)
@@ -228,8 +229,8 @@ class TestParametricCPDForwardNonRoot:
         B = 3
         out = cpd(parent_values={"x": torch.randn(B, 6)})
         assert set(out.keys()) == {"loc", "scale"}
-        assert out["loc"].shape == (B, 2)
-        assert out["scale"].shape == (B, 2)
+        assert out["loc"].shape == (B, 1, 2)
+        assert out["scale"].shape == (B, 1, 2)
 
     def test_nonroot_categorical(self):
         x = _delta_var(size=8)
@@ -237,7 +238,7 @@ class TestParametricCPDForwardNonRoot:
         cpd = ParametricCPD(variable=k, parametrization={"probs": nn.Sequential(nn.Linear(8, 4), nn.Softmax(dim=-1))}, parents=[x])
         B = 2
         out = cpd(parent_values={"x": torch.randn(B, 8)})
-        assert out["probs"].shape == (B, 4)
+        assert out["probs"].shape == (B, 1, 4)
 
     def test_nonroot_multi_parents_concatenated(self):
         p1 = ConceptVariable("p1", distribution=dist.Bernoulli, size=2)
@@ -247,7 +248,7 @@ class TestParametricCPDForwardNonRoot:
         cpd = ParametricCPD(variable=c, parametrization=nn.Linear(5, 1), parents=[p1, p2])
         B = 4
         out = cpd(parent_values={"p1": torch.randn(B, 2), "p2": torch.randn(B, 3)})
-        assert out["probs"].shape == (B, 1)
+        assert out["probs"].shape == (B, 1, 1)
 
 
 # ===========================================================================
@@ -257,111 +258,124 @@ class TestParametricCPDForwardNonRoot:
 class TestRootParams:
     def test_root_params_expands_batch(self):
         v = _bernoulli_var(size=3)
-        prior = FixedPrior([0.1, 0.5, 0.9])
+        prior = FixedPrior(torch.tensor([0.1, 0.5, 0.9]))
         cpd = ParametricCPD(variable=v, parametrization={"probs": prior})
-        params = cpd.root_params(batch_size=7)
+        params = cpd.root_params(7)
         assert "probs" in params
-        assert params["probs"].shape == (7, 3)
+        assert params["probs"].shape == (7, 1, 3)
 
     def test_root_params_values_correct(self):
         v = _bernoulli_var(size=2)
-        cpd = ParametricCPD(variable=v, parametrization={"probs": FixedPrior([0.3, 0.7])})
-        params = cpd.root_params(batch_size=4)
+        cpd = ParametricCPD(variable=v, parametrization={"probs": FixedPrior(torch.tensor([0.3, 0.7]))})
+        params = cpd.root_params(leading=4)
         expected = torch.tensor([0.3, 0.7]).expand(4, 2)
         assert torch.allclose(params["probs"], expected)
 
+    def test_root_params_accepts_multiple_leading_dims(self):
+        v = _bernoulli_var(size=2)
+        prior = FixedPrior(torch.tensor([0.2, 0.8]))
+        cpd = ParametricCPD(variable=v, parametrization={"probs": prior})
+        params = cpd.root_params(leading=(2, 3))
+        assert params["probs"].shape == (2, 3, 1, 2)
+        assert torch.allclose(params["probs"][0, 0, 0], torch.tensor([0.2, 0.8]))
+
+    def test_root_params_expansion_is_a_view_not_a_copy(self):
+        v = _bernoulli_var(size=3)
+        prior = FixedPrior(torch.tensor([0.1, 0.5, 0.9]))
+        cpd = ParametricCPD(variable=v, parametrization={"probs": prior})
+        params = cpd.root_params(leading=7)
+        # a broadcast expansion has stride 0 on the expanded dim and shares the
+        # prior's storage — no per-leading-element copy is made.
+        assert params["probs"].stride(0) == 0
+        assert (
+            params["probs"].untyped_storage().data_ptr()
+            == prior.values.untyped_storage().data_ptr()
+        )
+
+    def test_root_params_broadcast_false_is_not_expanded(self):
+        # A prior shared across the batch (e.g. a fixed embedding matrix) opts
+        # out of expansion via `broadcast=False`: `root_params` must return it
+        # unchanged rather than adding leading dimensions.
+        source = torch.randn(4, 5)
+        v = EmbeddingVariable("embs", distribution=Delta, shape=(4, 5))
+        cpd = ParametricCPD(
+            variable=v,
+            parametrization={"value": TiedPrior(lambda: source, broadcast=False)},
+        )
+        params = cpd.root_params(leading=(2, 3))
+        # Only the member axis is added — no leading dims — and it is a view.
+        assert params["value"].shape == (1, 4, 5)
+        assert params["value"].untyped_storage().data_ptr() == source.untyped_storage().data_ptr()
+
+    def test_root_params_broadcast_is_per_parameter(self):
+        # Two parameters of the same CPD may set `broadcast` differently: only
+        # the opted-out one skips expansion.
+        n = _normal_var(size=2)
+        scale_source = torch.tensor([1.0, 2.0])
+        cpd = ParametricCPD(
+            variable=n,
+            parametrization={
+                "loc": FixedPrior(torch.tensor([0.0, 1.0])),        # broadcasts (default)
+                "scale": TiedPrior(lambda: scale_source, broadcast=False),  # opts out
+            },
+        )
+        params = cpd.root_params(leading=5)
+        assert params["loc"].shape == (5, 1, 2)
+        assert params["scale"].shape == (1, 2)
+        assert params["scale"].untyped_storage().data_ptr() == scale_source.untyped_storage().data_ptr()
+
 
 # ===========================================================================
-# 6. select() — member addressing
+# 6. member_of() — member addressing on the variable
 # ===========================================================================
 
-class TestCPDSelect:
-    def _make_plate_cpd(self, members=("c1", "c2", "c3"), member_size=1):
-        plate = ConceptVariable(
+class TestMemberOf:
+    """Member addressing lives on ``Variable.member_of``; it reads a member from a
+    flat row or a value in member layout alike."""
+
+    @staticmethod
+    def _plate(members=("c1", "c2", "c3"), member_size=1):
+        return ConceptVariable(
             "concepts", members=list(members),
             distribution=dist.Bernoulli, size=member_size,
         )
-        x = _delta_var(size=4)
-        N = len(members) * member_size
-        cpd = ParametricCPD(
-            variable=plate,
-            parametrization={"probs": nn.Sequential(nn.Linear(4, N), nn.Sigmoid())},
-            parents=[x],
-        )
-        return cpd, plate
 
-    def test_select_plate_name_returns_full(self):
-        cpd, plate = self._make_plate_cpd()
-        B = 5
-        params = {"probs": torch.rand(B, 3)}
-        result = cpd.select(params, "concepts")
-        assert result is params  # identity, no copy
-
-    def test_select_member_name_returns_slice(self):
-        cpd, plate = self._make_plate_cpd(["c1", "c2", "c3"])
+    def test_member_returns_slice(self):
+        plate = self._plate(["c1", "c2", "c3"])
         B = 4
         probs = torch.arange(B * 3, dtype=torch.float).reshape(B, 3)
-        params = {"probs": probs}
-        r_c1 = cpd.select(params, "c1")
-        assert r_c1["probs"].shape == (B, 1)
-        assert torch.allclose(r_c1["probs"], probs[:, 0:1])
+        r_c1 = plate.member_of(probs, "c1", "probs")
+        assert r_c1.shape == (B, 1)
+        assert torch.allclose(r_c1, probs[:, 0:1])
 
-    def test_select_member_c3(self):
-        cpd, plate = self._make_plate_cpd(["c1", "c2", "c3"])
+    def test_member_c3(self):
+        plate = self._plate(["c1", "c2", "c3"])
         B = 3
         probs = torch.arange(B * 3, dtype=torch.float).reshape(B, 3)
-        params = {"probs": probs}
-        r_c3 = cpd.select(params, "c3")
-        assert torch.allclose(r_c3["probs"], probs[:, 2:3])
+        assert torch.allclose(plate.member_of(probs, "c3", "probs"), probs[:, 2:3])
 
-    def test_select_multi_size_member(self):
-        cpd, _ = self._make_plate_cpd(["a", "b"], member_size=3)
+    def test_multi_size_member(self):
+        plate = self._plate(["a", "b"], member_size=3)
         B = 2
         probs = torch.randn(B, 6)
-        params = {"probs": probs}
-        ra = cpd.select(params, "a")
-        rb = cpd.select(params, "b")
-        assert ra["probs"].shape == (B, 3)
-        assert rb["probs"].shape == (B, 3)
-        assert torch.allclose(torch.cat([ra["probs"], rb["probs"]], dim=-1), probs)
+        ra = plate.member_of(probs, "a", "probs")
+        rb = plate.member_of(probs, "b", "probs")
+        assert ra.shape == (B, 3)
+        assert rb.shape == (B, 3)
+        assert torch.allclose(torch.cat([ra, rb], dim=-1), probs)
 
-    def test_select_nonplate_returns_same(self):
-        v = _bernoulli_var()
-        x = _delta_var()
-        cpd = ParametricCPD(variable=v, parametrization=nn.Linear(4, 1), parents=[x])
-        B, params = 3, {"probs": torch.rand(3, 1)}
-        assert cpd.select(params, "c") is params
-
-
-# ===========================================================================
-# 7. select_value() — value addressing
-# ===========================================================================
-
-class TestCPDSelectValue:
-    def test_select_value_plate_name_returns_full(self):
-        plate = ConceptVariable("g", members=["a", "b"], distribution=dist.Bernoulli)
-        x = _delta_var()
-        cpd = ParametricCPD(variable=plate, parametrization=nn.Linear(4, 2), parents=[x])
-        B = 3
-        value = torch.rand(B, 2)
-        assert cpd.select_value(value, "g") is value
-
-    def test_select_value_member(self):
+    def test_value_member(self):
         plate = ConceptVariable("g", members=["a", "b", "c"], distribution=dist.Bernoulli)
-        x = _delta_var()
-        cpd = ParametricCPD(variable=plate, parametrization={"probs": nn.Sequential(nn.Linear(4, 3), nn.Sigmoid())}, parents=[x])
         B = 4
         value = torch.arange(B * 3, dtype=torch.float).reshape(B, 3)
-        va = cpd.select_value(value, "a")
+        va = plate.member_of(value, "a")
         assert va.shape == (B, 1)
         assert torch.allclose(va, value[:, 0:1])
 
-    def test_select_value_nonplate(self):
-        v = _bernoulli_var()
-        x = _delta_var()
-        cpd = ParametricCPD(variable=v, parametrization=nn.Linear(4, 1), parents=[x])
-        value = torch.rand(3, 1)
-        assert cpd.select_value(value, "c") is value
+    def test_unknown_member_raises(self):
+        plate = self._plate()
+        with pytest.raises(KeyError):
+            plate.member_of(torch.rand(2, 3), "missing")
 
 
 # ===========================================================================
@@ -369,6 +383,9 @@ class TestCPDSelectValue:
 # ===========================================================================
 
 class TestCPDClampMembers:
+    """``clamp_members`` splices observed members into a value in member layout
+    ``(B, n_members, member_size)``."""
+
     def _make_cpd(self, members=("c1", "c2", "c3")):
         plate = ConceptVariable("g", members=list(members), distribution=dist.Bernoulli)
         x = _delta_var()
@@ -378,49 +395,48 @@ class TestCPDClampMembers:
     def test_empty_observed_returns_original(self):
         cpd = self._make_cpd()
         B = 3
-        value = torch.rand(B, 3)
+        value = torch.rand(B, 3, 1)
         result = cpd.clamp_members(value, {})
         assert result is value  # no-op, same object
 
     def test_clamp_single_member(self):
         cpd = self._make_cpd(["a", "b", "c"])
         B = 4
-        value = torch.rand(B, 3)
+        value = torch.rand(B, 3, 1)
         obs = torch.ones(B, 1)
         result = cpd.clamp_members(value, {"b": obs})
-        # column 1 should be all-ones
-        assert torch.allclose(result[:, 1:2], torch.ones(B, 1))
-        # columns 0 and 2 unchanged
-        assert torch.allclose(result[:, 0:1], value[:, 0:1])
-        assert torch.allclose(result[:, 2:3], value[:, 2:3])
+        # member 1 should be all-ones
+        assert torch.allclose(result[:, 1], torch.ones(B, 1))
+        # members 0 and 2 unchanged
+        assert torch.allclose(result[:, 0], value[:, 0])
+        assert torch.allclose(result[:, 2], value[:, 2])
 
     def test_clamp_does_not_mutate_original(self):
         cpd = self._make_cpd(["a", "b"])
         B = 3
-        value = torch.zeros(B, 2)
-        obs = torch.ones(B, 1)
-        result = cpd.clamp_members(value, {"a": obs})
-        assert torch.allclose(value, torch.zeros(B, 2))  # original unchanged
+        value = torch.zeros(B, 2, 1)
+        cpd.clamp_members(value, {"a": torch.ones(B, 1)})
+        assert torch.allclose(value, torch.zeros(B, 2, 1))  # original unchanged
 
     def test_clamp_multiple_members(self):
         cpd = self._make_cpd(["a", "b", "c"])
         B = 2
-        value = torch.zeros(B, 3)
+        value = torch.zeros(B, 3, 1)
         result = cpd.clamp_members(value, {
             "a": torch.ones(B, 1),
             "c": 2.0 * torch.ones(B, 1),
         })
-        assert torch.allclose(result[:, 0:1], torch.ones(B, 1))
-        assert torch.allclose(result[:, 1:2], torch.zeros(B, 1))
-        assert torch.allclose(result[:, 2:3], 2.0 * torch.ones(B, 1))
+        assert torch.allclose(result[:, 0], torch.ones(B, 1))
+        assert torch.allclose(result[:, 1], torch.zeros(B, 1))
+        assert torch.allclose(result[:, 2], 2.0 * torch.ones(B, 1))
 
 
 # ===========================================================================
-# 9. Integration: forward + select
+# 9. Integration: forward + member_of
 # ===========================================================================
 
 class TestCPDIntegration:
-    def test_plate_forward_then_select_member(self):
+    def test_plate_forward_then_member_of(self):
         plate = ConceptVariable("concepts", members=["c1", "c2", "c3"], distribution=dist.Bernoulli)
         x = _delta_var(size=8)
         cpd = ParametricCPD(
@@ -430,18 +446,18 @@ class TestCPDIntegration:
         )
         B = 5
         params = cpd(parent_values={"x": torch.randn(B, 8)})
-        full = cpd.select(params, "concepts")
-        c2 = cpd.select(params, "c2")
-        assert full["probs"].shape == (B, 3)
-        assert c2["probs"].shape == (B, 1)
-        assert torch.allclose(c2["probs"], full["probs"][:, 1:2])
+        full = plate.to_event(params["probs"], "probs")
+        c2 = plate.member_of(params["probs"], "c2", "probs")
+        assert full.shape == (B, 3)
+        assert c2.shape == (B, 1)
+        assert torch.allclose(c2, full[:, 1:2])
 
-    def test_root_params_then_select(self):
+    def test_root_params_then_member_of(self):
         plate = ConceptVariable("g", members=["a", "b"], distribution=dist.Bernoulli)
-        cpd = ParametricCPD(variable=plate, parametrization={"probs": FixedPrior([0.3, 0.7])})
-        params = cpd.root_params(batch_size=4)
-        a_params = cpd.select(params, "a")
-        assert torch.allclose(a_params["probs"], torch.full((4, 1), 0.3))
+        cpd = ParametricCPD(variable=plate, parametrization={"probs": FixedPrior(torch.tensor([0.3, 0.7]))})
+        params = cpd.root_params(leading=4)
+        a_probs = plate.member_of(params["probs"], "a", "probs")
+        assert torch.allclose(a_probs, torch.full((4, 1), 0.3))
 
 
 # ===========================================================================
@@ -502,7 +518,7 @@ class TestParametricFactorAggregate:
         B = 3
         out = cpd(parent_values={"x": torch.randn(B, 4)})
         assert "probs" in out
-        assert out["probs"].shape == (B, 1)
+        assert out["probs"].shape == (B, 1, 1)
 
     def test_aggregate_dict_non_callable_raises(self):
         # factor.py line 126-131: aggregate dict contains non-callable value
@@ -547,7 +563,7 @@ class TestParametricFactorAggregate:
     def test_split_by_type_invalid_variable_type_raises(self):
         # factor.py lines 222-228: _split_by_type raises for invalid variable_type
         import torch.distributions as dist
-        from torch_concepts.nn.modules.mid.models.variable import ConceptVariable
+        from torch_concepts.nn.modules.mid.variable import ConceptVariable
 
         # Create a CPD with a parent, then monkey-patch parent's variable_type
         x = _delta_var(size=4)
@@ -555,7 +571,7 @@ class TestParametricFactorAggregate:
 
         # Need a pyc-style module to trigger _pyc_aggregate -> _split_by_type.
         # We'll use an EmbeddingVariable with a modified variable_type.
-        from torch_concepts.nn.modules.mid.models.variable import EmbeddingVariable
+        from torch_concepts.nn.modules.mid.variable import EmbeddingVariable
         e = EmbeddingVariable("e", distribution=dist.Normal, size=4)
         # Monkey-patch to an invalid type so _split_by_type raises
         e.__class__ = type("BrokenVar", (EmbeddingVariable,), {"variable_type": property(lambda self: "invalid")})
@@ -575,7 +591,63 @@ class TestParametricFactorAggregate:
 
 
 # ===========================================================================
-# 12. LazyConstructor already-built path (factor.py line 162)
+# 12. _cat_parents() single-parent short-circuit (factor.py)
+# ===========================================================================
+
+class TestCatParentsSingleParent:
+    """`_cat_parents` — every CPD's default aggregation for a "standard" (non-PyC)
+    module — special-cases a single parent by returning it as-is instead of
+    running it through `torch.cat`, which would allocate a copy for nothing.
+    With two or more parents it still concatenates as before."""
+
+    def test_single_parent_passed_through_unchanged(self):
+        x = _delta_var(size=4)
+        c = _delta_var(name="y", size=4)
+        cpd = ParametricCPD(variable=c, parametrization=nn.Identity(), parents=[x])
+        value = torch.randn(5, 4)
+        out = cpd(parent_values={"x": value})
+        # No torch.cat copy for a single parent: the output is a view of the
+        # input, carrying only the member axis.
+        assert out["value"].shape == (5, 1, 4)
+        assert out["value"].untyped_storage().data_ptr() == value.untyped_storage().data_ptr()
+        assert torch.equal(c.to_event(out["value"]), value)
+
+    def test_multi_parent_still_concatenated(self):
+        p1 = ConceptVariable("p1", distribution=dist.Bernoulli, size=2)
+        p2 = ConceptVariable("p2", distribution=dist.Bernoulli, size=3)
+        c = _delta_var(name="y", size=5)
+        cpd = ParametricCPD(variable=c, parametrization=nn.Identity(), parents=[p1, p2])
+        v1, v2 = torch.randn(4, 2), torch.randn(4, 3)
+        out = cpd(parent_values={"p1": v1, "p2": v2})
+        assert out["value"] is not v1 and out["value"] is not v2
+        assert torch.equal(c.to_event(out["value"]), torch.cat([v1, v2], dim=-1))
+
+    def test_broadcast_false_root_view_survives_into_child(self):
+        """End-to-end: a `broadcast=False` root prior's un-expanded value reaches
+        a child CPD's forward as the exact same tensor object — the combination
+        of `root_params` (TestRootParams) and this single-parent short-circuit
+        keeps a shared prior (e.g. a concept-embedding matrix) from ever being
+        copied on the way to its child."""
+        source = torch.randn(7, 32)
+        embs = EmbeddingVariable("embs", distribution=Delta, shape=(7, 32))
+        root_cpd = ParametricCPD(
+            variable=embs,
+            parametrization={"value": TiedPrior(lambda: source, broadcast=False)},
+        )
+        root_out = root_cpd.root_params(leading=(2, 3))
+        same_storage = lambda t: t.untyped_storage().data_ptr() == source.untyped_storage().data_ptr()
+        assert same_storage(root_out["value"])  # opted out of expansion, no copy
+
+        mixed = EmbeddingVariable("mixed", distribution=Delta, shape=(7, 32))
+        child_cpd = ParametricCPD(variable=mixed, parametrization=nn.Identity(), parents=[embs])
+        child_out = child_cpd(parent_values={"embs": root_out["value"]})
+        # Still the same memory: layout changes along the way are views only.
+        assert same_storage(child_out["value"])
+        assert torch.equal(child_out["value"].reshape(7, 32), source)
+
+
+# ===========================================================================
+# 13. LazyConstructor already-built path (factor.py line 162)
 # ===========================================================================
 
 class TestLazyConstructorAlreadyBuilt:
@@ -597,3 +669,26 @@ class TestLazyConstructorAlreadyBuilt:
         # The parametrization should contain the concrete module, not the LazyConstructor
         mod = cpd.parametrization["probs"]
         assert not isinstance(mod, LazyConstructor)
+
+    def test_lazy_head_inside_sequential_is_sized(self):
+        # A continuous variable's scale head is Sequential(LazyConstructor, softplus):
+        # the CPD must size the *inner* lazy layer from the parents and this
+        # parameter's width, keeping the activation.
+        from torch_concepts.nn.modules.low.lazy import LazyConstructor
+        from torch_concepts.nn.modules.low.predictors.linear import LinearConceptToConcept
+
+        x = _delta_var(size=4)               # parent -> in_concepts = 4
+        n = _normal_var(size=2)              # child  -> loc/scale width = 2
+        cpd = ParametricCPD(
+            variable=n,
+            parametrization={
+                "loc": LazyConstructor(LinearConceptToConcept),
+                "scale": nn.Sequential(LazyConstructor(LinearConceptToConcept), nn.Softplus()),
+            },
+            parents=[x],
+        )
+        scale = cpd.parametrization["scale"]
+        assert not isinstance(scale[0], LazyConstructor)   # inner head built
+        assert isinstance(scale[1], nn.Softplus)           # activation preserved
+        out = scale(torch.randn(5, 4))
+        assert out.shape == (5, 2) and bool((out > 0).all())

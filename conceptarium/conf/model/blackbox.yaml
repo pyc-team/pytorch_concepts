@@ -1,5 +1,6 @@
 defaults:
   - _commons
   - _self_
-  
-_target_: "torch_concepts.nn.BlackBox"
+
+model_cls:
+  _target_: "torch_concepts.nn.BlackBox"

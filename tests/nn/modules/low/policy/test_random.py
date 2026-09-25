@@ -87,7 +87,7 @@ class TestRandomPolicyScale:
 
 
 # ===========================================================================
-# 4. build_mask (inherited from BaseInterventionPolicy)
+# 4. build_mask (inherited from InterventionPolicy)
 # ===========================================================================
 
 class TestRandomPolicyBuildMask:

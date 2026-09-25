@@ -3,11 +3,14 @@ defaults:
   - _commons_bnlearn
   - _self_
 
-_target_: torch_concepts.data.datamodules.bnlearn.BnLearnDataModule
-
 name: barley
 
-default_task_names: [s2528]
+datamodule:
+  _target_: torch_concepts.data.datamodules.bnlearn.BnLearnDataModule
 
-autoencoder_kwargs:
-  latent_dim: 128
+  name: barley
+
+  autoencoder_kwargs:
+    latent_dim: 128
+
+default_task_names: [s2528]

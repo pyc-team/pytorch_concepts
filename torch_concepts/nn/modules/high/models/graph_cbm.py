@@ -36,7 +36,7 @@ class GraphConceptBottleneckModel(HomogenGraphModel):
         Forwarded to :class:`BaseModel` (e.g. ``backbone``, ``latent_size``).
     """
 
-    supported_concept_types = frozenset({"binary", "categorical"})
+    supported_concept_types = frozenset({"binary", "categorical", "continuous"})
     param_for_discrete_var = "logits"
     source_embeddings = False
     internal_embeddings = False
@@ -60,7 +60,7 @@ class GraphConceptBottleneckModel(HomogenGraphModel):
             lightning=lightning,
             **kwargs,
         )
-        self.pgm = self._build_individual_model()
+        self.pgm = self._build_model()
 
         # once self.pgm is built, we can set up the inference engines (train and eval)
         self.setup_inference(

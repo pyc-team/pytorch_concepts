@@ -24,7 +24,6 @@ from torch_concepts.nn import (
     DoIntervention,
     GradientPolicy,
     InterventionModule,
-    BaseInterventionModule,
 )
 
 
@@ -187,8 +186,8 @@ def main():
     print("\nConcept predictions with combined gradient intervention (first 5):")
     print(c_pred_combined[:5])
 
-    # Example subclassing BaseInterventionModule to implement the same custom build_context function as above.
-    class CombinedGradientInterventionModule(BaseInterventionModule):
+    # Example subclassing InterventionModule to implement the same custom build_context function as above.
+    class CombinedGradientInterventionModule(InterventionModule):
         def build_context(
                 self,
                 original_module_inputs: Dict[str, torch.Tensor],

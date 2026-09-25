@@ -729,6 +729,9 @@ class CUBDataset(ConceptDataset):
         Subset of concept names to retain.  ``None`` keeps all 113.
     label_descriptions : dict, optional
         Mapping from concept name to human-readable description.
+    split : {'train', 'val', 'test'}, optional
+        Native CUB partition to keep. ``None`` keeps all partitions and
+        preserves datamodule/native-splitter behavior.
     """
 
     def __init__(
@@ -737,14 +740,22 @@ class CUBDataset(ConceptDataset):
         image_size: int = 224,
         concept_subset: Optional[list] = None,
         label_descriptions: Optional[Mapping] = None,
+        split: Optional[str] = None,
     ):
         if root is None:
             root = os.path.join(os.getcwd(), 'data', 'CUB200')
         self.root = root
         self.image_size = image_size
         self.label_descriptions = label_descriptions
+        self.split = split
+        self.task_names = list(CLASS_NAMES)
 
         filenames, concepts, annotations, graph = self.load()
+        if split is not None:
+            indices = self._split_indices(split)
+            filenames = [filenames[index] for index in indices]
+            concepts = concepts[indices]
+        self._class_labels = concepts[:, -1].to(torch.long).tolist()
 
         super().__init__(
             input_data=filenames,
@@ -754,6 +765,7 @@ class CUBDataset(ConceptDataset):
             concept_names_subset=concept_subset,
             name='CUBDataset',
         )
+        self.data = self._make_data()
 
     # ------------------------------------------------------------------
     # ConceptDataset interface
@@ -919,17 +931,54 @@ class CUBDataset(ConceptDataset):
     def load(self):
         return self.load_raw()
 
+    def _split_indices(self, split: str) -> List[int]:
+        """Return row indices for a native split from the processed mapping."""
+        split_name = split.lower()
+        valid_splits = {"train", "val", "test"}
+        if split_name not in valid_splits:
+            raise ValueError(
+                f"split must be one of {sorted(valid_splits)} or None; got {split!r}."
+            )
+
+        split_series = pd.read_hdf(self.processed_paths[3], key='split_mapping')
+        split_lower = split_series.str.lower()
+        return split_series[split_lower.str.startswith(split_name)].index.tolist()
+
+    def _make_data(self) -> List[dict]:
+        """Build lightweight metadata records kept for LF-CBM-style examples."""
+        return [
+            {
+                "img_path": img_path,
+                "class_label": int(self._class_labels[index]),
+            }
+            for index, img_path in enumerate(self.input_data)
+        ]
+
+    def _subset_rows(self, indices) -> None:
+        """Subset CUB rows while keeping class metadata aligned."""
+        row_indices = (
+            indices.tolist()
+            if hasattr(indices, "tolist")
+            else list(indices)
+        )
+        subset_class_labels = [
+            self._class_labels[index]
+            for index in row_indices
+        ]
+        super()._subset_rows(row_indices)
+        self._class_labels = subset_class_labels
+        self.data = self._make_data()
+
     def __getitem__(self, item: int) -> dict:
+        sample = super().__getitem__(item)
         if self.embs_precomputed:
-            x = self.input_data[item]
-        else:
-            img_path = self.input_data[item]
-            tv = _import_torchvision()
-            x = Image.open(img_path).convert('RGB')
-            x = tv.transforms.Resize((self.image_size, self.image_size))(x)
-            x = tv.transforms.ToTensor()(x)
-        c = self.concepts[item]
-        return {'inputs': {'x': x}, 'concepts': {'c': c}}
+            return sample
+        img_path = self.input_data[item]
+        tv = _import_torchvision()
+        x = Image.open(img_path).convert('RGB')
+        x = tv.transforms.Resize((self.image_size, self.image_size))(x)
+        sample['inputs']['x'] = tv.transforms.ToTensor()(x)
+        return sample
 
     # ------------------------------------------------------------------
     # Properties — override base class which assumes input_data is a Tensor
@@ -946,4 +995,3 @@ class CUBDataset(ConceptDataset):
     @property
     def shape(self) -> tuple:
         return (self.n_samples, *self.n_features)
-

@@ -14,7 +14,7 @@ must be applied to the output of the prior module to map it to the correct domai
 
 from __future__ import annotations
 
-from typing import Sequence, Union
+from typing import Callable, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -29,15 +29,21 @@ class LearnablePrior(nn.Module):
 
     Parameters
     ----------
-    size : int
-        Length of the parameter vector. This must match the per-parameter size
-        the target distribution expects (e.g. ``1`` for a Bernoulli ``logits``,
-        ``k`` for a ``k``-way OneHotCategorical ``logits``).
+    size : int or tuple of int
+        Shape of the parameter. An int gives a 1-D vector of that length; a
+        tuple gives a parameter of that shape. Must match the per-parameter
+        size the target distribution expects (e.g. ``1`` for a Bernoulli
+        ``logits``, ``k`` for a ``k``-way OneHotCategorical ``logits``).
+    broadcast : bool, default True
+        Whether ``root_params`` broadcasts this prior over the query's leading
+        (batch-like) dims. Set ``False`` for model state rather than a
+        per-observation quantity (e.g. a fixed matrix): it stays unbatched.
     """
 
-    def __init__(self, size: int) -> None:
+    def __init__(self, size: Union[int, Tuple[int, ...]], broadcast: bool = True) -> None:
         super().__init__()
         self.param = nn.Parameter(torch.randn(size))
+        self.broadcast = broadcast
 
     def forward(self) -> torch.Tensor:
         return self.param
@@ -55,18 +61,48 @@ class FixedPrior(nn.Module):
 
     Parameters
     ----------
-    values : torch.Tensor or sequence of float
-        The fixed parameter values. Their length must match the per-parameter
-        size the target distribution expects. Coerced to a 1-D float tensor.
+    values : torch.Tensor
+        The fixed parameter values (cloned into a buffer). Their shape must
+        match the per-parameter shape the target distribution expects.
+    broadcast : bool, default True
+        Whether ``root_params`` broadcasts this prior over the query's leading
+        (batch-like) dims. Set ``False`` for model state rather than a
+        per-observation quantity (e.g. a fixed matrix): it stays unbatched.
     """
 
-    def __init__(self, values: Union[torch.Tensor, Sequence[float]]) -> None:
+    def __init__(self, values: torch.Tensor, broadcast: bool = True) -> None:
         super().__init__()
-        if isinstance(values, torch.Tensor):
-            tensor = values.detach().clone().float()
-        else:
-            tensor = torch.as_tensor(values, dtype=torch.float)
+        tensor = values.detach().clone()
         self.register_buffer("values", tensor)
+        self.broadcast = broadcast
 
     def forward(self) -> torch.Tensor:
         return self.values
+
+
+class TiedPrior(nn.Module):
+    """Non-owning prior that borrows its values from an external source — no copy.
+
+    Mirrors :class:`FixedPrior`, but instead of cloning the values into a buffer
+    it holds a **callable** and returns its result on ``forward()``. Use this to
+    tie a root CPD to values that live elsewhere (e.g. a head's embedding matrix)
+    without duplicating them; calling the source each time keeps the result on the
+    model's current device/dtype. Nothing is registered, the source owns that.
+
+    Parameters
+    ----------
+    get_values : Callable[[], torch.Tensor]
+        Returns the prior's values, typically a view of existing weights.
+    broadcast : bool, default True
+        Whether ``root_params`` broadcasts this prior over the query's leading
+        (batch-like) dims. Set ``False`` for model state rather than a
+        per-observation quantity (e.g. a fixed matrix): it stays unbatched.
+    """
+
+    def __init__(self, get_values: Callable[[], torch.Tensor], broadcast: bool = True) -> None:
+        super().__init__()
+        self._get_values = get_values
+        self.broadcast = broadcast
+
+    def forward(self) -> torch.Tensor:
+        return self._get_values()

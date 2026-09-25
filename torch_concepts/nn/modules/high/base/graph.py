@@ -22,11 +22,15 @@ The actual graph -> ``BayesianNetwork`` assembly lives one level down, in
 "homogeneous parametrization" assumption. ``GraphModel`` itself only stores and
 exposes the graph structure.
 """
+import copy
 from abc import ABC
 from typing import List, Optional
 
-from .....annotations import Annotations
+import torch.nn as nn
+
 from .....concept_graph import ConceptGraph
+from ...low.sequential import Sequential
+from ...mid.activations import DefaultActivation
 from .model import BaseModel
 
 
@@ -114,54 +118,18 @@ class DirectedGraphModel(GraphModel, ABC):
     :class:`~torch_concepts.nn.BayesianNetwork`. This is the only branch of the
     hierarchy that is implemented today.
 
-    Concrete models build ``self.model`` (or ``self.pgm``) in their own
-    ``__init__``, then call :meth:`_assemble` to wire inference. Two optional
-    building hooks are provided for subclasses that want a plate vs individual
-    split:
-
-    * :meth:`_build_plate_model` — plate variables, one per homogeneous level.
-    * :meth:`_build_individual_model` — one variable per concept.
-
-    Whether to use them, and how to choose between them, is left entirely to
-    the concrete model.
+    Concrete models build ``self.pgm`` in their own ``__init__`` (via a
+    ``_build_model`` method) and then call :meth:`setup_inference` to wire
+    inference. How the graph becomes variables and CPDs is left to the concrete
+    model: the bipartite models group each level into the minimum number of plates,
+    while the homogeneous graph assembler walks the DAG node-by-node (one variable
+    per node).
     """
-
-    def __init__(self, *args, graph: Optional[ConceptGraph] = None, **kwargs):
-        super().__init__(*args, graph=graph, **kwargs)
-        self.plate = self.plate_compatible_levels(self.concept_annotations, self.graph)
-
 
     def _validate_graph(self, graph: ConceptGraph) -> None:
         super()._validate_graph(graph)
         assert graph.is_directed_acyclic(), (
             "DirectedGraphModel requires a directed acyclic graph (DAG)."
-        )
-
-    # ------------------------------------------------------------------
-    # Model-building hooks (implement one or both in concrete subclasses)
-    # ------------------------------------------------------------------
-
-    def _build_plate_model(self):
-        """Build using plate variables (one per homogeneous concept level).
-
-        Override this when the model represents homogeneous levels as a single
-        plate :class:`~torch_concepts.nn.ConceptVariable`. Concrete subclasses
-        may declare any keyword arguments they need and pass them from
-        ``__init__``: ``self._build_plate_model(param=value)``.
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not implement `_build_plate_model`."
-        )
-
-    def _build_individual_model(self):
-        """Build using one variable per concept.
-
-        Override this as the flat (non-plate) building path. Concrete subclasses
-        may declare any keyword arguments they need and pass them from
-        ``__init__``: ``self._build_individual_model(param=value)``.
-        """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not implement `_build_individual_model`."
         )
     
     #: Distribution parameter used for discrete variables — ``"logits"`` or
@@ -169,23 +137,8 @@ class DirectedGraphModel(GraphModel, ABC):
     #: layer output is fed raw and activated by the distribution downstream.
     param_for_discrete_var: str = "logits"
 
-    def _flexible_parametrization(self, variable, first, second=None):
+    def _flexible_parametrization(self, variable, first, second=None, activate=True):
         """Build a ``ParametricCPD`` parametrization dict from ``variable``'s distribution.
-
-        The dict's keys are the distribution's parameter names — taken from
-        :data:`~torch_concepts.nn.modules.mid.models.variable.PARAM_DIM` and exposed
-        per-variable as ``variable.param_sizes``:
-
-        * **Discrete** families (Bernoulli / Categorical and their relaxed variants)
-          use a single parameter, ``"probs"`` or ``"logits"`` as set by
-          :attr:`param_for_discrete_var`, parametrized by ``first``.
-        * **Delta** uses the single ``"value"`` parameter, parametrized by ``first``.
-        * **Continuous** families (Normal, MultivariateNormal) need two parameters:
-          the location (``"loc"``) from ``first`` and a scale parameter (``"scale"``
-          or ``"scale_tril"``) whose output size depends on univariate vs
-          multivariate — read from ``variable.param_sizes``. ``second`` is a
-          partially-initialized layer (a callable missing only its output size) to
-          be completed with that size.
 
         Parameters
         ----------
@@ -193,89 +146,76 @@ class DirectedGraphModel(GraphModel, ABC):
             The child variable whose CPD parametrization is being built.
         first : nn.Module
             Layer producing the primary parameter (logits / probs / value / loc).
-        second : callable, optional
-            Partially-initialized layer for a continuous variable's scale parameter,
-            completed with the scale output size. Unused for discrete / Delta.
+        second : nn.Module or ``'copy'``, optional
+            The continuous variable's scale head: a layer, an unbuilt
+            :class:`~torch_concepts.nn.LazyConstructor` sized by the CPD from the
+            parents just like ``first``, or ``'copy'`` for a deep copy of
+            ``first``. Ignored for discrete / Delta variables.
+        activate : bool, default True
+            Compose each head with the activation landing its output in its own
+            parameter's domain (:meth:`_activate`) — so the heads are passed
+            **raw**. Set ``False`` when a head already emits a valid parameter,
+            which would otherwise be activated twice (``sigmoid(sigmoid(x))``).
 
         Raises
         ------
-        NotImplementedError
-            For continuous variables — the variance/scale layer is not chosen yet.
         ValueError
-            If the variable's distribution is unsupported.
+            If the variable's distribution is unsupported, or a continuous
+            variable is given no ``second``.
         """
-        param_sizes = variable.param_sizes  # {param_name: output_size}, from PARAM_DIM
+        param_sizes = variable.param_sizes  # {param_name: output_size}, from the DistributionSpec
         names = set(param_sizes)
 
         if names == {"value"}:
-            return {"value": first}
+            return {"value": self._activate(variable, "value", first, activate)}
         if names == {"probs", "logits"}:
-            return {self.param_for_discrete_var: first}
+            param = self.param_for_discrete_var
+            return {param: self._activate(variable, param, first, activate)}
         if "loc" in names:
-            # Continuous: location from ``first``; the scale parameter
-            # (``scale`` for Normal, ``scale_tril`` for MultivariateNormal) needs a
-            # layer whose output size comes from PARAM_DIM via ``param_sizes``.
-            scale_param = (names - {"loc"}).pop()
-            scale_size = param_sizes[scale_param]
-            raise NotImplementedError(
-                f"_flexible_parametrization: continuous variable {variable.name!r} "
-                f"({variable.distribution.__name__}) needs a '{scale_param}' layer of "
-                f"output size {scale_size}; the variance/scale layer is not chosen "
-                f"yet. Once decided, complete `second` to that output size and return "
-                f"{{'loc': first, '{scale_param}': <completed second>}}."
-            )
+            # Normal, MultivariateNormal, etc., with a location and a scale parameter
+            scale_param = (names - {"loc"}).pop() # either ``scale`` or ``scale_tril``
+            if second == "copy":
+                # Same width as `loc` for every family a model declares, so a copy
+                # fits. A MultivariateNormal's wider `scale_tril` needs its own head.
+                second = copy.deepcopy(first)
+            if second is None:
+                raise ValueError(
+                    f"_flexible_parametrization: {variable.name!r} "
+                    f"({variable.distribution.__name__}) needs a {scale_param!r} head "
+                    f"of {param_sizes[scale_param]} outputs. Pass `second` — a raw "
+                    "layer, a LazyConstructor for it, or 'copy' to copy `first`. "
+                    "Anything it shares with `first` belongs in the CPD's `trunk`, "
+                    "which runs once for both."
+                )
+            return {
+                "loc": self._activate(variable, "loc", first, activate),
+                scale_param: self._activate(variable, scale_param, second, activate),
+            }
         raise ValueError(
             f"_flexible_parametrization: unsupported distribution "
             f"{variable.distribution.__name__} for variable {variable.name!r}."
         )
 
-    @staticmethod
-    def plate_compatible_levels(
-        axis_annotation: Annotations,
-        graph: ConceptGraph,
-    ) -> List[bool]:
-        """Flag, per graph level, whether its concepts can share a plate.
+    def _activate(self, variable, param, head, activate=True) -> nn.Module:
+        """Compose ``head`` with :class:`~torch_concepts.nn.DefaultActivation` for ``param``.
 
-        Returns one boolean per level (in the order of
-        :meth:`~torch_concepts.ConceptGraph.get_levels`): ``True`` when every
-        concept at that level has the **same type and size** (cardinality), so the
-        level could be represented by a single plate
-        :class:`~torch_concepts.nn.ConceptVariable` with one member per concept;
-        ``False`` otherwise. A level with a single concept is trivially ``True``.
+        A no-op when ``activate`` is False, or when ``param`` is unconstrained
+        (``logits``, ``loc``, a Delta's ``value``) — ``head`` is then returned
+        untouched rather than wrapped in a ``Sequential`` that computes nothing.
 
-        Whether to *actually* build a plate (vs. independent variables) is left to
-        the child model — this only reports compatibility.
-
-        Parameters
-        ----------
-        axis_annotation : Annotations
-            Concept annotations carrying per-concept ``cardinalities`` and types.
-        graph : ConceptGraph
-            A directed acyclic concept graph whose node names are concept labels.
-
-        Returns
-        -------
-        List[bool]
-            One flag per graph level (roots → leaves).
+        ``head`` may be an unbuilt :class:`~torch_concepts.nn.LazyConstructor`,
+        sized by the CPD once the parents are known (see
+        :meth:`ParametricCPD._instantiate_lazy`).
         """
-        def type_and_size(name: str):
-            idx = axis_annotation.get_index(name)
-            size = int(axis_annotation.cardinalities[idx])
-            # Prefer the first-class ``types`` field, fall back to metadata['type'].
-            if axis_annotation.types is not None:
-                concept_type = axis_annotation.types[idx]
-            else:
-                concept_type = (axis_annotation.metadata.get(name, {}) or {}).get("type")
-            return (concept_type, size)
-
-        return [
-            len({type_and_size(name) for name in level}) == 1
-            for level in graph.get_levels()
-        ]
-
+        if not activate:
+            return head
+        activation = DefaultActivation(variable, param)
+        if isinstance(activation.activation, nn.Identity):
+            return head
+        return Sequential(head, activation)
 
 class UndirectedGraphModel(GraphModel, ABC):
-    """Placeholder for *undirected* graph models (Markov random fields / factor graphs).
+    """Placeholder for *undirected* graph models (Markov random fields).
 
     Reserved for future use: undirected models would assemble a factor graph of
     ``ParametricPotential`` factors rather than a directed Bayesian network of
@@ -284,6 +224,6 @@ class UndirectedGraphModel(GraphModel, ABC):
 
     def _build_probabilistic_model(self):  # pragma: no cover - not implemented
         raise NotImplementedError(
-            "Undirected graph models (Markov random fields / factor graphs) are "
+            "Undirected graph models (Markov random fields) are "
             "reserved for future use and are not implemented yet."
         )

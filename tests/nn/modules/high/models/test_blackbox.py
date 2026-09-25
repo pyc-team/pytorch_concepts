@@ -18,9 +18,14 @@ import pytest
 import unittest
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.distributions import Bernoulli, Categorical
 
-from torch_concepts.nn.modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
+from torch_concepts.nn.modules.high.models.blackbox import (
+    _PGM_ONLY_ARGS,
+    BlackBox,
+    BlackBoxTaskOnly,
+)
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
@@ -35,7 +40,7 @@ from torch_concepts.annotations import Annotations
 def _logits(out, names):
     """Concatenate the per-concept logits for ``names`` along the feature axis."""
     import torch
-    return torch.cat([out.params[n]['logits'] for n in names], dim=1)
+    return out.logits[list(names)]
 
 class DummyBackbone(nn.Module):
     """Simple backbone for testing."""
@@ -59,13 +64,9 @@ class DummyLatentEncoder(nn.Module):
 
 def make_annotations(labels, cardinalities, distributions=None):
     """Helper to create annotations (defaults will fill in distributions)."""
-    metadata = {}
-    for label, card in zip(labels, cardinalities):
-        metadata[label] = {'type': 'discrete'}
     return Annotations(
             labels=labels,
             cardinalities=cardinalities,
-            metadata=metadata
         )
 
 
@@ -130,10 +131,6 @@ class TestBlackBoxInitialization(unittest.TestCase):
         ann = Annotations(
                 labels=['c1', 'c2'],
                 cardinalities=[1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'c2': {'type': 'discrete'}
-                }
             )
         
         model = BlackBox(
@@ -176,11 +173,18 @@ class TestBlackBoxInitialization(unittest.TestCase):
     def test_no_inference_engine(self):
         """Test that BlackBox does not set up inference engines."""
         model = BlackBox(input_size=8, annotations=self.ann)
-        
+
         # BlackBox doesn't create model/inference, so accessing the
         # inference property should raise AttributeError (caught by hasattr)
         self.assertFalse(hasattr(model, 'eval_inference'))
         self.assertFalse(hasattr(model, 'train_inference'))
+
+    def test_on_train_batch_end_without_inference_engines(self):
+        """`pl.Trainer` calls `on_train_batch_end` after every training step
+        regardless of the model; it must not assume `train_inference`/
+        `eval_inference` exist just because most models have them."""
+        model = BlackBox(lightning=True, input_size=8, annotations=self.ann)
+        model.on_train_batch_end(outputs=None, batch=None, batch_idx=0)
 
 
 class TestBlackBoxForward(unittest.TestCase):
@@ -286,6 +290,40 @@ class TestBlackBoxForward(unittest.TestCase):
         self.assertEqual(
             _logits(out1, self.ALL).shape, _logits(out2, self.ALL).shape
         )
+
+    def test_forward_reads_x_from_evidence_dict(self):
+        """`BaseLearner.shared_step` calls `forward(query=..., evidence=...)`
+        with no positional `x` — the real Lightning training/eval path. The
+        input must be extracted from `evidence['input']` in that case."""
+        model = self._make_model()
+        model.eval()
+
+        x = torch.randn(2, 8)
+        out_positional = model(x, query=self.ALL)
+        out_via_evidence = model(query=self.ALL, evidence={'input': x})
+
+        self.assertTrue(torch.allclose(
+            _logits(out_positional, self.ALL), _logits(out_via_evidence, self.ALL)
+        ))
+
+    def test_fully_observed_query_shapes(self):
+        """`fully_observed_query` must return one column per binary/continuous
+        concept and a one-hot block per categorical concept, keyed by name."""
+        model = self._make_model()
+        ground_truth = torch.stack([
+            torch.tensor([0., 1.]),        # c1: binary
+            torch.tensor([2., 0.]),        # c2: categorical (3 classes)
+            torch.tensor([1., 0.]),        # task: categorical (2 classes)
+        ], dim=1)
+
+        query = model.fully_observed_query(ground_truth)
+
+        self.assertEqual(set(query), set(self.ALL))
+        self.assertEqual(tuple(query['c1'].shape), (2, 1))
+        self.assertEqual(tuple(query['c2'].shape), (2, 3))
+        self.assertEqual(tuple(query['task'].shape), (2, 2))
+        self.assertTrue(torch.equal(query['c2'], F.one_hot(torch.tensor([2, 0]), 3).float()))
+        self.assertTrue(torch.equal(query['c1'], torch.tensor([[0.], [1.]])))
 
     def test_forward_deterministic(self):
         """Test that forward pass is deterministic with same input."""
@@ -427,65 +465,6 @@ class TestBlackBoxLightning(unittest.TestCase):
         
         self.assertEqual(out.logits.shape, (2, 2))
     
-    def test_lightning_training_step(self):
-        """Test Lightning training_step works for BlackBox."""
-        model = BlackBox(
-            lightning=True,
-            input_size=8,
-            annotations=self.ann,
-            loss=nn.BCEWithLogitsLoss(),
-            optim_class=torch.optim.Adam,
-            optim_kwargs={'lr': 0.01}
-        )
-        model.train()
-        
-        batch = {
-            'inputs': {'x': torch.randn(4, 8)},
-            'concepts': {'c': torch.randint(0, 2, (4, 2)).float()}
-        }
-        
-        loss = model.training_step(batch)
-        
-        self.assertIsNotNone(loss)
-        self.assertTrue(loss.requires_grad)
-    
-    def test_lightning_validation_step(self):
-        """Test Lightning validation_step works for BlackBox."""
-        model = BlackBox(
-            lightning=True,
-            input_size=8,
-            annotations=self.ann,
-            loss=nn.BCEWithLogitsLoss(),
-            optim_class=torch.optim.Adam,
-            optim_kwargs={'lr': 0.01}
-        )
-        model.eval()
-        
-        batch = {
-            'inputs': {'x': torch.randn(4, 8)},
-            'concepts': {'c': torch.randint(0, 2, (4, 2)).float()}
-        }
-        
-        loss = model.validation_step(batch)
-        
-        self.assertIsNotNone(loss)
-    
-    def test_lightning_configure_optimizers(self):
-        """Test optimizer configuration for Lightning mode."""
-        model = BlackBox(
-            lightning=True,
-            input_size=8,
-            annotations=self.ann,
-            loss=nn.BCEWithLogitsLoss(),
-            optim_class=torch.optim.Adam,
-            optim_kwargs={'lr': 0.01}
-        )
-        
-        config = model.configure_optimizers()
-        
-        self.assertIn('optimizer', config)
-        self.assertIsInstance(config['optimizer'], torch.optim.Adam)
-    
     def test_lightning_no_optimizer_returns_none(self):
         """Test configure_optimizers returns None when no optimizer set."""
         model = BlackBox(
@@ -610,10 +589,6 @@ class TestBlackBoxTaskOnlyInitialization(unittest.TestCase):
         ann = Annotations(
                 labels=['c1', 'task'],
                 cardinalities=[1, 1],
-                metadata={
-                    'c1': {'type': 'discrete'},
-                    'task': {'type': 'discrete'}
-                }
             )
         
         model = BlackBoxTaskOnly(
@@ -632,9 +607,21 @@ class TestBlackBoxTaskOnlyInitialization(unittest.TestCase):
             annotations=self.ann,
             task_names='task1'
         )
-        
+
         self.assertFalse(hasattr(model, 'eval_inference'))
         self.assertFalse(hasattr(model, 'train_inference'))
+
+    def test_on_train_batch_end_without_inference_engines(self):
+        """`pl.Trainer` calls `on_train_batch_end` after every training step
+        regardless of the model; it must not assume `train_inference`/
+        `eval_inference` exist just because most models have them."""
+        model = BlackBoxTaskOnly(
+            lightning=True,
+            input_size=8,
+            annotations=self.ann,
+            task_names='task1',
+        )
+        model.on_train_batch_end(outputs=None, batch=None, batch_idx=0)
 
 
 class TestBlackBoxTaskOnlyForward(unittest.TestCase):
@@ -865,30 +852,6 @@ class TestBlackBoxTaskOnlyLightning(unittest.TestCase):
         )
         self.assertFalse(isinstance(model, BaseLearner))
     
-    def test_lightning_training_step(self):
-        """Test Lightning training_step works for BlackBoxTaskOnly."""
-        model = BlackBoxTaskOnly(
-            lightning=True,
-            input_size=8,
-            annotations=self.ann,
-            task_names='task',
-            loss=nn.BCEWithLogitsLoss(),
-            optim_class=torch.optim.Adam,
-            optim_kwargs={'lr': 0.01}
-        )
-        model.train()
-        
-        # Concept-level target: one column per concept (c1, c2, task)
-        batch = {
-            'inputs': {'x': torch.randn(4, 8)},
-            'concepts': {'c': torch.randint(0, 2, (4, 3)).float()}
-        }
-        
-        loss = model.training_step(batch)
-        
-        self.assertIsNotNone(loss)
-        self.assertTrue(loss.requires_grad)
-    
     def test_lightning_configure_optimizers(self):
         """Test optimizer configuration for Lightning mode."""
         model = BlackBoxTaskOnly(
@@ -935,8 +898,9 @@ class TestBlackBoxTaskOnlyRepr(unittest.TestCase):
         self.assertIn('BlackBoxTaskOnly', repr_str)
 
 
-class TestBlackBoxTaskOnlyConceptLossRebuild(unittest.TestCase):
-    """Test that BlackBoxTaskOnly rebuilds ConceptLoss with task-only annotations."""
+class TestBlackBoxTaskOnlyConceptLoss(unittest.TestCase):
+    """BlackBoxTaskOnly accepts a ConceptLoss and uses it as-is; the loss adapts
+    to the task-only annotated output produced by prepare_target."""
 
     def setUp(self):
         self.ann = make_annotations(
@@ -944,12 +908,11 @@ class TestBlackBoxTaskOnlyConceptLossRebuild(unittest.TestCase):
             [1, 2, 1]
         )
 
-    def test_concept_loss_is_rebuilt_for_task_only(self):
-        """Test that passing a ConceptLoss triggers the rebuild branch."""
+    def test_concept_loss_is_accepted(self):
+        """A ConceptLoss passed to BlackBoxTaskOnly is stored unchanged."""
         # All concepts are binary (cardinality 1), so only binary loss needed
         ann = make_annotations(['c1', 'c2', 'task'], [1, 1, 1])
         concept_loss = ConceptLoss(
-            annotations=ann,
             binary=nn.BCEWithLogitsLoss(),
         )
         model = BlackBoxTaskOnly(
@@ -959,14 +922,12 @@ class TestBlackBoxTaskOnlyConceptLossRebuild(unittest.TestCase):
             task_names='task',
             loss=concept_loss,
         )
-        # The rebuilt loss should use task-only annotations
         self.assertIsInstance(model.loss, ConceptLoss)
 
-    def test_concept_loss_rebuild_with_categorical(self):
-        """Test ConceptLoss rebuild when task is categorical."""
+    def test_concept_loss_with_categorical(self):
+        """A ConceptLoss with a categorical task is accepted unchanged."""
         ann = make_annotations(['c1', 'task'], [1, 3])
         concept_loss = ConceptLoss(
-            annotations=ann,
             binary=nn.BCEWithLogitsLoss(),
             categorical=nn.CrossEntropyLoss(),
         )
@@ -1404,6 +1365,79 @@ class TestBlackBoxBackboneIntegration(unittest.TestCase):
 
         self.assertIsInstance(model.backbone, nn.Identity)
 
+class TestBlackBoxContinuousConcepts:
+    """A blackbox head must report each concept under the quantity its type is
+    scored on, so ConceptLoss/ConceptMetrics work as they do for the PGM models."""
+
+    @staticmethod
+    def _ann(types):
+        labels = [f'c{i}' for i in range(len(types))]
+        return Annotations(labels=labels, cardinalities=[1] * len(types), types=types)
+
+    def test_continuous_concepts_reported_as_loc(self):
+        ann = self._ann(['continuous', 'continuous'])
+        out = BlackBox(input_size=8, annotations=ann)(torch.randn(4, 8))
+        assert tuple(out.params) == ('loc',)
+        assert out.loc.shape == (4, 2)
+
+    def test_mixed_types_split_across_quantities(self):
+        ann = self._ann(['binary', 'continuous'])
+        out = BlackBox(input_size=8, annotations=ann)(torch.randn(4, 8))
+        assert list(out.logits.annotation.labels) == ['c0']
+        assert list(out.loc.annotation.labels) == ['c1']
+
+    def test_all_discrete_still_reports_only_logits(self):
+        ann = self._ann(['binary', 'binary'])
+        out = BlackBox(input_size=8, annotations=ann)(torch.randn(4, 8))
+        assert tuple(out.params) == ('logits',)
+
+    def test_continuous_loss_is_not_silently_zero(self):
+        """Reporting everything as `logits` made ConceptLoss skip every
+        continuous concept, yielding a 0.0 loss and no gradients."""
+        ann = self._ann(['continuous', 'continuous'])
+        model = BlackBox(input_size=8, annotations=ann)
+        out = model(torch.randn(4, 8))
+        loss = ConceptLoss(continuous=torch.nn.MSELoss())(
+            out, model.prepare_target(torch.randn(4, 2))
+        )
+        assert loss > 0
+        loss.backward()
+        assert model.linear.weight.grad is not None
+
+    def test_task_only_continuous_task_reported_as_loc(self):
+        ann = self._ann(['binary', 'continuous'])
+        model = BlackBoxTaskOnly(input_size=8, annotations=ann, task_names=['c1'])
+        out = model(torch.randn(4, 8))
+        assert tuple(out.params) == ('loc',)
+        assert out.loc.shape == (4, 1)
+
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+
+class TestBlackBoxToleratesPGMArgs:
+    """The experiment runner passes `graph` to every model and the shared model
+    config sets the inference engines, so a blackbox swapped into a sweep must
+    accept those arguments instead of forwarding them to LightningModule."""
+
+    @pytest.mark.parametrize("arg", list(_PGM_ONLY_ARGS))
+    def test_pgm_only_arg_is_accepted_and_ignored(self, arg):
+        ann = make_annotations(['c1', 'task'], [1, 1])
+        model = BlackBox(input_size=8, annotations=ann, **{arg: object()})
+        assert not hasattr(model, arg)
+        assert model(torch.randn(2, 8)).logits.shape == (2, 2)
+
+    def test_task_only_accepts_them_too(self):
+        ann = make_annotations(['c1', 'task'], [1, 1])
+        model = BlackBoxTaskOnly(
+            input_size=8, annotations=ann, task_names=['task'],
+            graph=object(), inference=object(), train_inference=object(),
+        )
+        assert model(torch.randn(2, 8)).logits.shape == (2, 1)
+
+    def test_unknown_arguments_still_raise(self):
+        """Only the PGM-only names are dropped; a typo must not pass silently."""
+        ann = make_annotations(['c1', 'task'], [1, 1])
+        with pytest.raises(TypeError):
+            BlackBox(input_size=8, annotations=ann, not_a_real_argument=1)

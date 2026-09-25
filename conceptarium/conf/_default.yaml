@@ -17,20 +17,29 @@ hydra:
     dir: "outputs/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}_${hydra.job.name}"
     subdir: "${hydra.job.num}"
 
+
+seed: 42  # train/run seed
+
+# precompute and cache backbone embeddings
+precompute_embeddings: True
+force_precompute: False # Recompute even if a cache file exists.
+
 # =============================================================
 # Pytorch Lightning Trainer settings
 # =============================================================
 trainer:
-  logger: null
-  log_model: false # whether to save checkpoint on wandb
   max_epochs: 200
   monitor: "val_loss"
   patience: 20
   accelerator: "auto"
+  logger: null
+  log_model: false # whether to save checkpoint on wandb
   save_top_k: 1 # whether to save best checkpoint locally
   save_last: false # whether to save last checkpoint locally
   save_weights_only: true
 
-seed: 42  # train/run seed
+matmul_precision: medium
+
+debug: true # whether to add run to the analysis registry 
+
 notes: null
-debug: false

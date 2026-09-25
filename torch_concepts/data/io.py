@@ -8,6 +8,7 @@ import os
 import pickle
 import tarfile
 import urllib.request
+import urllib.error
 import zipfile
 import logging
 from typing import Any, Optional
@@ -180,7 +181,14 @@ def download_url_wget(url: str, dest: str) -> None:
     else:
         downloaded = os.path.getsize(dest) if os.path.exists(dest) else 0
         req = urllib.request.Request(url, headers={"Range": f"bytes={downloaded}-"})
-        with urllib.request.urlopen(req) as r:
+        try:
+            r = urllib.request.urlopen(req)
+        except urllib.error.HTTPError as e:
+            if e.code == 416:  # Range Not Satisfiable -> file already fully downloaded
+                print(f"{os.path.basename(dest)} already downloaded.")
+                return
+            raise
+        with r:
             total = downloaded + int(r.headers.get("Content-Length", 0))
             print(f"\nDownloading {os.path.basename(dest)} ({total / 1e9:.2f} GB)")
             with open(dest, "ab") as f:

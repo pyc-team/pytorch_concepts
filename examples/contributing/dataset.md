@@ -270,7 +270,6 @@ Your datamodule should extend `ConceptDataModule` from `torch_concepts.data.base
 from env import DATA_ROOT
 from torch_concepts.data import YourDataset
 from torch_concepts.data.base.datamodule import ConceptDataModule
-from torch_concepts.typing import BackboneType
 
 
 class YourDataModule(ConceptDataModule):
@@ -286,9 +285,6 @@ class YourDataModule(ConceptDataModule):
         ftune_size: Fine-tuning set size (fraction or absolute count)
         ftune_val_size: Fine-tuning validation set size (fraction or absolute count)
         batch_size: Batch size for dataloaders
-        backbone: Model backbone to use (if applicable)
-        precompute_embs: Whether to precompute embeddings from backbone
-        force_recompute: Force recomputation of cached embeddings
         workers: Number of workers for dataloaders
         [dataset-specific parameters]
     """
@@ -301,9 +297,6 @@ class YourDataModule(ConceptDataModule):
         ftune_size: int | float = 0.0,
         ftune_val_size: int | float = 0.0,
         batch_size: int = 512,
-        backbone: BackboneType = None,
-        precompute_embs: bool = False,
-        force_recompute: bool = False,
         workers: int = 0,
         # Add your dataset-specific parameters
         concept_subset: list | None = None,
@@ -327,9 +320,6 @@ class YourDataModule(ConceptDataModule):
             ftune_size=ftune_size,
             ftune_val_size=ftune_val_size,
             batch_size=batch_size,
-            backbone=backbone,
-            precompute_embs=precompute_embs,
-            force_recompute=force_recompute,
             workers=workers,
         )
 ```
@@ -445,11 +435,6 @@ seed: ${seed}
 # Add all customizable parameters from your DataModule here
 param1: default_value1
 param2: default_value2
-
-# Backbone configuration (if applicable)
-backbone: null
-precompute_embs: false
-force_recompute: false
 
 # Concept descriptions (optional but recommended)
 label_descriptions:

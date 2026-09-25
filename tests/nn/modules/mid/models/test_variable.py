@@ -5,11 +5,10 @@ import pytest
 import torch
 import torch.distributions as dist
 
-from torch_concepts.nn.modules.mid.models.variable import (
+from torch_concepts.nn.modules.mid.variable import (
     Variable,
     ConceptVariable,
     EmbeddingVariable,
-    PARAM_DIM,
 )
 from torch_concepts.distributions import Delta
 
@@ -293,7 +292,7 @@ class TestVariableProperties:
     def test_param_sizes_unknown_distribution_raises(self):
         v = ConceptVariable("c", distribution=dist.Bernoulli, size=1)
         v.distribution = object  # inject unsupported distribution
-        with pytest.raises(ValueError, match="no PARAM_DIM entry"):
+        with pytest.raises(ValueError, match="not a supported family"):
             _ = v.param_sizes
 
     def test_members_list_for_single(self):
@@ -306,29 +305,33 @@ class TestVariableProperties:
 
 
 # ===========================================================================
-# 5. column_of and member() methods
+# 5. flat_columns and member() methods
 # ===========================================================================
 
 class TestVariableAddressing:
-    def test_column_of_plate_member(self):
+    def test_flat_columns_plate_member(self):
         v = ConceptVariable("g", members=["a", "b", "c"], distribution=dist.Bernoulli)
-        assert v.column_of("a") == slice(0, 1)
-        assert v.column_of("b") == slice(1, 2)
-        assert v.column_of("c") == slice(2, 3)
+        assert v.flat_columns("a") == [0]
+        assert v.flat_columns("b") == [1]
+        assert v.flat_columns("c") == [2]
 
-    def test_column_of_multi_size_member(self):
+    def test_flat_columns_multi_size_member(self):
         v = ConceptVariable("g", members=["a", "b"], distribution=dist.Bernoulli, size=3)
-        assert v.column_of("a") == slice(0, 3)
-        assert v.column_of("b") == slice(3, 6)
+        assert v.flat_columns("a") == [0, 1, 2]
+        assert v.flat_columns("b") == [3, 4, 5]
 
-    def test_column_of_single_var_is_full_slice(self):
+    def test_flat_columns_member_subset(self):
+        v = ConceptVariable("g", members=["a", "b", "c"], distribution=dist.Bernoulli, size=2)
+        assert v.flat_columns(["a", "c"]) == [0, 1, 4, 5]
+
+    def test_flat_columns_single_var_is_every_column(self):
         v = ConceptVariable("c", distribution=dist.Bernoulli, size=5)
-        assert v.column_of("c") == slice(0, 5)
+        assert v.flat_columns("c") == [0, 1, 2, 3, 4]
 
-    def test_column_of_unknown_raises(self):
+    def test_flat_columns_unknown_raises(self):
         v = ConceptVariable("g", members=["a", "b"], distribution=dist.Bernoulli)
         with pytest.raises(KeyError):
-            v.column_of("MISSING")
+            v.flat_columns("MISSING")
 
     def test_member_returns_variable(self):
         plate = ConceptVariable("g", members=["a", "b"], distribution=dist.Bernoulli)
@@ -431,7 +434,7 @@ class TestColumnSlicing:
         B = 4
         t = torch.arange(B * 3, dtype=torch.float).reshape(B, 3)
         for i, name in enumerate(["a", "b", "c"]):
-            col = t[..., plate.column_of(name)]
+            col = t[..., plate.flat_columns(name)]
             assert col.shape == (B, 1)
             assert torch.allclose(col, t[:, i:i+1])
 
@@ -439,8 +442,8 @@ class TestColumnSlicing:
         plate = ConceptVariable("g", members=["a", "b"], distribution=dist.Normal, size=3)
         B = 2
         t = torch.randn(B, 6)
-        slice_a = t[..., plate.column_of("a")]
-        slice_b = t[..., plate.column_of("b")]
+        slice_a = t[..., plate.flat_columns("a")]
+        slice_b = t[..., plate.flat_columns("b")]
         assert slice_a.shape == (B, 3)
         assert slice_b.shape == (B, 3)
         assert torch.allclose(torch.cat([slice_a, slice_b], dim=-1), t)

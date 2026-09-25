@@ -1,5 +1,6 @@
 import os
 import csv
+import zipfile
 import torch
 import pandas as pd
 import numpy as np
@@ -49,13 +50,17 @@ class CelebADataset(ConceptDataset):
         root: Root directory where the dataset is stored or will be downloaded.
         concept_subset: Optional subset of concept labels to use.
         label_descriptions: Optional dict mapping concept names to descriptions.
+        image_size: When set, each image is centre-cropped to its shorter side and 
+            resized to ``(image_size, image_size)``. 
+            ``None`` (the default) keeps the native 218x178.
     """
-    
+
     def __init__(
         self,
         root: str = None, # root directory to store/load the dataset
         concept_subset: Optional[list] = None,
         label_descriptions: Optional[dict] = None,
+        image_size: Optional[int] = None,
     ):
 
         # If root is not provided, create a local folder automatically
@@ -63,8 +68,10 @@ class CelebADataset(ConceptDataset):
             root = os.path.join(os.getcwd(), 'data', "celeba")
 
         self.root = root
-            
+        self.image_size = int(image_size) if image_size is not None else None
+
         self.label_descriptions = label_descriptions
+        self._zip = None  # lazy handle for reading images straight from the zip
         
         # Load data and annotations
         filenames, concepts, annotations, graph = self.load()
@@ -132,29 +139,8 @@ class CelebADataset(ConceptDataset):
         
         logger.info(f"CelebA files downloaded to {celeba_folder}.")
 
-    def maybe_extract(self):
-        """Extract the CelebA images archive.
-        
-        Extracts img_align_celeba.zip to the raw celeba folder.
-        """
-        celeba_folder = os.path.join(self.root, "raw")
-        archive_path = os.path.join(celeba_folder, "img_align_celeba.zip")
-        
-        if os.path.isdir(os.path.join(celeba_folder, "img_align_celeba")):
-            logger.info("Images already extracted")
-            return
-            
-        if not os.path.exists(archive_path):
-            logger.warning(f"Archive not found: {archive_path}")
-            return
-            
-        logger.info("Extracting img_align_celeba.zip...")
-        tv = _import_torchvision()
-        tv.datasets.utils.extract_archive(archive_path)
-        logger.info(f"CelebA images extracted to {celeba_folder}")
-
     def maybe_download(self):
-        """Download and extract the dataset if needed."""
+        """Download the dataset files if needed."""
         super().maybe_download()
 
     def _load_csv(self, filename: str, header: Optional[int] = None):
@@ -184,15 +170,19 @@ class CelebADataset(ConceptDataset):
 
         return headers, indices, torch.tensor(data_int)
 
+    def __getstate__(self):
+        """Drop the (unpicklable) zip handle; workers reopen it lazily."""
+        state = self.__dict__.copy()
+        state['_zip'] = None
+        return state
+
     def build(self):
         """Build processed dataset: save concepts, annotations and splits metadata.
-        
-        Images are not saved as they are already in the downloaded folder and
-        will be loaded on-the-fly in __getitem__.
+
+        Images are not extracted: __getitem__ reads them on-the-fly, straight
+        from the zip (or from the extracted folder when one exists).
         """
         self.maybe_download()
-
-        self.maybe_extract()
 
         celeba_folder = os.path.join(self.root, "raw")
         logger.info(f"Building CelebA dataset from raw files in {celeba_folder}...")
@@ -242,7 +232,8 @@ class CelebADataset(ConceptDataset):
             filenames = f.read().strip().split('\n')
         
         concepts = pd.read_hdf(self.processed_paths[1], "concepts")
-        annotations = torch.load(self.processed_paths[2])
+        # locally-built pickle holding an Annotations object (not just weights)
+        annotations = torch.load(self.processed_paths[2], weights_only=False)
         graph = None
         
         return filenames, concepts, annotations, graph
@@ -255,34 +246,42 @@ class CelebADataset(ConceptDataset):
         # For most cases, just return raw data
         
         return inputs, concepts, annotations, graph
-    
+
+    def _resize(self, img: "Image.Image") -> "Image.Image":
+        """Centre-crop to the shorter side, then resize to a square.
+
+        CelebA is 218x178, so a plain resize would squash the faces; cropping to
+        178x178 first is the standard preparation.
+        """
+        side = min(img.size)
+        left = (img.size[0] - side) // 2
+        top = (img.size[1] - side) // 2
+        img = img.crop((left, top, left + side, top + side))
+        return img.resize((self.image_size, self.image_size), Image.BILINEAR)
+
     def __getitem__(self, item):
-        """
-        Get a single sample from the dataset.
-
-        Args:
-            item (int): Index of the sample to retrieve.
-
-        Returns:
-            dict: Dictionary containing 'inputs' and 'concepts' sub-dictionaries.
-        """
+        """Load and prepare one CelebA image."""
+        sample = super().__getitem__(item)
         # Load image on-the-fly
         if self.embs_precomputed:
-            x = self.input_data[item]  # input_data contains precomputed embeddings
+            return sample
         else:
             filename = self.input_data[item]  # input_data contains filenames
             img_path = os.path.join(self.root, "raw", "img_align_celeba", filename)
-            img = Image.open(img_path)
+            if os.path.exists(img_path):  # extracted folder (if present)
+                img = Image.open(img_path)
+            else:  # read straight from the zip — no extraction needed
+                if self._zip is None:
+                    self._zip = zipfile.ZipFile(
+                        os.path.join(self.root, "raw", "img_align_celeba.zip")
+                    )
+                with self._zip.open(f"img_align_celeba/{filename}") as fh:
+                    img = Image.open(fh)
+                    img.load()  # force the read so the zip entry handle can close
+            if self.image_size is not None:
+                img = self._resize(img)
             x = torch.from_numpy(np.array(img)).permute(2, 0, 1).float() / 255.0
-        
-        c = self.concepts[item]
-
-        # Create sample dictionary
-        sample = {
-            'inputs': {'x': x},
-            'concepts': {'c': c},
-        }
-
+        sample['inputs']['x'] = x
         return sample
 
     # Override properties that assume input_data is a tensor

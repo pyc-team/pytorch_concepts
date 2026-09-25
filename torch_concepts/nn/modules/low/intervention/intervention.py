@@ -1,7 +1,6 @@
 import inspect
 import functools
 from itertools import chain
-from abc import abstractmethod, ABC
 
 import torch
 import torch.nn as nn
@@ -10,29 +9,31 @@ from typing import Callable, Dict, List, Optional, Union
 
 from torch_concepts import Annotations
 from ..base.intervention import (
-    BaseConceptInterventionStrategy,
-    BaseModuleInterventionStrategy,
-    BaseInterventionPolicy
+    InterventionStrategy,
+    ConceptInterventionStrategy,
+    ModuleInterventionStrategy,
+    InterventionPolicy
 )
 
 
-class BaseInterventionModule(nn.Module, ABC):
+class InterventionModule(nn.Module):
     """
-    Base class for intervention modules that wrap an original module with a specified
+    Intervention module that wraps an original module with a specified
     intervention strategy and policy.
 
     This module applies the intervention strategy to the outputs of the original module
     according to the intervention policy, allowing for flexible interventions on concept encoders.
 
-    Subclasses should implement the specific logic for applying the intervention strategy
-    and policy in the forward method.
+    Subclasses may override :meth:`build_context` to pass extra context to the
+    strategy and policy; a ``build_context`` callable can also be supplied at
+    construction time.
     """
 
     def __init__(
             self,
             original_module: nn.Module,
-            intervention_strategy: Union[BaseConceptInterventionStrategy, BaseModuleInterventionStrategy],
-            intervention_policy: BaseInterventionPolicy,
+            intervention_strategy: InterventionStrategy,
+            intervention_policy: InterventionPolicy,
             out_concepts_to_intervene_on: Union[List[str], List[int]] = None,
             quantile: float = 1.0,
             eps: float = 1e-12,
@@ -42,6 +43,9 @@ class BaseInterventionModule(nn.Module, ABC):
             **kwargs
     ):
         super().__init__()
+        if not isinstance(intervention_strategy, InterventionStrategy):
+            raise ValueError("Intervention strategy must be an instance of "
+                             "ConceptInterventionStrategy or ModuleInterventionStrategy.")
         self.original_module = original_module
         self.intervention_strategy = intervention_strategy
         self.intervention_policy = intervention_policy
@@ -89,7 +93,7 @@ class BaseInterventionModule(nn.Module, ABC):
                 params.append(extra_param)
             new_sig = orig_sig.replace(parameters=params)
 
-            original_forward = InterventionModule.forward
+            original_forward = type(self).forward
 
             @functools.wraps(original_forward)
             def patched_forward(*args, **kwargs):
@@ -119,7 +123,6 @@ class BaseInterventionModule(nn.Module, ABC):
 
         return None
 
-    @abstractmethod
     def build_context(
             self,
             original_module_inputs: Dict[str, torch.Tensor],
@@ -128,8 +131,41 @@ class BaseInterventionModule(nn.Module, ABC):
             extra_tensors: Dict[str, torch.Tensor] = None,
             extra_modules: Dict[str, nn.Module] = None,
     ) -> dict:
-        raise NotImplementedError("Subclasses must implement build_context method "
-                                  "to provide extra context for policy and strategy.")
+        """
+        Build extra context passed as kwargs to the policy and strategy.
+
+        Override this method in a subclass, or supply a ``build_context``
+        callable at construction time. The callable receives::
+
+            build_context(
+                original_module,
+                original_module_predictions,
+                original_module_inputs,
+                extra_tensors,
+                extra_modules,
+            )
+
+        where:
+        - ``original_module``            — the wrapped encoder module
+        - ``original_module_predictions`` — encoder output ``[B, F]``, with grad_fn intact
+        - ``original_module_inputs``      — encoder inputs bound by name via ``inspect.signature``
+                                           (e.g. ``{"embeddings": tensor}``)
+        - ``extra_tensors``              — dict of tensors passed by the caller at call time
+                                           (e.g. pre-computed ``y_pred``, ``c_pred``)
+        - ``extra_modules``              — dict of registered extra modules passed at construction
+                                           (e.g. ``{"task_head": task_head}``)
+
+        Returns an empty dict by default (zero overhead).
+        """
+        if self._build_context_fn is not None:
+            return self._build_context_fn(
+                original_module_predictions,
+                self.original_module,
+                original_module_inputs,
+                extra_tensors,
+                extra_modules,
+            )
+        return {}
 
     def forward(self, *args, **kwargs) -> torch.Tensor:
         extra_tensors: Dict[str, torch.Tensor] = kwargs.pop('extra_tensors', None) or {}
@@ -143,10 +179,9 @@ class BaseInterventionModule(nn.Module, ABC):
         except TypeError:
             original_module_inputs = {}
 
-        original_module_predictions = self.original_module(*args, **kwargs)  # [..., F]
-        assert original_module_predictions.dim() >= 1, (
-            f"BaseConceptInterventionStrategy expects tensors of shape "
-            f"[..., N_concepts] (arbitrary leading dims, concepts last). "
+        original_module_predictions = self.original_module(*args, **kwargs)  # [B, F]
+        assert original_module_predictions.dim() == 2, (
+            f"ConceptInterventionStrategy expects 2-D tensors [Batch, N_concepts]. "
             f"Got shape: {original_module_predictions.shape}"
         )
 
@@ -172,99 +207,26 @@ class BaseInterventionModule(nn.Module, ABC):
             eps=self.eps
         ).to(dtype=original_module_predictions.dtype)
 
-        if isinstance(self.intervention_strategy, BaseConceptInterventionStrategy):
+        if isinstance(self.intervention_strategy, ConceptInterventionStrategy):
             intervened_predictions = self.intervention_strategy(original_module_predictions, *args, **kwargs, **context)
 
-        elif isinstance(self.intervention_strategy, BaseModuleInterventionStrategy):
+        elif isinstance(self.intervention_strategy, ModuleInterventionStrategy):
             intervened_module = self.intervention_strategy.transform(self.original_module, *args, **kwargs)
             intervened_predictions = intervened_module(*args, **kwargs)
 
         else:
             raise ValueError("Intervention strategy must be an instance of "
-                             "BaseConceptInterventionStrategy or BaseModuleInterventionStrategy.")
+                             "ConceptInterventionStrategy or ModuleInterventionStrategy.")
 
         return (original_module_predictions * intervention_mask +
                 intervened_predictions * (1.0 - intervention_mask))
 
 
-class InterventionModule(BaseInterventionModule):
-    def __init__(
-            self,
-            original_module: nn.Module,
-            intervention_strategy: Union[BaseConceptInterventionStrategy, BaseModuleInterventionStrategy],
-            intervention_policy: BaseInterventionPolicy,
-            out_concepts_to_intervene_on: Union[List[str], List[int]] = None,
-            quantile: float = 1.0,
-            eps: float = 1e-12,
-            build_context: Optional[Callable] = None,
-            extra_modules: Optional[Dict[str, nn.Module]] = None,
-            *args,
-            **kwargs
-    ):
-        super().__init__(
-            original_module,
-            intervention_strategy,
-            intervention_policy,
-            out_concepts_to_intervene_on,
-            quantile,
-            eps,
-            build_context=build_context,
-            extra_modules=extra_modules,
-            *args,
-            **kwargs
-        )
-
-    def build_context(
-            self,
-            original_module_inputs: Dict[str, torch.Tensor],
-            original_module: nn.Module,
-            original_module_predictions: torch.Tensor,
-            extra_tensors: Dict[str, torch.Tensor] = None,
-            extra_modules: Dict[str, nn.Module] = None,
-    ) -> dict:
-        """
-        Build extra context passed as kwargs to the policy and strategy.
-
-        Override this method in a subclass, or supply a ``build_context``
-        callable at construction time. The callable receives::
-
-            build_context(
-                original_module,
-                original_module_predictions,
-                original_module_inputs,
-                extra_tensors,
-                extra_modules,
-            )
-
-        where:
-        - ``original_module``            — the wrapped encoder module
-        - ``original_module_predictions`` — encoder output ``[..., F]`` (arbitrary
-                                           leading dims, concepts last), with grad_fn intact
-        - ``original_module_inputs``      — encoder inputs bound by name via ``inspect.signature``
-                                           (e.g. ``{"embeddings": tensor}``)
-        - ``extra_tensors``              — dict of tensors passed by the caller at call time
-                                           (e.g. pre-computed ``y_pred``, ``c_pred``)
-        - ``extra_modules``              — dict of registered extra modules passed at construction
-                                           (e.g. ``{"task_head": task_head}``)
-
-        Returns an empty dict by default (zero overhead).
-        """
-        if self._build_context_fn is not None:
-            return self._build_context_fn(
-                original_module_predictions,
-                self.original_module,
-                original_module_inputs,
-                extra_tensors,
-                extra_modules,
-            )
-        return {}
-
-
 @contextmanager
 def intervention(
         original_module: nn.Module,
-        intervention_strategy: Union[BaseConceptInterventionStrategy, BaseModuleInterventionStrategy],
-        intervention_policy: BaseInterventionPolicy,
+        intervention_strategy: InterventionStrategy,
+        intervention_policy: InterventionPolicy,
         out_concepts_to_intervene_on: Union[List[str], List[int]] = None,
         quantile: float = 1.0,
         eps: float = 1e-12,
@@ -296,8 +258,8 @@ def intervention(
 
 def intervene(
         original_module: nn.Module,
-        intervention_strategy: Union[BaseConceptInterventionStrategy, BaseModuleInterventionStrategy],
-        intervention_policy: BaseInterventionPolicy,
+        intervention_strategy: InterventionStrategy,
+        intervention_policy: InterventionPolicy,
         out_concepts_to_intervene_on: Union[List[str], List[int]] = None,
         quantile: float = 1.0,
         eps: float = 1e-12,

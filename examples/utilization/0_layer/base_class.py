@@ -43,18 +43,12 @@ def main():
     print(output)
 
     # Concept layer instantiation with Annotations
+    # (concepts are annotated, embeddings are always a plain integer size)
     out_concepts = pyc.Annotations(labels=['c4', 'c5'])
-    in_embeddings = pyc.Annotations(labels=['c1', 'c2', 'c3', 'c4', 'c5'])
-    annotated_embeddings = pyc.AnnotatedTensor(embeddings, in_embeddings)
-    layer = MyConceptLayer(in_concepts=in_concepts, in_embeddings=in_embeddings, out_concepts=out_concepts)
-    output = layer.forward(annotated_concepts, annotated_embeddings) # forward pass with annotated concepts and annotated embeddings
+    layer = MyConceptLayer(in_concepts=in_concepts, in_embeddings=5, out_concepts=out_concepts)
+    output = layer.forward(annotated_concepts, embeddings) # forward pass with annotated concepts
     print(output)
     output = layer.forward(concepts, embeddings) # forward pass with tensors (should still work)
-    print(output)
-
-    # Concept layer instantiation with mixed types
-    layer = MyConceptLayer(in_concepts=in_concepts, in_embeddings=5, out_concepts=out_concepts)
-    output = layer.forward(annotated_concepts, embeddings)
     print(output)
 
     # Annotate the output
