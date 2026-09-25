@@ -11,7 +11,10 @@ import torch.distributions as dist
 from torch_concepts.nn.modules.mid.variable import ConceptVariable
 from torch_concepts.nn.modules.mid.factors.cpd import ParametricCPD
 from torch_concepts.nn.modules.mid.factors.potential import ParametricPotential
-from torch_concepts.nn.modules.mid.inference.utils import enumerable_cardinality
+from torch_concepts.nn.modules.mid.inference.utils import (
+    enumerable_cardinality,
+    factor_table,
+)
 from torch_concepts.nn.modules.mid.graph.probabilistic_model import ProbabilisticModel
 from torch_concepts.nn.modules.mid.graph.markov_network import MarkovNetwork
 from torch_concepts.nn.modules.mid.inference.torch.belief_propagation import BeliefPropagation
@@ -357,8 +360,7 @@ class TestBPStochasticParametrization:
             pot.parametrization["energy"][0].weight.zero_()
         fg = MarkovNetwork(variables=[a, b], factors=[pot])
         fg.train()
-        eng = BeliefPropagation(fg, iters=3)
-        table = eng._factor_table(
+        table = factor_table(
             pot, ["a", "b"], {"a": a, "b": b}, {}, torch.Size([1]),
             torch.float32, torch.device("cpu"),
         )
@@ -545,7 +547,7 @@ class TestBPPlateMembers:
         """The engine's marginal for one member, widened to a state distribution."""
         owner = fg.variables[owner_name]
         return _state_marginal(
-            owner.member(member), out.probs[owner_name][..., owner.column_of(member)]
+            owner.member(member), out.probs[member]
         )
 
     # -- test-time queries --------------------------------------------------
@@ -571,9 +573,9 @@ class TestBPPlateMembers:
             assert torch.allclose(bp, exact[member], atol=1e-5), (member, bp, exact[member])
         # An observed member reports its evidence: conditioning makes it a point mass.
         g = fg.variables["g"]
-        assert torch.allclose(out.probs["g"][..., g.column_of("g1")], torch.ones(1, 1))
+        assert torch.allclose(out.probs["g1"], torch.ones(1, 1))
         h = fg.variables["h"]
-        assert torch.allclose(out.probs["h"][..., h.column_of("h3")], torch.zeros(1, 1))
+        assert torch.allclose(out.probs["h3"], torch.zeros(1, 1))
 
     def test_evidence_on_a_member_moves_the_other_plate(self):
         """Both plates hang off ``root``, so conditioning one must move the other."""
@@ -651,7 +653,7 @@ class TestBPPlateMembers:
             out = eng.query(query=["g", "h"], evidence=evidence)
             return sum(
                 _binary_ce(
-                    out.probs[owner][..., fg.variables[owner].column_of(m)], target
+                    out.probs[m], target
                 )
                 for owner, m, target in [
                     ("g", "g2", targets["g2"]),
@@ -669,9 +671,9 @@ class TestBPPlateMembers:
         assert loss.item() < first * 0.5
 
         out = eng.query(query=["g", "h"], evidence=evidence)
-        assert out.probs["g"][0, fg.variables["g"].column_of("g2")].item() > 0.9
-        assert out.probs["h"][0, fg.variables["h"].column_of("h2")].item() > 0.9
-        assert out.probs["h"][0, fg.variables["h"].column_of("h3")].item() < 0.1
+        assert out.probs["g2"][0].item() > 0.9
+        assert out.probs["h2"][0].item() > 0.9
+        assert out.probs["h3"][0].item() < 0.1
 
     # -- categorical plates (needs build_distribution's per-member split) ----
     def _mixed_plate_bn(self, seed=32):
@@ -706,13 +708,13 @@ class TestBPPlateMembers:
         out = BeliefPropagation(fg, iters=30).query(query=["h"], evidence={})
         h = fg.variables["h"]
         for member in h.members:
-            block = out.probs["h"][..., h.column_of(member)]
+            block = out.probs[member]
             assert block.shape == (1, 3)
             assert torch.allclose(block.sum(-1), torch.ones(1), atol=1e-5), member
         exact = self._exact_member_marginals(fg, {})
         for member in h.members:
             assert torch.allclose(
-                out.probs["h"][..., h.column_of(member)], exact[member], atol=1e-5
+                out.probs[member], exact[member], atol=1e-5
             ), member
 
     def test_categorical_plate_partial_evidence(self):
@@ -723,14 +725,14 @@ class TestBPPlateMembers:
         )
         exact = self._exact_member_marginals(fg, {"h1": 2, "g1": 1})
         h, g = fg.variables["h"], fg.variables["g"]
-        assert torch.allclose(out.probs["h"][..., h.column_of("h2")], exact["h2"], atol=1e-5)
+        assert torch.allclose(out.probs["h2"], exact["h2"], atol=1e-5)
         assert torch.allclose(
-            _state_marginal(g.member("g2"), out.probs["g"][..., g.column_of("g2")]),
+            _state_marginal(g.member("g2"), out.probs["g2"]),
             exact["g2"], atol=1e-5,
         )
         # observed members echo their evidence
         assert torch.allclose(
-            out.probs["h"][..., h.column_of("h1")], torch.tensor([[0.0, 0.0, 1.0]])
+            out.probs["h1"], torch.tensor([[0.0, 0.0, 1.0]])
         )
 
     def test_categorical_plate_trains(self):
@@ -745,7 +747,7 @@ class TestBPPlateMembers:
         def loss_fn():
             out = eng.query(query=["h"], evidence=evidence)
             return torch.nn.functional.nll_loss(
-                out.probs["h"][..., h.column_of("h2")].log(), target
+                out.probs["h2"].log(), target
             )
 
         first = loss_fn().item()
@@ -756,4 +758,4 @@ class TestBPPlateMembers:
             opt.step()
         assert loss.item() < first * 0.5
         out = eng.query(query=["h"], evidence=evidence)
-        assert out.probs["h"][0, h.column_of("h2")][2].item() > 0.9
+        assert out.probs["h2"][0][2].item() > 0.9

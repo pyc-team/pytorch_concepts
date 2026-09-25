@@ -35,7 +35,11 @@ from torch_concepts.nn.modules.mid.variable import ConceptVariable, EmbeddingVar
 
 # One, two and three leading dimensions, all holding the same 6 observations, so
 # every case can be compared against the flattened (6,) run.
-LEADINGS = [(6,), (2, 3), (2, 3, 1)]
+# A size-1 leading axis sits in the middle, never last: a tensor ending in
+# ``(..., 1, *event)`` is read with that 1 as the member axis (see
+# ``Variable._fit``), so a trailing singleton leading dim is ambiguous by
+# design and cannot round-trip.
+LEADINGS = [(6,), (2, 3), (3, 1, 2)]
 
 
 @pytest.fixture
@@ -305,7 +309,7 @@ class TestPyroVariationalLeadingDims:
             eng = VariationalInference(pgm, latents={"z": guide})
         return eng, pgm
 
-    @pytest.mark.parametrize("leading", [(4,), (2, 3), (2, 3, 1)])
+    @pytest.mark.parametrize("leading", [(4,), (2, 3), (3, 1, 2)])
     def test_restore_shapes_and_labels(self, leading):
         eng, _ = self._engine_and_pgm()
         with warnings.catch_warnings():

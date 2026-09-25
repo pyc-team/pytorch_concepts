@@ -13,10 +13,29 @@ from ..distributions import spec_for
 from ..factors.factor import _module_input_names
 from ..graph.probabilistic_model import ProbabilisticModel
 from ..variable import Variable
-from .utils import flatten_event, leading_shape, make_temperature_schedule
+from .utils import make_temperature_schedule
 from ...outputs import InferenceOutput, ParamDict
 from .....annotations import Annotations
 from .....tensor import AnnotatedTensor
+
+
+#: How many query signatures the per-engine caches keep (see ``_cache_put``).
+#: Queries normally have a fixed signature, so a handful of entries covers a
+#: whole run; the bound only matters for callers that build query lists
+#: dynamically, where an unbounded dict would grow forever.
+QUERY_CACHE_SIZE = 128
+
+
+def _cache_put(cache: dict, key: tuple, value):
+    """Store ``value`` under ``key``, evicting the oldest entry past the bound.
+
+    Plain dicts keep insertion order, so ``next(iter(cache))`` is the oldest
+    key — FIFO with no bookkeeping and no extra dependency.
+    """
+    if len(cache) >= QUERY_CACHE_SIZE:
+        del cache[next(iter(cache))]
+    cache[key] = value
+    return value
 
 
 class BaseInference(nn.Module):
@@ -111,6 +130,7 @@ class BaseInference(nn.Module):
         # chunks a query expands to (see _output_labels) and the Annotations
         # built from them (see _annotate). Only the tensor *values* change from
         # one query to the next, so all of this Python work is done once.
+        # Bounded FIFO at ``QUERY_CACHE_SIZE`` — see ``_cache_put``.
         self._label_cache: Dict[tuple, List[Tuple[List[str], Variable]]] = {}
         self._annotation_cache: Dict[tuple, Annotations] = {}
 
@@ -135,6 +155,16 @@ class BaseInference(nn.Module):
                 UserWarning,
                 stacklevel=2,
             )
+
+    def clear_cache(self) -> None:
+        """Drop both query caches.
+
+        They are pure memoisation of model structure, so clearing only costs
+        the next query its rebuild. Use it after mutating the PGM, or to free
+        the entries a long run of one-off query signatures left behind.
+        """
+        self._label_cache.clear()
+        self._annotation_cache.clear()
 
     # ------------------------------------------------------------------
     # Relaxation temperature
@@ -205,29 +235,33 @@ class BaseInference(nn.Module):
                 )
 
     # ------------------------------------------------------------------
-    # Leading (batch-like) dimensions
+    # Leading dimensions
     # ------------------------------------------------------------------
     # Every engine accepts tensors shaped ``(*leading, *event)`` for any number
     # of leading dimensions — the last axis is the only operating one. These
     # helpers are the single place that split the two, so no engine hard-codes
-    # ``shape[0]`` as "the batch".
+    # anything (e.g., ``shape[0]`` as "the batch").
 
-    def _event_of(self, name: str) -> Tuple[Tuple[int, ...], int]:
-        """It returns the shape and size of a variable given its name.
-        If member of a plate then returns the member shape and size; 
-        otherwise returns the variable shape and size.
+    def _dtype(self) -> torch.dtype:
+        """The floating dtype the model's parameters live in.
+
+        The enumeration engines build tables themselves rather than reading a
+        parametrization's output, so they need somewhere to read the working
+        dtype from; a parameterless model falls back to the global default.
         """
-        var = self.pgm.resolve(name)
-        if name == var.name:
-            return tuple(var.shape), var.size
-        return (var.member_size,), var.member_size
+        try:
+            return next(self.pgm.parameters()).dtype
+        except StopIteration:
+            return torch.get_default_dtype()
 
     def _leading_shape(self, name: str, value: torch.Tensor) -> torch.Size:
-        """Given value's shape, it identifies the 'operating' (event) dimensions
-        of the variable and return the leading dimensions
+        """The batch-like dimensions of ``value``, read as the variable ``name``.
+
+        A member name is read as a single member, whose event is its own block
+        rather than the whole plate's.
         """
-        event, size = self._event_of(name)
-        return leading_shape(event, size, value, f"{self.name}: {name!r}")
+        var = self.pgm.resolve(name)
+        return var.leading_of(value, member=None if name == var.name else name)
 
     def _query_leading_shape(
         self,
@@ -398,15 +432,65 @@ class BaseInference(nn.Module):
                 member_evidence.setdefault(var.name, {})[name] = value
         return whole, member_evidence
 
+    def member_evidence(
+        self, evidence: Dict[str, torch.Tensor], dtype: torch.dtype
+    ) -> Dict[str, torch.Tensor]:
+        """Evidence as one block per observed **member**.
+
+        A variable, a whole plate and a subset of a plate's members all
+        collapse to the same thing here: some members have a value, the rest are
+        free. This is :func:`~.utils.unpack_plates`'s companion on the way in — an engine
+        running on an unpacked model addresses everything by member name.
+        """
+        whole, per_owner = self._split_evidence(evidence)
+        blocks: Dict[str, torch.Tensor] = {}
+        for name, value in whole.items():
+            var = self.pgm.variables[name]
+            observed = var.to_member(value.to(dtype))
+            for member in var.members:
+                blocks[member] = var.member_of(observed, member)
+        for owner_name, members in per_owner.items():
+            owner = self.pgm.variables[owner_name]
+            for member, value in members.items():
+                blocks[member] = owner.member(member).as_event(value.to(dtype))
+        return blocks
+
+    def regroup_members(
+        self,
+        per_member: Dict[str, torch.Tensor],
+        member_blocks: Dict[str, torch.Tensor],
+    ) -> Dict[str, ParamDict]:
+        """Per-member results -> the per-*variable* dict :meth:`_assemble_params` wants.
+
+        :func:`~.utils.unpack_plates`'s companion on the way out. A variable's members
+        stack back onto the member axis in member order. On a partially observed
+        plate the observed members contribute their evidence, which *is* their
+        posterior: conditioning makes ``P(x_m | e)`` a point mass at the observed
+        value — and :meth:`_assemble_params` divides a chunk's width evenly
+        across its labels, so a ragged plate would corrupt the annotation. A
+        variable with no free member at all emits nothing, mirroring the rule
+        that a fully-observed queried variable reports no parameters.
+        """
+        computed: Dict[str, ParamDict] = {}
+        for var in self.pgm.variables.values():
+            if not any(m in per_member for m in var.members):
+                continue
+            parts = [
+                per_member[m] if m in per_member else member_blocks[m]
+                for m in var.members
+            ]
+            computed[var.name] = {
+                "probs": torch.stack(parts, dim=var.member_axis)
+            }
+        return computed
+
     # ------------------------------------------------------------------
-    # Output assembly (backend-agnostic)
+    # Output assembly
     # ------------------------------------------------------------------
     # Engines compute per-variable parameter dicts internally, then hand them to
     # these two methods, which produce the quantity-keyed annotated tensors an
-    # :class:`InferenceOutput` exposes. Assembly happens exactly once and the
-    # concatenated tensor is the only storage: a per-variable or per-member view
-    # is recovered by label slicing, which is a view rather than a copy.
-
+    # :class:`InferenceOutput` exposes. 
+    
     def _output_labels(self, query_names) -> List[Tuple[List[str], Variable]]:
         """It returns ``(labels, owning variable)`` chunks for the queried names,
         in order.
@@ -440,8 +524,7 @@ class BaseInference(nn.Module):
             if labels:
                 seen.update(labels)
                 chunks.append((labels, var))
-        self._label_cache[key] = chunks
-        return chunks
+        return _cache_put(self._label_cache, key, chunks)
 
     @staticmethod
     def _label_type(variable: Variable, width: int) -> str:
@@ -493,9 +576,20 @@ class BaseInference(nn.Module):
                 ],
                 groups=groups or None,
             )
-            self._annotation_cache[key] = annotation
+            _cache_put(self._annotation_cache, key, annotation)
         data = pieces[0] if len(pieces) == 1 else torch.cat(pieces, dim=-1)
         return AnnotatedTensor(data, annotation, axis=-1)
+
+    @staticmethod
+    def _chunk_of(var, tensor, chunk, param=None) -> torch.Tensor:
+        """The columns of ``tensor`` belonging to ``chunk``, cheapest case first:
+        the whole variable is the tensor itself, one member is a slice, a subset
+        is one gather. Shared by both assemblers."""
+        if chunk == var.members:
+            return tensor
+        if len(chunk) == 1:
+            return var.member_of(tensor, chunk[0], param)
+        return tensor[..., var.flat_columns(chunk)]
 
     def _assemble_params(
         self,
@@ -545,30 +639,17 @@ class BaseInference(nn.Module):
             params = per_variable.get(var.name)
             if params is None:
                 continue  # fully observed, or not computed by this engine
+            # The annotated axis is flat, so this is where the member axis is
+            # folded back into the event — the one place the member layout
+            # leaves the engine. A multi-dimensional event (an image) is
+            # flattened all the way to ``(*leading, size)``, the layout its
+            # samples are reported in; ``to_event`` alone would keep its rank.
             if len(var.shape) > 1:
-                # Parameters live on the annotated axis as (*leading, width). A
-                # multi-dimensional variable — an image observation, whose CPD
-                # is a conv decoder — emits (*leading, *event) instead, which
-                # neither concatenates with the other quantities nor slices by
-                # column, so normalise it the way _assemble_samples does.
-                params = {q: flatten_event(var, t) for q, t in params.items()}
-            if chunk == var.members:
-                # Whole variable (a non-plate, or a plate queried by name):
-                # the factor's stacked output is used as-is — no per-member
-                # slicing and re-concatenation.
-                for quantity, tensor in params.items():
-                    emit(quantity, tensor, chunk)
-            elif len(chunk) == 1:
-                # A single member: a plain column slice, cheaper than a
-                # one-column fancy-index gather.
-                for quantity, tensor in var.select(params, chunk[0]).items():
-                    emit(quantity, tensor, chunk)
+                flat = {q: var.to_flat(var.to_member(t, q)) for q, t in params.items()}
             else:
-                # A member subset: gather every column in one indexing op
-                # rather than slicing and re-concatenating one member at a time.
-                idx = var.get_slice(chunk)
-                for quantity, tensor in params.items():
-                    emit(quantity, tensor[..., idx], chunk)
+                flat = {q: var.to_event(t, q) for q, t in params.items()}
+            for quantity, tensor in flat.items():
+                emit(quantity, self._chunk_of(var, tensor, chunk, quantity), chunk)
         return {
             quantity: self._annotate(
                 tensors, labels[quantity], widths[quantity],
@@ -596,16 +677,7 @@ class BaseInference(nn.Module):
             value = per_variable.get(var.name)
             if value is None:
                 continue
-            flat = flatten_event(var, value)
-            if chunk == var.members:
-                # Whole variable: the stacked value is used as-is.
-                piece = flat
-            elif len(chunk) == 1:
-                # A single member: a plain column slice.
-                piece = var.select_value(flat, chunk[0])
-            else:
-                # A member subset: one gather over all its columns.
-                piece = flat[..., var.get_slice(chunk)]
+            piece = self._chunk_of(var, var.to_flat(value), chunk)
             # One piece per chunk; members share member_size so the per-label
             # width is uniform (see :meth:`_assemble_params`).
             width = int(piece.shape[-1]) // len(chunk)

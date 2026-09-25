@@ -156,7 +156,11 @@ class ParametricPotential(ParametricFactor):
         leading element whether the module emits ``(*leading,)`` or
         ``(*leading, 1)``.
         """
-        inputs: Dict[Variable, torch.Tensor] = {v: scope_values[v] for v in self._scope}
+        
+        # ``energy`` is handed a raw assignment.
+        inputs: Dict[Variable, torch.Tensor] = {
+            v: v.as_event(scope_values[v]) for v in self._scope
+        }
 
         mod = self.parametrization["energy"]
         cat = self._aggregators["energy"](inputs)

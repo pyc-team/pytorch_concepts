@@ -43,9 +43,6 @@ class MarkovNetwork(ProbabilisticModel):
                 raise TypeError(
                     "MarkovNetwork factors must be ParametricPotential instances "
                     f"(got {type(f).__name__}). Use a BayesianNetwork for directed "
-                    "models, or a plain ProbabilisticModel for mixed (chain) graphs."
+                    "models."
                 )
-        # ProbabilisticModel registers factors ({potential name: potential}),
-        # validates scopes, and builds the bipartite adjacency. The undirected
-        # scope validation is exactly the base one, so nothing is overridden.
         super().__init__(variables, factors)
