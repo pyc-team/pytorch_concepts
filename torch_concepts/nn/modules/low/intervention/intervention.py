@@ -34,7 +34,7 @@ class InterventionModule(nn.Module):
             original_module: nn.Module,
             intervention_strategy: InterventionStrategy,
             intervention_policy: InterventionPolicy,
-            out_concepts_to_intervene_on: Union[List[str], List[int]] = None,
+            out_concepts_to_intervene_on: Union[List[str], List[int], List[List[int]], torch.Tensor] = None,
             quantile: float = 1.0,
             eps: float = 1e-12,
             build_context: Optional[Callable] = None,
@@ -106,22 +106,41 @@ class InterventionModule(nn.Module):
 
     @property
     def sel_idx(self):
-        if self.out_concepts_to_intervene_on is not None:
-            if isinstance(self.out_concepts_to_intervene_on[0], int):
-                return torch.tensor(self.out_concepts_to_intervene_on, dtype=torch.long)
-            elif isinstance(self.out_concepts_to_intervene_on[0], str):
-                original_annotations = getattr(self.original_module, "out_concepts", None)
-                if original_annotations is None and not isinstance(original_annotations, Annotations):
-                    raise ValueError("To use string-based concept selection, the original module must have an "
-                                     "'out_concepts' attribute of type Annotations.")
-                indices = original_annotations.get_slice(self.out_concepts_to_intervene_on)
-                if isinstance(indices, slice):
-                    indices = list(range(indices.start, indices.stop, indices.step or 1))
-                return torch.tensor(indices, dtype=torch.long)
-            else:
-                raise ValueError("out_concepts_to_intervene_on must be a list of integers (indices) or strings (names)")
+        spec = self.out_concepts_to_intervene_on
+        if spec is None:
+            return None
 
-        return None
+        # LongTensor: either [K] (shared across the batch) or [*lead, K]
+        # (fixed-size, per-leading-dim-element indices). Passed through as-is;
+        # build_mask normalizes both to [B, K].
+        if torch.is_tensor(spec):
+            return spec.to(dtype=torch.long)
+
+        if len(spec) == 0:
+            return torch.empty(0, dtype=torch.long)
+
+        first = spec[0]
+        if isinstance(first, str):
+            original_annotations = getattr(self.original_module, "out_concepts", None)
+            if original_annotations is None and not isinstance(original_annotations, Annotations):
+                raise ValueError("To use string-based concept selection, the original module must have an "
+                                 "'out_concepts' attribute of type Annotations.")
+            indices = original_annotations.get_slice(spec)
+            if isinstance(indices, slice):
+                indices = list(range(indices.start, indices.stop, indices.step or 1))
+            return torch.tensor(indices, dtype=torch.long)
+        elif isinstance(first, int):
+            return torch.tensor(spec, dtype=torch.long)
+        elif isinstance(first, (list, tuple)):
+            # per-leading-dim-element indices as nested lists, fixed K: [*lead, K]
+            return torch.tensor(spec, dtype=torch.long)
+        else:
+            raise ValueError(
+                "out_concepts_to_intervene_on must be a list of integers (shared "
+                "indices), a list of strings (shared names), a list of lists of "
+                "integers (per-batch-element indices, fixed K), or a LongTensor "
+                "of shape [K] or [*lead, K]."
+            )
 
     def build_context(
             self,
@@ -229,7 +248,7 @@ def intervention(
         original_module: nn.Module,
         intervention_strategy: InterventionStrategy,
         intervention_policy: InterventionPolicy,
-        out_concepts_to_intervene_on: Union[List[str], List[int]] = None,
+        out_concepts_to_intervene_on: Union[List[str], List[int], List[List[int]], torch.Tensor] = None,
         quantile: float = 1.0,
         eps: float = 1e-12,
         build_context: Optional[Callable] = None,
@@ -262,7 +281,7 @@ def intervene(
         original_module: nn.Module,
         intervention_strategy: InterventionStrategy,
         intervention_policy: InterventionPolicy,
-        out_concepts_to_intervene_on: Union[List[str], List[int]] = None,
+        out_concepts_to_intervene_on: Union[List[str], List[int], List[List[int]], torch.Tensor] = None,
         quantile: float = 1.0,
         eps: float = 1e-12,
         build_context: Optional[Callable] = None,
