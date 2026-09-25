@@ -1,3 +1,4 @@
+import torch
 import torch.nn as nn
 from contextlib import contextmanager
 from typing import Callable, Dict, List, Optional, Union
@@ -19,7 +20,7 @@ def intervention(
         intervention_policy: InterventionPolicy,
         variable_to_intervene_on: str,
         parameter_to_intervene_on: str,
-        members_to_intervene_on: Union[List[int], List[str]] = None,
+        members_to_intervene_on: Union[List[int], List[str], List[List[int]], torch.Tensor] = None,
         quantile: float = 1.0,
         eps: float = 1e-12,
         build_context: Optional[Callable] = None,
@@ -38,7 +39,10 @@ def intervention(
     ``members_to_intervene_on`` restricts the intervention to a subset of the
     variable's event columns; member *names* are resolved to column indices via
     :meth:`~torch_concepts.nn.modules.mid.variable.Variable.flat_columns`.
-    ``None`` intervenes on every column.
+    ``None`` intervenes on every column. It may also be a list of lists of
+    indices, or a LongTensor of shape ``[*lead, K]``, to select a different
+    (but equally sized, K) set of columns per leading-dim element instead of
+    one shared set for the whole batch.
     """
     # Resolve the target before entering the try block: a bad variable or
     # parameter name must surface as its own KeyError, not as a NameError from
@@ -58,9 +62,9 @@ def intervention(
         )
     original_module = factor.parametrization[parameter_to_intervene_on]
 
-    if members_to_intervene_on is not None and members_to_intervene_on:
-        if isinstance(members_to_intervene_on[0], str):
-            members_to_intervene_on = factor.variable.flat_columns(members_to_intervene_on)
+    if isinstance(members_to_intervene_on, (list, tuple)) and len(members_to_intervene_on) > 0 \
+            and isinstance(members_to_intervene_on[0], str):
+        members_to_intervene_on = factor.variable.flat_columns(members_to_intervene_on)
 
     intervened_module = InterventionModule(
         original_module,
