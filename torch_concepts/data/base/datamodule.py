@@ -93,7 +93,6 @@ class ConceptDataModule(LightningDataModule):
         Seed controlling the ``max_samples`` subsampling and the train/val/test
         **split**, passed to the splitter. If None, both are non-deterministic.
         Default is None.
-
     Attributes
     ----------
     dataset : ConceptDataset
@@ -160,7 +159,7 @@ class ConceptDataModule(LightningDataModule):
         splitter: Optional[object] = None,
         workers: int = 0,
         pin_memory: bool = False,
-        seed: Optional[int] = None
+        seed: Optional[int] = None,
     ):
         super(ConceptDataModule, self).__init__()
         # Subsample the dataset down to `max_samples` rows (all downstream
@@ -444,6 +443,20 @@ class ConceptDataModule(LightningDataModule):
         and the generated source selected as ``concepts['c']``.
         """
         return self.dataset.generate_concepts(concept_pipeline, **kwargs)
+
+    def precompute_graph(
+        self, graph_generator, cache: bool = True,
+        cache_dir: Optional[str] = None, force: bool = False,
+    ) -> None:
+        """Precompute a fixed graph on the underlying dataset."""
+        self.dataset.precompute_graph(
+            graph_generator, cache=cache,
+            cache_dir=cache_dir, force=force,
+        )
+
+    def set_graph_generator(self, graph_generator) -> None:
+        """Register a learnable graph generator without precomputing it."""
+        self.dataset.set_graph_generator(graph_generator)
 
     def setup(self, stage: StageOptions = None) -> None:
         """Prepare the data splits for training, validation, or testing.
