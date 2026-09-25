@@ -147,7 +147,8 @@ class InterventionModule(nn.Module):
 
         where:
         - ``original_module``            — the wrapped encoder module
-        - ``original_module_predictions`` — encoder output ``[B, F]``, with grad_fn intact
+        - ``original_module_predictions`` — encoder output ``[..., F]`` (arbitrary
+                                           leading dims, concepts last), with grad_fn intact
         - ``original_module_inputs``      — encoder inputs bound by name via ``inspect.signature``
                                            (e.g. ``{"embeddings": tensor}``)
         - ``extra_tensors``              — dict of tensors passed by the caller at call time
@@ -179,9 +180,10 @@ class InterventionModule(nn.Module):
         except TypeError:
             original_module_inputs = {}
 
-        original_module_predictions = self.original_module(*args, **kwargs)  # [B, F]
-        assert original_module_predictions.dim() == 2, (
-            f"ConceptInterventionStrategy expects 2-D tensors [Batch, N_concepts]. "
+        original_module_predictions = self.original_module(*args, **kwargs)  # [..., F]
+        assert original_module_predictions.dim() >= 1, (
+            f"ConceptInterventionStrategy expects tensors of shape "
+            f"[..., N_concepts] (arbitrary leading dims, concepts last). "
             f"Got shape: {original_module_predictions.shape}"
         )
 
