@@ -133,7 +133,9 @@ class InterventionPolicy(nn.Module, ABC):
                 f"cannot be broadcast against the policy_scores leading dims "
                 f"{tuple(lead)}"
             ) from e
-        sel_idx = sel_idx.reshape(-1, sel_idx.shape[-1])
+        # Use the already-known B rather than -1: when K == 0 (empty subset),
+        # the element count is 0 and -1 is ambiguous (any size satisfies it).
+        sel_idx = sel_idx.reshape(B, sel_idx.shape[-1])
 
         K = sel_idx.shape[1]
         if K == 0:
