@@ -59,9 +59,16 @@ class BaseInterventionPolicy(nn.Module, ABC):
             quantile: float = 1.0,
             eps: float = 1e-12
     ) -> torch.Tensor:
-        B, F = policy_scores.shape
+        # Arbitrary leading dims are supported by flattening them into a single
+        # synthetic batch axis; the quantile/threshold logic below then runs
+        # independently per leading-dim slice, exactly as it did per row for
+        # plain [B, F] input.
+        *lead, F = policy_scores.shape
         device = policy_scores.device
         dtype = policy_scores.dtype
+
+        scores = policy_scores.reshape(-1, F)
+        B = scores.shape[0]
 
         if sel_idx is None:
             sel_idx = torch.arange(F, dtype=torch.long, device=device)
@@ -69,10 +76,10 @@ class BaseInterventionPolicy(nn.Module, ABC):
             sel_idx = sel_idx.to(device=device)
 
         if len(sel_idx) == 0:
-            return torch.ones_like(policy_scores)
+            return torch.ones_like(scores).reshape(*lead, F)
 
         K = sel_idx.numel()
-        sel = policy_scores.index_select(dim=1, index=sel_idx)  # [B, K]
+        sel = scores.index_select(dim=1, index=sel_idx)  # [B, K]
 
         if K == 1:
             # Edge case: single selected column.
@@ -85,10 +92,10 @@ class BaseInterventionPolicy(nn.Module, ABC):
             # STE proxy (optional; keeps gradients flowing on the selected col)
             row_max = sel.max(dim=1, keepdim=True).values + eps
             soft_sel = torch.log1p(sel) / torch.log1p(row_max)  # [B,1]
-            soft_proxy = torch.ones_like(policy_scores)
+            soft_proxy = torch.ones_like(scores)
             soft_proxy.scatter_(1, sel_idx.unsqueeze(0).expand(B, -1), soft_sel)
             mask = (mask - soft_proxy).detach() + soft_proxy
-            return mask
+            return mask.reshape(*lead, F)
 
         # K > 1: standard per-row quantile via kthvalue
         k = int(max(1, min(K, 1 + math.floor(quantile * (K - 1)))))
@@ -103,7 +110,7 @@ class BaseInterventionPolicy(nn.Module, ABC):
         # STE proxy (unchanged)
         row_max = sel.max(dim=1, keepdim=True).values + 1e-12
         soft_sel = torch.log1p(sel) / torch.log1p(row_max)
-        soft_proxy = torch.ones_like(policy_scores)
+        soft_proxy = torch.ones_like(scores)
         soft_proxy.scatter_(1, sel_idx.unsqueeze(0).expand(B, -1), soft_sel)
         mask = (mask - soft_proxy).detach() + soft_proxy
-        return mask
+        return mask.reshape(*lead, F)

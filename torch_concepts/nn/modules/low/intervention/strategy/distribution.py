@@ -21,7 +21,7 @@ class DistributionIntervention(BaseConceptInterventionStrategy):
         self.dist = dist
 
     def forward(self, x, *args, **kwargs):
-        B, F = x.shape
+        *lead, F = x.shape
         device, dtype = x.device, x.dtype
 
         def _sample(d, shape):
@@ -34,11 +34,11 @@ class DistributionIntervention(BaseConceptInterventionStrategy):
             return d.sample(shape)
 
         if hasattr(self.dist, "sample"):  # one distribution for all features
-            t = _sample(self.dist, (B, F))
+            t = _sample(self.dist, (*lead, F))
         else:  # per-feature list/tuple
             dists = list(self.dist)
             assert len(dists) == F, f"Need {F} per-feature distributions, got {len(dists)}"
-            cols = [_sample(d, (B,)) for d in dists]  # each [B]
-            t = torch.stack(cols, dim=1)  # [B, F]
+            cols = [_sample(d, tuple(lead)) for d in dists]  # each [...lead]
+            t = torch.stack(cols, dim=-1)  # [..., F]
 
         return t.to(device=device, dtype=dtype)
