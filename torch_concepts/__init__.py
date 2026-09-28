@@ -16,7 +16,7 @@ from .backbone import Backbone, ImageBackbone, TextBackbone
 from . import nn, distributions
 
 def __getattr__(name: str) -> Any:
-    if name in {"data", "nn"}:
+    if name in {"data", "graph_generator", "nn"}:
         return import_module(f".{name}", __name__)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
@@ -46,4 +46,6 @@ __all__ = [
     "nn",
     "data",
     "distributions",
+    "graph_generator",
 ]
+

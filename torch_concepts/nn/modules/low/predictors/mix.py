@@ -4,8 +4,180 @@ import numpy as np
 
 from torch_concepts import Annotations
 from ..base.layer import BaseConceptLayer
+from ...utils import state_embedding_counts
 from ....functional import grouped_concept_exogenous_mixture, replace_expand_cols
 from typing import List, Union
+
+
+class MixConceptEmbeddingToConceptEmbedding(torch.nn.Module):
+    """Mix concept values with their state embeddings, concept by concept.
+
+    ``concept_embeddings`` is a sequence of state-embedding banks and
+    ``concept_values`` is the matching sequence of observed/predicted concept
+    values. ``source_concepts`` maps each bank back to the original concept
+    index, so callers may pass only a subset of concepts.
+
+    With ``complete_output=False`` the output follows the supplied source order
+    and has trailing shape ``(len(source_concepts), in_embeddings)``. With
+    ``complete_output=True`` the output is scattered back to the full concept
+    axis, with trailing shape ``(n_concepts, in_embeddings)`` and zeros for
+    concepts that were not supplied. CGM uses the complete form before graph
+    aggregation so the adjacency always indexes the original concept order.
+
+    This module has trainable parameters only when binary embeddings are
+    expanded. It does not cache outputs; if multiple CPDs call it with the same
+    inputs, the same mixture is recomputed.
+    """
+
+    def __init__(
+        self,
+        in_embeddings,
+        concept_types,
+        cardinalities,
+        expand_binary_embeddings=False,
+        complete_output=False,
+    ):
+        super().__init__()
+
+        self.in_embeddings = in_embeddings
+        self.concept_types = list(concept_types)
+        self.cardinalities = list(cardinalities)
+        self.expand_binary_embeddings = expand_binary_embeddings
+        self.complete_output = complete_output
+
+        self.n_state_embeddings = state_embedding_counts(
+            self.concept_types, self.cardinalities, expand_binary_embeddings
+        )
+
+        if expand_binary_embeddings:
+            self.binary_embedding_expander = torch.nn.Sequential(
+                torch.nn.Linear(
+                    in_embeddings,
+                    2 * in_embeddings,
+                ),
+                torch.nn.LeakyReLU(),
+                torch.nn.Unflatten(
+                    -1,
+                    (2, in_embeddings),
+                ),
+            )
+        else:
+            self.binary_embedding_expander = None
+
+    def forward(
+        self,
+        concept_embeddings,
+        concept_values,
+        source_concepts=None,
+    ):
+        """Return mixed embeddings for the supplied source concepts."""
+        if not concept_embeddings:
+            raise ValueError("At least one concept embedding is required.")
+
+        if len(concept_embeddings) != len(concept_values):
+            raise ValueError(
+                "Each embedding bank needs one concept value."
+            )
+
+        if source_concepts is None:
+            source_concepts = list(range(len(concept_embeddings)))
+        else:
+            source_concepts = list(source_concepts)
+
+        if len(source_concepts) != len(concept_embeddings):
+            raise ValueError(
+                "source_concepts must contain one index per embedding bank."
+            )
+        if len(set(source_concepts)) != len(source_concepts):
+            raise ValueError("source_concepts must not contain duplicates.")
+        if any(
+            not 0 <= source < len(self.concept_types)
+            for source in source_concepts
+        ):
+            raise IndexError("source_concepts contains an out-of-range index.")
+
+        # Mix each concept value with its corresponding embedding bank.
+        mixed = torch.stack([
+            self._mix(
+                source_concept,
+                embeddings,
+                value,
+            )
+            for source_concept, embeddings, value in zip(
+                source_concepts,
+                concept_embeddings,
+                concept_values,
+            )
+        ], dim=1)
+
+        if not self.complete_output:
+            return mixed
+
+        complete = mixed.new_zeros(
+            *mixed.shape[:-2],
+            len(self.concept_types),
+            self.in_embeddings,
+        )
+        complete[..., source_concepts, :] = mixed
+
+        return complete
+
+    def _mix(
+        self,
+        source_concept,
+        embeddings,
+        value,
+    ):
+        concept_type = self.concept_types[source_concept]
+        cardinality = self.cardinalities[source_concept]
+        if embeddings.shape[-1] != self.in_embeddings:
+            raise ValueError(
+                f"Embedding width must be {self.in_embeddings}, "
+                f"got {embeddings.shape[-1]}."
+            )
+        value = value.to(dtype=embeddings.dtype, device=embeddings.device)
+
+        if concept_type == "binary":
+            if self.expand_binary_embeddings:
+                if embeddings.shape[-2] != 1:
+                    raise ValueError(
+                        "Binary expansion expects one embedding."
+                    )
+
+                embeddings = self.binary_embedding_expander(
+                    embeddings.squeeze(-2)
+                )
+
+            elif embeddings.shape[-2] != 2:
+                raise ValueError(
+                    "A binary concept expects two state embeddings."
+                )
+
+            value = torch.cat(
+                [value, 1 - value],
+                dim=-1,
+            )
+
+        elif (
+            concept_type == "categorical"
+            and value.shape[-1] == 1
+        ):
+            value = torch.nn.functional.one_hot(
+                value.squeeze(-1).long(),
+                cardinality,
+            ).to(embeddings.dtype)
+
+        elif embeddings.shape[-2] != cardinality:
+            raise ValueError(
+                f"Concept {source_concept} expects "
+                f"{cardinality} state embeddings."
+            )
+
+        return grouped_concept_exogenous_mixture(
+            embeddings,
+            value,
+            groups=[embeddings.shape[-2]],
+        ).squeeze(-2)
 
 
 class MixConceptEmbeddings(nn.Module):
@@ -53,7 +225,12 @@ class MixConceptEmbeddings(nn.Module):
         cumsum = torch.cumsum(self.cardinalities_expanded, dim=0)
         start_positions = cumsum - self.cardinalities_expanded
         bernoulli_mask = (self.cardinalities_expanded == 1) & self.binary_mask
-        self.mask_cardinality_1 = start_positions[bernoulli_mask]
+        # This index is used directly against ``concepts`` and ``embeddings``
+        # in ``forward``. Keep it as a buffer so ``module.to(device)`` moves it
+        # together with those tensors when Lightning selects CUDA.
+        self.register_buffer(
+            "mask_cardinality_1", start_positions[bernoulli_mask]
+        )
         self.cardinalities_expanded[bernoulli_mask] = 2
 
         self.bernoulli_to_categorical_embedding_splitter = torch.nn.Sequential(
