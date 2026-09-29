@@ -22,7 +22,15 @@ engine, while evaluation keeps the default ``p_int=0.0``.
 
 import torch
 from torch_concepts import seed_everything
-from torch_concepts.nn import ConceptBottleneckModel, ConceptEmbeddingModel, MLP
+from torch_concepts.nn import (
+    CMRTaskLoss,
+    CompositeLoss,
+    ConceptSubset,
+    ConceptBottleneckModel,
+    ConceptEmbeddingModel,
+    ConceptMemoryReasoner,
+    MLP,
+)
 from torch_concepts.nn import DeterministicInference, IndependentInference
 from torch_concepts.nn import ConceptLoss
 from torch_concepts.data import ToyDataset
@@ -49,10 +57,12 @@ def evaluate(model, datamodule, n_concepts, query):
         for batch in test_loader:
             # model.eval() automatically selects eval_inference
             out = model(input=batch['inputs']['x'], query=query)
-            c_logits = out.logits[:, :n_concepts]
-            y_logits = out.logits[:, n_concepts:]
-            c_pred = torch.sigmoid(c_logits)
-            y_pred = torch.sigmoid(y_logits)
+            predictions = out.logits if out.logits is not None else out.probs
+            c_pred = predictions[:, :n_concepts]
+            y_pred = predictions[:, n_concepts:]
+            if out.logits is not None:
+                c_pred = torch.sigmoid(c_pred)
+                y_pred = torch.sigmoid(y_pred)
 
             c_true = batch['concepts']['c'][:, :n_concepts]
             y_true = batch['concepts']['c'][:, n_concepts:]
@@ -202,6 +212,54 @@ def main():
     trainer_cem = Trainer(max_epochs=100)
     trainer_cem.fit(model_cem, datamodule=datamodule)
     evaluate(model_cem, datamodule, n_concepts, query)
+
+
+    # =========================================================================
+    # CMR WITH JOINT TRAINING
+    # =========================================================================
+    print("\n" + "=" * 60)
+    print("Example 4: CMR with Joint Training")
+    print("=" * 60)
+
+    task_names = ["xor"]
+    cmr_loss = CompositeLoss(
+        terms=[
+            ConceptSubset(
+                ConceptLoss(
+                    binary=torch.nn.BCELoss(),
+                    binary_param="probs",
+                ),
+                exclude=task_names,
+            ),
+            CMRTaskLoss(task_names),
+        ],
+        weights=[1.0, 1.0],
+        names=["concepts", "tasks"],
+    )
+    model_cmr = ConceptMemoryReasoner(
+        input_size=n_features,
+        annotations=annotations,
+        backbone=MLP(input_size=n_features, hidden_size=16, n_layers=1),
+        latent_size=16,
+        variable_distributions=variable_distributions,
+        task_names=task_names,
+        n_rules=10,
+        memory_latent_size=100,
+        memory_decoder_hidden_layers=1,
+        selector_hidden_layers=1,
+        hard_roles_at_eval=True,
+        inference=DeterministicInference,
+        train_inference=DeterministicInference,
+        lightning=True,
+        loss=cmr_loss,
+        rec_weight=0,
+        optim_class=optim,
+        optim_kwargs={"lr": 0.01},
+    )
+
+    trainer_cmr = Trainer(max_epochs=100)
+    trainer_cmr.fit(model_cmr, datamodule=datamodule)
+    evaluate(model_cmr, datamodule, n_concepts, query)
 
 
 if __name__ == "__main__":

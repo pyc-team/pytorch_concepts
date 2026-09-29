@@ -1,1 +1,5 @@
-__all__: list[str] = []
+"""Built-in concept datasets."""
+
+from .toy import ToyDataset
+
+__all__ = ["ToyDataset"]
