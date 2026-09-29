@@ -288,39 +288,32 @@ def generate_candidates(
     return annotations_from_classes(concepts_by_class, class_codes)
 
 
-def apricot_cosine_similarity(features: np.ndarray) -> np.ndarray:
-    """Match Apricot's cosine-distance conversion, which yields cosine squared."""
-    norms = np.linalg.norm(features, axis=1, keepdims=True)
-    normalized = np.divide(
-        features,
-        norms,
-        out=np.zeros_like(features, dtype=np.float64),
-        where=norms != 0,
-    )
-    return np.square(normalized @ normalized.T)
-
-
-def greedy_mixture_select(features: np.ndarray, count: int) -> list[int]:
-    """Maximize LaBo's modular MI plus weighted facility-location objective."""
-    similarity = apricot_cosine_similarity(features)
-    coverage = np.zeros(len(features), dtype=np.float64)
+def labo_greedy_select(features: np.ndarray, count: int) -> list[int]:
+    """Reproduce patched Apricot 0.6.1's naive mixture ranking."""
+    features = np.asarray(features, dtype=np.float64)
+    coverage = np.zeros(features.shape[1], dtype=np.float64)
     remaining = list(range(len(features)))
     selected = []
     for _ in range(min(count, len(remaining))):
         candidates = np.asarray(remaining)
         facility_gain = (
-            np.maximum(similarity[candidates], coverage).sum(axis=1)
+            np.maximum(features[candidates], coverage).sum(axis=1)
             - coverage.sum()
         )
         gains = features[candidates, 0] + FACILITY_WEIGHT * facility_gain
         best = remaining.pop(int(np.argmax(gains)))
-        coverage = np.maximum(coverage, similarity[best])
+        coverage = np.maximum(coverage, features[best])
         selected.append(best)
     return selected
 
 
 class LaBoConceptSelector(FilterGenerator):
-    """LaBo's released MI plus facility-location selection algorithm."""
+    """Reproduce LaBo's released Apricot 0.6.1 selector.
+
+    Apricot's mixture marks its components as precomputed, so facility coverage
+    is applied directly to ``[scaled MI, CLIP feature]`` rather than to cosine
+    similarities.
+    """
 
     def __init__(
         self,
@@ -349,11 +342,14 @@ class LaBoConceptSelector(FilterGenerator):
             if len(indices) <= CONCEPTS_PER_CLASS:
                 chosen = range(len(indices))
             else:
-                # LaBo inserts scaled MI into the vectors used by facility location.
-                augmented = torch.column_stack(
-                    (mi_scores[pool] * MI_SCALE, self.text_features[pool])
-                ).double().numpy()
-                chosen = greedy_mixture_select(augmented, CONCEPTS_PER_CLASS)
+                # Scaled MI is both the modular term and a coverage coordinate.
+                augmented = np.column_stack(
+                    (
+                        (mi_scores[pool] * MI_SCALE).numpy(),
+                        self.text_features[pool].numpy(),
+                    )
+                )
+                chosen = labo_greedy_select(augmented, CONCEPTS_PER_CLASS)
             selected_labels.extend(labels[index] for index in chosen)
         return concepts.subset(selected_labels)
 
