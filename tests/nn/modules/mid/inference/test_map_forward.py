@@ -211,7 +211,7 @@ class TestEvidenceClamping:
             query=["y"], evidence={"x": torch.randn(3, 4), "g": torch.ones(3, 2)}
         )
         assert "g" not in out.variables
-        assert "g" not in out.samples.annotation.labels
+        assert "g" not in out.samples.annotations.labels
 
     def test_evidence_drives_the_downstream_map_value(self):
         seed_everything(0)
@@ -244,7 +244,7 @@ class TestOutputContract:
         m = _mixed_model()
         out = MAPForwardInference(m).query(query=["y"], evidence={"x": torch.randn(2, 4)})
         # ``g`` is only an ancestor of the query, but it was realised -> reported
-        assert set(out.samples.annotation.labels) >= {"m1", "m2", "y"}
+        assert set(out.samples.annotations.labels) >= {"m1", "m2", "y"}
 
     def test_params_keep_the_raw_cpd_output(self):
         seed_everything(0)

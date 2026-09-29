@@ -286,7 +286,7 @@ class ConceptMetrics(nn.Module):
         )
         for quantity in quantities:
             tensor = out.params.get(quantity)
-            if tensor is not None and name in tensor.annotation.label_to_index:
+            if tensor is not None and name in tensor.annotations.label_to_index:
                 # Hand torchmetrics a plain tensor; the annotation is no longer
                 # needed and would make each internal torch.* op pay the
                 # __torch_function__ cost.
@@ -307,7 +307,7 @@ class ConceptMetrics(nn.Module):
         # Unwrap to plain tensors up front: past this point the annotation has
         # served its purpose (concept ordering), and every torch.* op below on an
         # AnnotatedTensor would otherwise re-enter its __torch_function__ hook.
-        cards = list(cat_logits.annotation.cardinalities)
+        cards = list(cat_logits.annotations.cardinalities)
         # Unwrap to plain tensors and fold any leading (batch-like) dimensions
         # into one batch axis, so the layout below is always (batch, width).
         # Both are flattened the same way, so their rows stay aligned.
@@ -373,14 +373,14 @@ class ConceptMetrics(nn.Module):
             # torchmetrics makes each internal torch.* op re-enter the
             # __torch_function__ unwrap hook (the dominant per-update cost).
             if binary is not None and len(self.binary):
-                self.binary.update(binary.tensor, target[binary.annotation.labels].tensor.float())
+                self.binary.update(binary.tensor, target[binary.annotations.labels].tensor.float())
             if categorical is not None and len(self.categorical):
                 cat_pred, cat_target = self._prepare_categorical(
-                    categorical, target[categorical.annotation.labels])
+                    categorical, target[categorical.annotations.labels])
                 self.categorical.update(cat_pred, cat_target)
             if continuous is not None and len(self.continuous):
                 self.continuous.update(
-                    continuous.tensor, target[continuous.annotation.labels].tensor)
+                    continuous.tensor, target[continuous.annotations.labels].tensor)
 
         # Per-concept metrics — read each concept from its type's quantity.
         for concept_name, collection in self._per_concept.items():

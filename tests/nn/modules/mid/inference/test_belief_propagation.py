@@ -621,7 +621,7 @@ class TestBPPlateMembers:
         out = BeliefPropagation(fg, iters=20).query(
             query=["g2"], evidence={"g1": torch.ones(1, 1)}
         )
-        assert out.probs.annotation.labels == ["g2"]
+        assert out.probs.annotations.labels == ["g2"]
         exact = self._exact_member_marginals(fg, {"g1": 1})
         assert torch.allclose(
             _state_marginal(fg.variables["g"].member("g2"), out.probs["g2"]),

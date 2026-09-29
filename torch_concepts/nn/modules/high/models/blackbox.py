@@ -48,11 +48,11 @@ def _report_by_type(predictions: AnnotatedTensor) -> ModelOutput:
     predicts a point estimate, not a distribution.
     """
     out = ModelOutput()
-    continuous = set(predictions.annotation.labels_by_type.get("continuous", []))
+    continuous = set(predictions.annotations.labels_by_type.get("continuous", []))
     if not continuous:
         out.logits = predictions  # all-discrete: the common case, sliced by nobody
         return out
-    labels = list(predictions.annotation.labels)
+    labels = list(predictions.annotations.labels)
     discrete = [name for name in labels if name not in continuous]
     if discrete:
         out.logits = predictions[discrete]

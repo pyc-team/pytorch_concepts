@@ -107,10 +107,10 @@ def subset_output(output: ModelOutput, names: List[str]) -> ModelOutput:
     """
     sub = ModelOutput(extra=output.extra)
     if output.target is not None:
-        present = [n for n in names if n in output.target.annotation.label_to_index]
+        present = [n for n in names if n in output.target.annotations.label_to_index]
         sub.target = output.target[present]
     for quantity, tensor in output.params.items():
-        present = [n for n in names if n in tensor.annotation.label_to_index]
+        present = [n for n in names if n in tensor.annotations.label_to_index]
         if present:
             sub.params[quantity] = tensor[present]
     return sub
@@ -669,7 +669,7 @@ class ConceptLoss(PyCLoss):
                 cardinality) or when no term asked for it — building it costs an
                 allocation the size of ``padded_logits`` on every step.
         """
-        cards = list(cat_logits.annotation.cardinalities)
+        cards = list(cat_logits.annotations.cardinalities)
 
         # Unwrap to plain tensors and fold any leading (batch-like) dimensions
         # into one batch axis, so the layout below is always (batch, width).
@@ -751,26 +751,26 @@ class ConceptLoss(PyCLoss):
         if self.terms_by_type.get('binary') and binary is not None:
             contributions.append(self._compute_type_loss('binary', {
                 'input': _plain(binary),
-                'target': _plain(target[binary.annotation.labels]).float(),
+                'target': _plain(target[binary.annotations.labels]).float(),
                 **extra
             }))
 
         if self.terms_by_type.get('categorical') and categorical is not None:
             cat_logits, cat_targets, cat_mask = self._prepare_categorical(
-                categorical, target[categorical.annotation.labels]
+                categorical, target[categorical.annotations.labels]
             )
             kwargs = {'input': cat_logits, 'target': cat_targets, **extra}
             # Offer the key only when padding actually exists, i.e. the concepts
             # have different cardinalities. Otherwise there is nothing to mask and
             # a term that ignores the mask has nothing to be warned about.
-            if len(set(categorical.annotation.cardinalities)) > 1:
+            if len(set(categorical.annotations.cardinalities)) > 1:
                 kwargs['padding_mask'] = cat_mask
             contributions.append(self._compute_type_loss('categorical', kwargs))
 
         if self.terms_by_type.get('continuous') and continuous is not None:
             kwargs = {
                 'input': _plain(continuous),
-                'target': _plain(target[continuous.annotation.labels]),
+                'target': _plain(target[continuous.annotations.labels]),
                 **extra,
             }
             if output.scale is not None:
@@ -782,7 +782,7 @@ class ConceptLoss(PyCLoss):
                 f"ConceptLoss has terms for {sorted(self.terms_by_type)} but "
                 f"scored nothing: the output reports {tuple(output.params)} and the "
                 f"target covers "
-                f"{sorted(set(target.annotation.types)) if target is not None else None}. "
+                f"{sorted(set(target.annotations.types)) if target is not None else None}. "
                 "Check that the model reports a quantity for those types (see its "
                 "`param_for_discrete_var`) and that the target covers them."
             )
@@ -851,7 +851,7 @@ class ConceptSubset(PyCLoss):
         target = target if target is not None else output.target
         names = self.names
         if names is None:
-            names = [n for n in target.annotation.labels if n not in self.exclude]
+            names = [n for n in target.annotations.labels if n not in self.exclude]
 
         sub = subset_output(output, names)
         if not sub.params:
@@ -861,7 +861,7 @@ class ConceptSubset(PyCLoss):
             reference = next(iter(output.params.values()), None)
             return torch.zeros((), device=None if reference is None else reference.device)
 
-        present = [n for n in names if n in target.annotation.label_to_index]
+        present = [n for n in names if n in target.annotations.label_to_index]
         return self.loss(sub, target[present])
 
 

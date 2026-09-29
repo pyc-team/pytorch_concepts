@@ -35,9 +35,9 @@ def test_engine_caches_stay_bounded():
     for i in range(k):                      # a distinct query signature each time
         engine.query([f"c{i}"], evidence={"z": x})
     assert len(engine._label_cache) == QUERY_CACHE_SIZE
-    assert len(engine._annotation_cache) == QUERY_CACHE_SIZE
+    assert len(engine._annotations_cache) == QUERY_CACHE_SIZE
 
     engine.clear_cache()
-    assert not engine._label_cache and not engine._annotation_cache
+    assert not engine._label_cache and not engine._annotations_cache
     engine.query(["c0"], evidence={"z": x})          # still works after a clear
     assert len(engine._label_cache) == 1

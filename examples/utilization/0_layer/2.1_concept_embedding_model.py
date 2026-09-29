@@ -71,7 +71,7 @@ def main():
     loss_fn_continuous = torch.nn.MSELoss()
     model.train()
 
-    c_train = pyc.AnnotatedTensor(c_train, annotation=concept_annotations)
+    c_train = pyc.AnnotatedTensor(c_train, annotations=concept_annotations)
     for epoch in range(n_epochs):
         optimizer.zero_grad()
 

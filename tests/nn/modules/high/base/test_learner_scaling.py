@@ -230,7 +230,7 @@ class TestScaleConcepts:
         model = build_model(annotations=annotations)
         scaled = model.maybe_scale_concepts(batch['concepts'], {'concepts': scaler})['c']
         assert isinstance(scaled, AnnotatedTensor)
-        assert list(scaled.annotation.labels) == ['c1', 'c2', 'task']
+        assert list(scaled.annotations.labels) == ['c1', 'c2', 'task']
 
     def test_discrete_columns_pass_through(self):
         """Binary and categorical columns are class labels; scaling them would be

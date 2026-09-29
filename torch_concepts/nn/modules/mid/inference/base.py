@@ -132,7 +132,7 @@ class BaseInference(nn.Module):
         # one query to the next, so all of this Python work is done once.
         # Bounded FIFO at ``QUERY_CACHE_SIZE`` — see ``_cache_put``.
         self._label_cache: Dict[tuple, List[Tuple[List[str], Variable]]] = {}
-        self._annotation_cache: Dict[tuple, Annotations] = {}
+        self._annotations_cache: Dict[tuple, Annotations] = {}
 
         # Factor-based (not variable-keyed): a ProbabilisticModel keys factors by
         # factor name, and undirected potentials have no ``is_root``. Only root CPDs
@@ -164,7 +164,7 @@ class BaseInference(nn.Module):
         the entries a long run of one-off query signatures left behind.
         """
         self._label_cache.clear()
-        self._annotation_cache.clear()
+        self._annotations_cache.clear()
 
     # ------------------------------------------------------------------
     # Relaxation temperature
@@ -557,8 +557,8 @@ class BaseInference(nn.Module):
         here would put an O(total labels) tuple build and hash back on every
         query, cache hit included.
         """
-        annotation = self._annotation_cache.get(key)
-        if annotation is None:
+        annotations = self._annotations_cache.get(key)
+        if annotations is None:
             resolve = self.pgm.resolve
             owners = [resolve(label) for label in labels]
             # A variable spanning several labels (a plate) is registered as a
@@ -568,7 +568,7 @@ class BaseInference(nn.Module):
                 grouped.setdefault(var.name, []).append(label)
             label_set = set(labels)
             groups = {o: m for o, m in grouped.items() if o not in label_set}
-            annotation = Annotations(
+            annotations = Annotations(
                 labels=list(labels),
                 cardinalities=list(widths),
                 types=[
@@ -576,9 +576,9 @@ class BaseInference(nn.Module):
                 ],
                 groups=groups or None,
             )
-            _cache_put(self._annotation_cache, key, annotation)
+            _cache_put(self._annotations_cache, key, annotations)
         data = pieces[0] if len(pieces) == 1 else torch.cat(pieces, dim=-1)
-        return AnnotatedTensor(data, annotation, axis=-1)
+        return AnnotatedTensor(data, annotations, axis=-1)
 
     @staticmethod
     def _chunk_of(var, tensor, chunk, param=None) -> torch.Tensor:

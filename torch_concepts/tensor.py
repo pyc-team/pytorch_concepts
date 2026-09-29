@@ -48,7 +48,7 @@ class AnnotatedTensor:
     Args:
         data: The underlying tensor. Must have at least 1 dimension when
             annotating the last axis, and at least 2 when ``axis == 1``.
-        annotation: Annotation for the annotated axis. ``annotation.size``
+        annotations: Annotations for the annotated axis. ``annotations.size``
             must equal ``data.shape[axis]``.
         axis: Which axis the annotation describes. ``-1`` annotates the **last**
             axis, so a tensor may carry any number of leading (batch) dimensions
@@ -75,13 +75,13 @@ class AnnotatedTensor:
         >>>
         >>> # Label-based slicing
         >>> sliced = t["cat", "dog"]
-        >>> sliced.annotation.labels
+        >>> sliced.annotations.labels
         ['cat', 'dog']
         >>> sliced.tensor.shape
         torch.Size([4, 2])
     """
 
-    def __init__(self, data: torch.Tensor, annotation: Annotations, axis: Optional[int] = None):
+    def __init__(self, data: torch.Tensor, annotations: Annotations, axis: Optional[int] = None):
         if axis is None:
             # The default is only well-defined where axis 1 and -1 coincide, i.e.
             # for a 1-D/2-D tensor. For a higher-rank tensor the two are different
@@ -107,7 +107,7 @@ class AnnotatedTensor:
                 f"AnnotatedTensor with axis={axis} requires a tensor with at least "
                 f"{min_dim} dimensions, got ndim={data.dim()}."
             )
-        ann_size = annotation.size
+        ann_size = annotations.size
         if data.shape[axis] != ann_size:
             raise ValueError(
                 f"Annotation size ({ann_size}) must match tensor axis-{axis} size "
@@ -115,7 +115,7 @@ class AnnotatedTensor:
             )
         # Use object.__setattr__ to bypass any future __setattr__ overrides
         object.__setattr__(self, '_data', data)
-        object.__setattr__(self, '_annotation', annotation)
+        object.__setattr__(self, '_annotations', annotations)
         object.__setattr__(self, '_axis', axis)
 
     # ------------------------------------------------------------------ #
@@ -128,9 +128,14 @@ class AnnotatedTensor:
         return self._data
 
     @property
-    def annotation(self) -> Annotations:
+    def annotations(self) -> Annotations:
         """The :class:`Annotations` describing the annotated axis."""
-        return self._annotation
+        return self._annotations
+
+    @property
+    def annotation(self) -> Annotations:
+        """Deprecated: alias for the former name of :attr:`annotations`."""
+        return self._annotations
 
     @property
     def axis(self) -> int:
@@ -161,7 +166,7 @@ class AnnotatedTensor:
         wrapping the moved/cast data. Defined on the class so batch-transfer
         machinery (e.g. Lightning) treats this as a transferable element.
         """
-        return AnnotatedTensor(self._data.to(*args, **kwargs), self._annotation, self._axis)
+        return AnnotatedTensor(self._data.to(*args, **kwargs), self._annotations, self._axis)
 
     # ------------------------------------------------------------------ #
     # Label-based slicing                                                  #
@@ -195,13 +200,13 @@ class AnnotatedTensor:
             # annotation (which is shared across every tensor carrying it, while
             # the tensor itself is rebuilt each batch), so a loop slicing the same
             # names every step resolves them exactly once. See Annotations.resolve.
-            return self._wrap_resolved(self._annotation.resolve(key))
+            return self._wrap_resolved(self._annotations.resolve(key))
 
         # Regular tensor indexing; re-wrap if the annotated axis is unchanged
         return self._wrap(self._data[key])
 
     def _wrap_resolved(self, resolved) -> 'AnnotatedTensor':
-        """Build the sub-tensor for a ``(selector, sub_annotation)`` from ``resolve``."""
+        """Build the sub-tensor for a ``(selector, sub_annotations)`` from ``resolve``."""
         selector, sub_ann = resolved
         return AnnotatedTensor(self._data[self._index(selector)], sub_ann, self._axis)
 
@@ -235,7 +240,7 @@ class AnnotatedTensor:
             is_name_key = True
 
         if is_name_key:
-            selector, _ = self._annotation.resolve(key)
+            selector, _ = self._annotations.resolve(key)
             self._data[self._index(selector)] = value
             return
 
@@ -261,7 +266,7 @@ class AnnotatedTensor:
 
         Returns ``self`` so registrations can be chained.
         """
-        self._annotation.register_group(owner, members)
+        self._annotations.register_group(owner, members)
         return self
 
     # ------------------------------------------------------------------ #
@@ -299,7 +304,7 @@ class AnnotatedTensor:
             >>> a = AnnotatedTensor(torch.rand(4, 2), ann_a)
             >>> b = AnnotatedTensor(torch.rand(4, 2), ann_b)
             >>> merged = a.union_with(b)
-            >>> merged.annotation.labels
+            >>> merged.annotations.labels
             ['cat', 'dog', 'bird', 'fish']
             >>> merged.tensor.shape
             torch.Size([4, 4])
@@ -331,18 +336,18 @@ class AnnotatedTensor:
                     f"non-axis-{ax} shape {expected}, got {list(other._data.shape)}."
                 )
 
-        seen = set(self._annotation.labels)
+        seen = set(self._annotations.labels)
         pieces = [self._data]
-        merged_ann = self._annotation
+        merged_ann = self._annotations
         for other in others:
-            new_labels = [l for l in other._annotation.labels if l not in seen]
+            new_labels = [l for l in other._annotations.labels if l not in seen]
             seen.update(new_labels)
             if new_labels:
                 indices = _as_contiguous_slice(
-                    other._annotation.get_slice(new_labels)
+                    other._annotations.get_slice(new_labels)
                 )
                 pieces.append(other._data[other._index(indices)])
-            merged_ann = merged_ann.union_with(other._annotation)
+            merged_ann = merged_ann.union_with(other._annotations)
 
         return AnnotatedTensor(torch.cat(pieces, dim=ax), merged_ann, ax)
 
@@ -359,17 +364,17 @@ class AnnotatedTensor:
         Example:
             >>> ann = Annotations(labels=['a', 'b', 'c'], cardinalities=[1, 3, 1])
             >>> t = AnnotatedTensor(torch.rand(4, 5), ann)
-            >>> t.binary().annotation.labels
+            >>> t.binary().annotations.labels
             ['a', 'c']
-            >>> t.categorical().annotation.labels
+            >>> t.categorical().annotations.labels
             ['b']
             >>> t.continuous() is None
             True
         """
-        labels = self._annotation.labels_by_type.get(concept_type)
+        labels = self._annotations.labels_by_type.get(concept_type)
         if not labels:
             return None
-        return self._wrap_resolved(self._annotation.resolve(labels, cache_key=concept_type))
+        return self._wrap_resolved(self._annotations.resolve(labels, cache_key=concept_type))
 
     def binary(self) -> Optional['AnnotatedTensor']:
         """Sub-tensor of binary concepts, or ``None`` if there are none."""
@@ -463,7 +468,7 @@ class AnnotatedTensor:
             result.shape[self._axis] == self._data.shape[self._axis]
             and result.stride(self._axis) == self._data.stride(self._axis)
         ):
-            return AnnotatedTensor(result, self._annotation, self._axis)
+            return AnnotatedTensor(result, self._annotations, self._axis)
         return result
 
     def _wrap(self, result) -> Union['AnnotatedTensor', torch.Tensor]:
@@ -483,7 +488,7 @@ class AnnotatedTensor:
             and result.shape[self._axis] == self._data.shape[self._axis]
             and not (self._data.dim() >= 3 and result.dim() < self._data.dim())
         ):
-            return AnnotatedTensor(result, self._annotation, self._axis)
+            return AnnotatedTensor(result, self._annotations, self._axis)
         return result
 
     # ------------------------------------------------------------------ #
@@ -560,7 +565,7 @@ class AnnotatedTensor:
     def __repr__(self) -> str:
         return (
             repr(self._data)
-            + f"\n# annotations(axis={self._axis}): {self._annotation.labels}"
+            + f"\n# annotations(axis={self._axis}): {self._annotations.labels}"
         )
 
     def __len__(self) -> int:
@@ -575,7 +580,7 @@ class AnnotatedTensor:
         """
         if isinstance(key, str):
             return (
-                key in self._annotation.label_to_index
-                or key in self._annotation.label_groups
+                key in self._annotations.label_to_index
+                or key in self._annotations.label_groups
             )
         return key in self._data

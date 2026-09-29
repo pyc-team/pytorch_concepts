@@ -87,7 +87,7 @@ class TestConditionalVAE:
         for name in ("a", "b"):
             assert out.logits[name].shape == (5, 1)
         # The observation is a Delta, so it reports `value` rather than `logits`.
-        assert "input" not in out.logits.annotation.labels
+        assert "input" not in out.logits.annotations.labels
 
     def test_categorical_marginals_normalise_per_concept(self, categorical_annotations):
         model = build_model(categorical_annotations, plate=False)

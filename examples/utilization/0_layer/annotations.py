@@ -44,7 +44,7 @@ def main():
 
     tensor = pyc.AnnotatedTensor(
         data=torch.randn(10, 6),    # (batch_size, sum(cardinalities))
-        annotation=annotations
+        annotations=annotations
     )
 
     # slice by concept name

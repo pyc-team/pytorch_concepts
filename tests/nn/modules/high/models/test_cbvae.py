@@ -65,7 +65,7 @@ class TestConceptBottleneckVAE:
         out = model(query=list(model.pgm.variables), input=torch.rand(6, INPUT_SIZE))
         # `logits` is one annotated tensor holding every queried variable that has
         # them. The observation is a Delta and so reports `value`, not `logits`.
-        assert "input" not in out.logits.annotation.labels
+        assert "input" not in out.logits.annotations.labels
         assert out.value["input"].shape == (6, INPUT_SIZE)
         for name in ("a", "b"):
             assert out.logits[name].shape == (6, 1)

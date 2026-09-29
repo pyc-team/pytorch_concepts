@@ -437,7 +437,7 @@ class TestVEPlateMembers:
         ``regroup_members`` raises KeyError on the uncomputed free siblings."""
         fg = self._two_plate_bn(seed=33)
         out = PgmpyVariableElimination(fg).query(query=["h2"], evidence={})
-        assert out.probs.annotation.labels == ["h2"]
+        assert out.probs.annotations.labels == ["h2"]
         exact = self._exact_member_marginals(fg, {})
         got = self._member_probs(fg, out, "h", "h2")
         assert torch.allclose(got, exact["h2"], atol=1e-5)
