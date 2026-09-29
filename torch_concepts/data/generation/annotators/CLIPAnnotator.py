@@ -57,10 +57,9 @@ class CLIPAnnotator(Annotator):
     """General CLIP-based annotator for label-free concept supervision.
 
     The annotator maps an image dataset and an :class:`Annotations` to a
-    tensor of raw sample-level cosine similarities. Binary concepts are
-    represented by their labels; categorical concepts use one text prompt per
-    state. Calibration and filtering are handled by the concept-supervision
-    pipeline.
+    tensor of sample-level similarities. Binary concepts are represented by
+    their labels; categorical concepts use one text prompt per state.
+    Calibration and filtering are handled by the concept-supervision pipeline.
 
     Parameters
     ----------
@@ -85,6 +84,10 @@ class CLIPAnnotator(Annotator):
     show_progress : bool, optional
         Whether to show progress bars while encoding text concepts and image
         batches. Default is False.
+    normalize : bool, optional
+        Whether to L2-normalize image and text embeddings. The default is
+        ``True``, producing cosine similarities. Set to ``False`` to retain
+        raw CLIP embeddings and produce dot-product scores.
 
     Examples
     --------
@@ -150,6 +153,7 @@ class CLIPAnnotator(Annotator):
         ),
         num_workers: int = 0,
         show_progress: bool = False,
+        normalize: bool = True,
     ):
         try:
             from transformers import AutoModel, AutoProcessor
@@ -168,6 +172,7 @@ class CLIPAnnotator(Annotator):
         self.state_prompt_formatter = state_prompt_formatter
         self.num_workers = num_workers
         self.show_progress = show_progress
+        self.normalize = normalize
 
         self.processor = AutoProcessor.from_pretrained(model_name)
         self.model = AutoModel.from_pretrained(model_name).to(self.device)
@@ -177,17 +182,50 @@ class CLIPAnnotator(Annotator):
         self,
         dataset: Dataset,
         concepts: Annotations,
+        *,
+        image_features: Tensor | None = None,
+        concept_features: Tensor | None = None,
         **kwargs: Any,
     ) -> AnnotatedTensor:
+        """Annotate a dataset, optionally reusing ordered CLIP features."""
         del kwargs
         if not isinstance(concepts, Annotations):
             raise TypeError("concepts must be an Annotations.")
 
+        if concept_features is None:
+            concept_features = self.encode_concepts(concepts)
+        if image_features is None:
+            image_features = self.encode_dataset(dataset)
+        if image_features.shape[0] != len(dataset):
+            raise ValueError(
+                "image_features must contain one row per dataset sample."
+            )
+        if concept_features.shape[0] != concepts.size:
+            raise ValueError(
+                "concept_features must contain one row per annotation column."
+            )
+
+        concept_features = concept_features.to(self.device)
+        score_batches = []
+        for batch in image_features.split(self.batch_size):
+            with torch.no_grad():
+                score_batches.append((batch.to(self.device) @ concept_features.T).cpu())
+        concept_data = torch.cat(score_batches) if score_batches else torch.empty(
+            (0, concepts.size)
+        )
+        return AnnotatedTensor(concept_data, concepts, axis=1)
+
+    def encode_concepts(self, concepts: Annotations) -> Tensor:
+        """Encode every column represented by an annotation axis."""
+        if not isinstance(concepts, Annotations):
+            raise TypeError("concepts must be an Annotations.")
         text_concepts = self._flatten_concept_prompts(concepts)
         if not text_concepts:
-            raise ValueError("Cannot annotate an empty concept axis.")
-        concept_features = self._encode_text_concepts(text_concepts)
+            raise ValueError("Cannot encode an empty concept axis.")
+        return self._encode_text_concepts(text_concepts)
 
+    def encode_dataset(self, dataset: Dataset) -> Tensor:
+        """Encode a dataset in order and return CPU image features."""
         loader = DataLoader(
             dataset,
             batch_size=self.batch_size,
@@ -195,27 +233,16 @@ class CLIPAnnotator(Annotator):
             num_workers=self.num_workers,
             collate_fn=_identity_collate,
         )
-
-        concept_batches = []
-        batches = self._progress(
-            loader,
-            desc="CLIP image annotation",
-            total=len(loader),
-        )
+        batches = self._progress(loader, desc="CLIP image encoding", total=len(loader))
+        features = []
         for batch in batches:
             images = [self.input_getter(sample) for sample in batch]
             with torch.no_grad():
-                image_features = self.encode_images(images)
-                scores = image_features @ concept_features.T
-
-            concept_batches.append(scores.detach().cpu())
-
-        concept_data = (
-            torch.cat(concept_batches, dim=0)
-            if concept_batches
-            else torch.empty((0, concepts.size))
-        )
-        return AnnotatedTensor(concept_data, concepts, axis=1)
+                features.append(self.encode_images(images).cpu())
+        if features:
+            return torch.cat(features)
+        projection_dim = self.model.config.projection_dim
+        return torch.empty((0, projection_dim))
 
     def _flatten_concept_prompts(
         self,
@@ -237,23 +264,38 @@ class CLIPAnnotator(Annotator):
         return prompts
 
     def _encode_text_concepts(self, concepts: Sequence[str]) -> Tensor:
-        all_features = []
-        concept_iterator = self._progress(
-            concepts,
+        prompt_groups = [self._make_prompts(concept) for concept in concepts]
+        prompts = [prompt for group in prompt_groups for prompt in group]
+        starts = []
+        position = 0
+        for group in prompt_groups:
+            starts.append((position, position + len(group)))
+            position += len(group)
+
+        batches = range(0, len(prompts), self.batch_size)
+        batches = self._progress(
+            batches,
             desc="CLIP text encoding",
-            total=len(concepts),
+            total=(len(prompts) + self.batch_size - 1) // self.batch_size,
         )
-        for concept in concept_iterator:
-            prompts = self._make_prompts(concept)
-            with torch.no_grad():
-                text_features = self.encode_texts(prompts)
-                text_feature = text_features.mean(dim=0)
+        with torch.no_grad():
+            encoded = torch.cat(
+                [
+                    self.encode_texts(prompts[start : start + self.batch_size])
+                    for start in batches
+                ]
+            )
+
+        all_features = []
+        for start, end in starts:
+            text_feature = encoded[start:end].mean(dim=0)
+            if self.normalize:
                 text_feature = F.normalize(text_feature, dim=0)
             all_features.append(text_feature)
         return torch.stack(all_features, dim=0)
 
     def encode_texts(self, texts: Sequence[str]) -> Tensor:
-        """Encode and normalize text with the Hugging Face model."""
+        """Encode text, normalizing embeddings when configured."""
         inputs = self.processor(
             text=list(texts),
             return_tensors="pt",
@@ -261,10 +303,10 @@ class CLIPAnnotator(Annotator):
         )
         inputs = {name: value.to(self.device) for name, value in inputs.items()}
         features = self.model.get_text_features(**inputs)
-        return F.normalize(features, dim=-1)
+        return F.normalize(features, dim=-1) if self.normalize else features
 
     def encode_images(self, images: Sequence[Any]) -> Tensor:
-        """Preprocess, encode, and normalize images with Hugging Face."""
+        """Preprocess and encode images, normalizing when configured."""
         processor_kwargs = {}
         if images and all(
             isinstance(image, Tensor)
@@ -283,7 +325,7 @@ class CLIPAnnotator(Annotator):
         )
         pixel_values = inputs["pixel_values"].to(self.device)
         features = self.model.get_image_features(pixel_values=pixel_values)
-        return F.normalize(features, dim=-1)
+        return F.normalize(features, dim=-1) if self.normalize else features
 
     def _progress(self, iterable: Any, desc: str, total: int | None = None) -> Any:
         if not self.show_progress:
