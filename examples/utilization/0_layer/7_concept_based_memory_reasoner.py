@@ -13,7 +13,6 @@ from torch_concepts.data.datasets import ToyDataset
 from torch_concepts.nn import (
     LinearEmbeddingToConcept,
     MLP,
-    ReconstructionRuleConceptEmbeddingToConcept,
     RuleConceptEmbeddingToConcept,
     RuleMemory,
 )
@@ -65,20 +64,22 @@ def main():
         n_concepts=n_concepts,
         latent_size=memory_latent_size,
     )
+    # The two task paths are the same layer at two reconstruction weights:
+    # 0 scores a rule by task satisfaction alone, > 0 also by how well the
+    # rule reconstructs the concepts.
     task_predictor = RuleConceptEmbeddingToConcept(
         out_concepts=n_tasks,
         in_concepts=n_concepts,
         in_embeddings=rule_embedding_size,
         n_rules=n_rules,
+        rec_weight=0.0,
     )
-    reconstruction_predictor = (
-        ReconstructionRuleConceptEmbeddingToConcept(
-            out_concepts=n_tasks,
-            in_concepts=n_concepts,
-            in_embeddings=rule_embedding_size,
-            n_rules=n_rules,
-            rec_weight=0.1,
-        )
+    reconstruction_predictor = RuleConceptEmbeddingToConcept(
+        out_concepts=n_tasks,
+        in_concepts=n_concepts,
+        in_embeddings=rule_embedding_size,
+        n_rules=n_rules,
+        rec_weight=0.1,
     )
 
     model = ModuleDict(
