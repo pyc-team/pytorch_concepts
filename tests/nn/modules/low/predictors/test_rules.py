@@ -3,9 +3,7 @@ import unittest
 
 import torch
 
-from torch_concepts import Annotations, AnnotatedTensor
 from torch_concepts.nn import (
-    ReconstructionRuleConceptEmbeddingToConcept,
     RuleConceptEmbeddingToConcept,
     RuleMemory,
 )
@@ -90,28 +88,6 @@ class TestRuleConceptEmbeddingToConcept(unittest.TestCase):
         )
         self.assertEqual(output.shape, (4, n_tasks))
 
-    def test_annotation_output(self):
-        tasks = Annotations(
-            labels=["y1", "y2"], cardinalities=[1, 1]
-        )
-        n_rules, n_concepts = 2, 4
-        predictor = RuleConceptEmbeddingToConcept(
-            out_concepts=tasks,
-            in_concepts=n_concepts,
-            in_embeddings=2 * n_rules * (1 + 3 * n_concepts),
-            n_rules=n_rules,
-        )
-        selector = torch.softmax(torch.randn(3, 2, n_rules), dim=-1)
-        roles = torch.softmax(
-            torch.randn(3, 2, n_rules, n_concepts, 3), dim=-1
-        )
-        output = predictor(
-            concepts=torch.rand(3, n_concepts),
-            embeddings=pack_rule_embeddings(selector, roles),
-        )
-        self.assertIsInstance(output, AnnotatedTensor)
-        self.assertEqual(output.annotation.labels, ["y1", "y2"])
-
     def test_gradient_flow_detaches_concepts(self):
         n_tasks, n_rules, n_concepts = 2, 4, 5
         predictor = RuleConceptEmbeddingToConcept(
@@ -137,10 +113,10 @@ class TestRuleConceptEmbeddingToConcept(unittest.TestCase):
         self.assertIsNotNone(roles_logits.grad)
 
 
-class TestReconstructionRuleConceptEmbeddingToConcept(unittest.TestCase):
+class TestRuleConceptEmbeddingToConceptReconstruction(unittest.TestCase):
     def test_forward_shape(self):
         n_tasks, n_rules, n_concepts = 2, 3, 6
-        predictor = ReconstructionRuleConceptEmbeddingToConcept(
+        predictor = RuleConceptEmbeddingToConcept(
             out_concepts=n_tasks,
             in_concepts=n_concepts,
             in_embeddings=n_tasks * n_rules * (1 + 3 * n_concepts),
@@ -167,10 +143,10 @@ class TestReconstructionRuleConceptEmbeddingToConcept(unittest.TestCase):
             in_embeddings=n_tasks * n_rules * (1 + 3 * n_concepts),
             n_rules=n_rules,
         )
-        low = ReconstructionRuleConceptEmbeddingToConcept(
+        low = RuleConceptEmbeddingToConcept(
             **kwargs, rec_weight=0.0
         )
-        high = ReconstructionRuleConceptEmbeddingToConcept(
+        high = RuleConceptEmbeddingToConcept(
             **kwargs, rec_weight=1.0
         )
         concepts = torch.rand(3, n_concepts)

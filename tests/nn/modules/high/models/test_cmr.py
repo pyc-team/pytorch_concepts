@@ -26,7 +26,7 @@ def make_cmr_loss(task_names, concept_weight=1.0, task_weight=1.0):
     )
 
 
-def test_cmr_routes_reconstruction_prediction_as_auxiliary_value():
+def test_cmr_exposes_reconstruction_prediction_beside_the_task():
     model = ConceptMemoryReasoner(
         input_size=2,
         annotations=Annotations(labels=["c1", "c2", "xor"], cardinalities=[1, 1, 1]),
@@ -39,8 +39,7 @@ def test_cmr_routes_reconstruction_prediction_as_auxiliary_value():
     output = model(query=query, evidence={"input": torch.randn(2, 2)})
 
     assert output.probs["xor"].shape == (2, 1)
-    assert output.value["tasks_with_rec"].shape == (2, 1)
-    assert "tasks_with_rec" not in output.probs.annotation.label_to_index
+    assert output.probs["tasks_with_rec"].shape == (2, 1)
 
     loss = make_cmr_loss(task_names=["xor"])(output, model.prepare_target(target))
     loss.backward()
@@ -60,7 +59,13 @@ def test_cmr_cpd_parametrizations_match_layer_output_domains():
 
     assert set(factors["rule_selector"].parametrization) == {"logits"}
     assert set(factors["tasks"].parametrization) == {"probs"}
-    assert set(factors["tasks_with_rec"].parametrization) == {"value"}
+    assert set(factors["tasks_with_rec"].parametrization) == {"probs"}
+    # The reconstruction head scores the same quantity as the task head, so it
+    # must not drift to a different family.
+    assert (
+        factors["tasks_with_rec"].variable.distribution
+        == factors["tasks"].variable.distribution
+    )
 
 
 def test_cmr_composite_loss_matches_original_value_and_gradients():
@@ -101,7 +106,7 @@ def test_cmr_composite_loss_matches_original_value_and_gradients():
     )
     task_target = target[task_names].to(output.probs.dtype)
     task_pred = output.probs[task_names]
-    rec_pred = output.value["tasks_with_rec"].to(task_pred.dtype)
+    rec_pred = output.probs["tasks_with_rec"].to(task_pred.dtype)
     ordinary_bce = torch.nn.functional.binary_cross_entropy(
         task_pred, task_target, reduction="none"
     )
