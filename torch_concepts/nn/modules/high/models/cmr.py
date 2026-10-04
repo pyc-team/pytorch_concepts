@@ -11,7 +11,6 @@ from .....distributions import Delta
 from ...low.dense_layers import MLP
 from ...low.encoders.linear import LinearEmbeddingToConcept
 from ...low.predictors.rule import (
-    ReconstructionRuleConceptEmbeddingToConcept,
     RuleConceptEmbeddingToConcept,
     RuleMemory,
 )
@@ -22,6 +21,7 @@ from ...mid.graph.bayesian_network import BayesianNetwork
 from ...mid.inference.base import BaseInference
 from ...mid.inference.torch.deterministic import DeterministicInference
 from ...mid.variable import EmbeddingVariable
+from ...mid.activations import DefaultActivation
 from ...loss import PyCLoss
 from ...outputs import ModelOutput
 from ..base.bipartite import BipartiteModel
@@ -43,18 +43,15 @@ class CMRTaskLoss(PyCLoss):
         if target is None:
             raise ValueError("CMRTaskLoss requires a concept-space target.")
         if output.probs is None:
-            raise ValueError("CMRTaskLoss requires Bernoulli probability outputs.")
-        if (
-            output.value is None
-            or "tasks_with_rec" not in output.value.annotation.label_to_index
-        ):
+            raise ValueError("CMRTaskLoss requires probability outputs.")
+        if "tasks_with_rec" not in output.probs.annotation.label_to_index:
             raise ValueError(
-                "CMRTaskLoss requires output.value[\"tasks_with_rec\"]."
+                "CMRTaskLoss requires output.probs[\"tasks_with_rec\"]."
             )
 
         task_target = target[self.task_names].to(output.probs.dtype)
         task_pred = output.probs[self.task_names]
-        rec_pred = output.value["tasks_with_rec"].to(task_pred.dtype)
+        rec_pred = output.probs["tasks_with_rec"].to(task_pred.dtype)
         if task_pred.shape != rec_pred.shape or task_pred.shape != task_target.shape:
             raise ValueError(
                 "CMR task predictions and targets must have identical shapes."
@@ -169,19 +166,15 @@ class ConceptMemoryReasoner(BipartiteModel):
         )
 
     def default_query(self, ground_truth, step="train"):
-        """Include both CMR task paths in the standard split-aware query."""
+        """Include both CMR task paths in the standard query."""
         query = super().default_query(ground_truth, step=step)
         query["tasks_with_rec"] = None
         return query
 
     def _input_latent_block(self):
         """Build the standard raw-input to latent block used by CBM/CEM."""
-        input_var = EmbeddingVariable(
-            "input", distribution=Delta, shape=self.input_size
-        )
-        latent_var = EmbeddingVariable(
-            "latent", distribution=Delta, size=self.latent_size
-        )
+        input_var = EmbeddingVariable("input", distribution=Delta, shape=self.input_size)
+        latent_var = EmbeddingVariable("latent", distribution=Delta, size=self.latent_size)
         input_cpd = ParametricCPD(
             input_var,
             parents=[],
@@ -208,7 +201,7 @@ class ConceptMemoryReasoner(BipartiteModel):
             parametrization=[
                 {"probs": nn.Sequential(
                     LinearEmbeddingToConcept(self.latent_size, c.size),
-                    nn.Sigmoid(),
+                    DefaultActivation(c, "probs"),
                 )}
                 for c in concepts
             ],
@@ -289,6 +282,7 @@ class ConceptMemoryReasoner(BipartiteModel):
                     in_concepts=n_concepts,
                     in_embeddings=rule_embedding_size,
                     n_rules=self.n_rules,
+                    rec_weight=0.0,
                 )
             },
             aggregate=aggregate_rule_inputs,
@@ -296,16 +290,17 @@ class ConceptMemoryReasoner(BipartiteModel):
 
         rec_tasks = EmbeddingVariable(
             "tasks_with_rec",
-            distribution=Delta,
+            # The same quantity as ``tasks``, scored through a different head.
+            distribution=tasks[0].distribution,
             shape=tasks[0].shape,
         )
         rec_cpd = ParametricCPD(
             rec_tasks,
             parents=[*concepts, selector, roles],
-            # The reconstruction-aware rule layer also returns probabilities.
-            # Delta's ``value`` parameter passes them through unchanged.
+            # The same layer as the task head, at a non-zero reconstruction
+            # weight: that weight is the only difference between the two paths.
             parametrization={
-                "value": ReconstructionRuleConceptEmbeddingToConcept(
+                "probs": RuleConceptEmbeddingToConcept(
                     out_concepts=n_tasks,
                     in_concepts=n_concepts,
                     in_embeddings=rule_embedding_size,
