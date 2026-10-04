@@ -39,7 +39,6 @@ from .modules.low.predictors.hypernet import HyperlinearConceptEmbeddingToConcep
 from .modules.low.predictors.linear import LinearConceptToConcept
 from .modules.low.predictors.mlp import MLPConceptToConcept
 from .modules.low.predictors.rule import (
-    ReconstructionRuleConceptEmbeddingToConcept,
     RuleConceptEmbeddingToConcept,
     RuleMemory,
 )
@@ -164,7 +163,6 @@ __all__ = [
     "MixConceptEmbeddings",
     "RuleMemory",
     "RuleConceptEmbeddingToConcept",
-    "ReconstructionRuleConceptEmbeddingToConcept",
 
     # Dense layers
     "Dense",
