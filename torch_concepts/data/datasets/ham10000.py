@@ -21,7 +21,25 @@ logger = logging.getLogger(__name__)
 
 DATAVERSE_URL = "https://dataverse.harvard.edu"
 PERSISTENT_ID = "doi:10.7910/DVN/DBW86T"
-DIAGNOSIS_STATES = ("akiec", "bcc", "bkl", "df", "mel", "nv", "vasc")
+# Source: the Dataverse record for PERSISTENT_ID, and Tschandl, Rosendahl &
+# Kittler, Scientific Data 5:180161 (2018).
+DIAGNOSIS_STATES = {
+    "akiec": "actinic keratosis or intraepithelial carcinoma",
+    "bcc": "basal cell carcinoma",
+    "bkl": "benign keratosis-like lesion",
+    "df": "dermatofibroma",
+    "mel": "melanoma",
+    "nv": "melanocytic nevus",
+    "vasc": "vascular lesion",
+}
+# ``dx_type``: how that diagnosis was confirmed. Available in ``metadata``
+# rather than as a concept, since it describes the label, not the lesion.
+DX_TYPE_STATES = {
+    "histo": "histopathology",
+    "follow_up": "follow-up examination",
+    "consensus": "expert consensus",
+    "confocal": "in-vivo confocal microscopy",
+}
 RAW_FILENAMES = (
     "HAM10000_images_part_1.zip",
     "HAM10000_images_part_2.zip",
@@ -241,6 +259,14 @@ class HAM10000Dataset(ConceptDataset):
         row_indices = indices.tolist() if hasattr(indices, "tolist") else list(indices)
         super()._subset_rows(row_indices)
         self.metadata = self.metadata.iloc[row_indices].reset_index(drop=True)
+
+    @staticmethod
+    def description(code: str) -> str:
+        """Return the published description of a ``dx`` or ``dx_type`` code."""
+        descriptions = {**DIAGNOSIS_STATES, **DX_TYPE_STATES}
+        if code not in descriptions:
+            raise ValueError(f"Unknown HAM10000 code: {code!r}.")
+        return descriptions[code]
 
     @property
     def n_samples(self) -> int:
