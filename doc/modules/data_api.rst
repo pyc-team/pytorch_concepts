@@ -41,6 +41,7 @@ Datasets
    DSpritesRegressionDataset
    AWA2Dataset
    CUBDataset
+   HAM10000Dataset
 
 Data Modules
 ------------
@@ -59,3 +60,4 @@ Data Modules
    DSpritesRegressionDataModule
    AWA2DataModule
    CUBDataModule
+   HAM10000DataModule
