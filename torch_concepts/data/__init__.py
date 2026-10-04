@@ -46,6 +46,7 @@ from .datamodules.mnist_arithmetic import MNISTArithmeticDataModule
 from .datamodules.dsprites_regression import DSpritesRegressionDataModule
 from .datamodules.awa2 import AWA2DataModule
 from .datamodules.cub import CUBDataModule
+from .datamodules.ham10000 import HAM10000DataModule
 
 __all__ = [
     # Submodules
@@ -87,4 +88,5 @@ __all__ = [
     "DSpritesRegressionDataModule",
     "AWA2DataModule",
     "CUBDataModule",
+    "HAM10000DataModule",
 ]
