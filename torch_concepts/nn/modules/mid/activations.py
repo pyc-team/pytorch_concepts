@@ -89,11 +89,7 @@ class DefaultActivation(nn.Module):
     def __init__(self, variable: Variable, param: str) -> None:
         super().__init__()
         spec = spec_for(variable.distribution)
-        if param not in spec.param_sizes:
-            raise ValueError(
-                f"DefaultActivation: {variable.distribution.__name__} has no parameter "
-                f"{param!r}. Its parameters are {sorted(spec.param_sizes)}."
-            )
+        spec.check_param(param, variable.distribution, "DefaultActivation")
         self.param = param
         self.distribution = variable.distribution
         factory = spec.param_activations.get(param)

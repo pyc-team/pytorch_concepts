@@ -17,7 +17,6 @@ from typing import Dict, Optional
 import torch
 import torch.distributions as dist
 
-from ...activations import DefaultActivation
 from ...distributions import spec_for
 from ...variable import Variable
 
@@ -50,18 +49,14 @@ def build_relaxed_distribution(
     # A variable may be declared with either the base family (Bernoulli,
     # OneHotCategorical) or its relaxed counterpart — both carry the same
     # ``relaxed`` factory in their spec, with the engine supplying ``temperature``.
-    # The factory keeps the params flat (*batch, size) and reinterprets the
-    # single size axis as the event, so batch_shape stays (*batch,); the
-    # variable's declared shape is restored on the sampled realization, not here.
     spec = spec_for(D, f"Variable {variable.name!r}")
-    from ..utils import build_distribution, build_plate
+    from ..utils import build_distribution, build_in_member_layout
 
     if spec.relaxed is not None:
-        # Same per-member split as the exact builder: a relaxed *categorical*
-        # plate is k independent RelaxedOneHotCategoricals, not one over the
-        # flattened width. ``build_plate`` is a no-op for the per-element
-        # relaxed families (Bernoulli), which already handle a plate column-wise.
-        return build_plate(
+        # The same builder as the exact path, so the two cannot disagree about
+        # layout: a relaxed categorical plate is k independent
+        # RelaxedOneHotCategoricals, one per row of the member axis.
+        return build_in_member_layout(
             variable, spec, params,
             lambda p: spec.relaxed(p, temperature, validate_args),
         )
@@ -81,7 +76,14 @@ def _activate(variable: Variable, param_name: str, value: torch.Tensor) -> torch
     spec = spec_for(variable.distribution)
     if param_name == spec.primary_param:
         return value
-    return DefaultActivation(variable, spec.primary_param)(value)
+    # ``value`` is in member layout, so each member already owns the last axis:
+    # the activation is the lone-variable one (a plain softmax), never the
+    # unflatten/flatten sandwich a flat row would need.
+    factory = spec.param_activations.get(spec.primary_param)
+    if factory is None:
+        return value
+    width = variable.member_size
+    return factory(width, width)(value)
 
 
 def propagated_value(
@@ -92,10 +94,16 @@ def propagated_value(
     Picks ``primary_param`` when present, else falls back to ``logits``. If
     ``activate``, the picked parameter is converted to the primary domain
     (:func:`_activate`) before being returned; otherwise it is returned raw.
+
+    ``params`` must be in the member layout every CPD reports. A flat
+    ``(*leading, size)`` parameter — an engine's *output*, for instance —
+    raises ``ValueError``: activating it would take a categorical plate's
+    softmax over all members' classes at once.
     """
     spec = spec_for(variable.distribution, f"Variable {variable.name!r}")
     for param_name in (spec.primary_param, "logits"):
         if param_name in params:
+            variable._require_member_layout(params[param_name], param_name)
             return (
                 _activate(variable, param_name, params[param_name])
                 if activate
@@ -110,28 +118,25 @@ def propagated_value(
 def _apply_mode(variable: Variable, value: torch.Tensor) -> torch.Tensor:
     """Quantize an already-activated value to the family's hard mode.
 
-    Starts from a value in the *activated* domain (probs, not logits) and applies
-    the family's per-member rule. Splitting into one row per member first
-    makes a ``k``-member categorical plate take ``k`` argmaxes rather than one
-    over the flattened ``k * member_size`` columns — every family that declares
-    a rule has one scalar per event element, so ``member_size`` is exactly its
-    class count and a plate splits like a lone variable. Families whose
-    ``primary_param`` already is the mode (Normal's ``loc``, Delta's ``value``)
-    declare no rule and come back untouched.
+    Starts from a value in the *activated* domain (probs, not logits) and
+    applies the family's rule to the last axis. In member layout that axis is
+    one member's event, so a ``k``-member categorical plate takes ``k``
+    argmaxes for free. Families whose ``primary_param`` already is the mode
+    (Normal's ``loc``, Delta's ``value``) declare no rule and come back
+    untouched.
     """
     spec = spec_for(variable.distribution, f"Variable {variable.name!r}")
-    if spec.mode is None:
-        return value
-    per_member = value.reshape(*value.shape[:-1], -1, variable.member_size)
-    return spec.mode(per_member).reshape(value.shape)
+    return value if spec.mode is None else spec.mode(value)
 
 
 def mode_value(variable: Variable, params: Dict[str, torch.Tensor]) -> torch.Tensor:
     """Return the family's *mode* — its most likely value — for a parameter dict.
 
-    The hard counterpart of :func:`propagated_value`, in the same flat
-    ``(*leading, size)`` layout: ``0.``/``1.`` bits for a Bernoulli, a one-hot
-    row for a categorical, ``loc`` for a Normal, ``value`` for a Delta.
+    The hard counterpart of :func:`propagated_value`, in the same member layout
+    ``(*leading, n_members, *member_shape)``: ``0.``/``1.`` bits for a
+    Bernoulli, a one-hot row per member for a categorical, ``loc`` for a
+    Normal, ``value`` for a Delta. Flat parameters raise, as in
+    :func:`propagated_value`.
 
     The parameter is activated first, which makes each rule
     parametrization-agnostic — ``sigmoid(logits) > 0.5`` is ``logits > 0``, and

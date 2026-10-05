@@ -635,10 +635,10 @@ class Annotations:
         return labels
 
     def resolve(self, keys, cache_key=None) -> Tuple[Union[slice, List[int]], "Annotations"]:
-        """Resolve concept/plate names to ``(selector, sub_annotation)``, memoised.
+        """Resolve concept/plate names to ``(selector, sub_annotations)``, memoised.
 
         ``selector`` is a ``slice`` for a contiguous column run (indexing it returns
-        a tensor view) or a ``List[int]`` otherwise; ``sub_annotation`` is the
+        a tensor view) or a ``List[int]`` otherwise; ``sub_annotations`` is the
         matching :meth:`subset`. This is the hot entry point for label-based tensor
         slicing — results are cached on the annotation, so repeating a lookup is
         O(1). Pass ``cache_key`` (e.g. a concept-type string) to key the cache by a

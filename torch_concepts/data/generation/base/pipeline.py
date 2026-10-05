@@ -124,7 +124,7 @@ class ConceptGenerationPipeline:
             values = list(outputs.values())
             return AnnotatedTensor(
                 torch.stack([value.tensor for value in values]).mean(dim=0),
-                values[0].annotation,
+                values[0].annotations,
                 axis=1,
             )
 
@@ -387,18 +387,18 @@ class ConceptGenerationPipeline:
                     dataset,
                 )
         elif self.routing == "cartesian":
-            for generator_name, annotation in concepts.items():
-                annotation = self._filter_concepts(annotation)
+            for generator_name, annotations in concepts.items():
+                annotations = self._filter_concepts(annotations)
                 for annotator_name, annotator in zip(
                     annotator_names, self.annotators
                 ):
                     route_name = f"{generator_name}_{annotator_name}"
                     concept_values = annotator.annotate(
-                        dataset, annotation, **kwargs
+                        dataset, annotations, **kwargs
                     )
                     concept_values = self._process_annotation_values(
                         concept_values,
-                        annotation,
+                        annotations,
                         dataset,
                         route_name,
                     )
@@ -409,20 +409,20 @@ class ConceptGenerationPipeline:
                         dataset,
                     )
         else:
-            for generator_name, annotation, annotator_name, annotator in zip(
+            for generator_name, annotations, annotator_name, annotator in zip(
                 generator_names,
                 concepts.values(),
                 annotator_names,
                 self.annotators,
             ):
-                annotation = self._filter_concepts(annotation)
+                annotations = self._filter_concepts(annotations)
                 route_name = f"{generator_name}_{annotator_name}"
                 concept_values = annotator.annotate(
-                    dataset, annotation, **kwargs
+                    dataset, annotations, **kwargs
                 )
                 concept_values = self._process_annotation_values(
                     concept_values,
-                    annotation,
+                    annotations,
                     dataset,
                     route_name,
                 )
@@ -434,7 +434,7 @@ class ConceptGenerationPipeline:
                 )
 
         if self.aggregator is not None:
-            aggregate_annotation = self._common_annotation(values)
+            aggregate_annotations = self._common_annotations(values)
             aggregate_values = self.aggregator(values)
             aggregate_name = self._unique_name("aggregated", values)
             self._insert_result(
@@ -443,7 +443,7 @@ class ConceptGenerationPipeline:
                 aggregate_values,
                 dataset,
                 unique=False,
-                expected_annotation=aggregate_annotation,
+                expected_annotations=aggregate_annotations,
             )
 
         return values
@@ -603,8 +603,8 @@ class ConceptGenerationPipeline:
                     f"{tuple(values.shape)}."
                 )
             if not self._annotations_match(
-                processed.annotation,
-                values.annotation,
+                processed.annotations,
+                values.annotations,
             ):
                 raise ValueError(
                     f"{stage_name} must preserve the annotation metadata."
@@ -805,7 +805,7 @@ class ConceptGenerationPipeline:
         concept_values: AnnotatedTensor,
         dataset: Dataset,
         unique: bool = True,
-        expected_annotation: Annotations | None = None,
+        expected_annotations: Annotations | None = None,
     ) -> None:
         """Validate and insert a generated annotated tensor.
 
@@ -824,7 +824,7 @@ class ConceptGenerationPipeline:
             Dataset used to validate the tensor's sample dimension.
         unique : bool, default=True
             Whether to resolve a name collision automatically.
-        expected_annotation : Annotations, optional
+        expected_annotations : Annotations, optional
             Expected concept axis. When omitted, the tensor's own annotation
             is used.
 
@@ -848,9 +848,9 @@ class ConceptGenerationPipeline:
             name,
             concept_values,
             (
-                expected_annotation
-                if expected_annotation is not None
-                else concept_values.annotation
+                expected_annotations
+                if expected_annotations is not None
+                else concept_values.annotations
             ),
             dataset,
         )
@@ -860,14 +860,14 @@ class ConceptGenerationPipeline:
     def _validate_value(
         name: str,
         values: AnnotatedTensor,
-        annotation: Annotations,
+        annotations: Annotations,
         dataset: Dataset,
     ) -> None:
         """Check that a result tensor matches its dataset and concept axis.
 
         A valid result is a two-dimensional tensor whose first dimension equals
         the number of dataset samples and whose second dimension equals
-        ``annotation.size``.
+        ``annotations.size``.
 
         Parameters
         ----------
@@ -875,7 +875,7 @@ class ConceptGenerationPipeline:
             Result name included in validation errors.
         values : AnnotatedTensor
             Annotated tensor to validate.
-        annotation : Annotations
+        annotations : Annotations
             Definition of the expected output dimension.
         dataset : Dataset
             Definition of the expected sample dimension.
@@ -908,15 +908,15 @@ class ConceptGenerationPipeline:
                 f"Generated concept values {name!r} have {values.shape[0]} "
                 f"samples, but the dataset has {len(dataset)}."
             )
-        if values.shape[1] != values.annotation.size:
+        if values.shape[1] != values.annotations.size:
             raise ValueError(
                 f"Generated concept values {name!r} have {values.shape[1]} "
-                "outputs, but their attached annotation defines "
-                f"{values.annotation.size}."
+                "outputs, but their attached annotations define "
+                f"{values.annotations.size}."
             )
         if not ConceptGenerationPipeline._annotations_match(
-            values.annotation,
-            annotation,
+            values.annotations,
+            annotations,
         ):
             raise ValueError(
                 f"Generated concept values {name!r} carry annotation metadata "
@@ -924,7 +924,7 @@ class ConceptGenerationPipeline:
             )
 
     @staticmethod
-    def _common_annotation(
+    def _common_annotations(
         values: dict[str, AnnotatedTensor],
     ) -> Annotations:
         """Ensure aggregate inputs share one annotation definition.
@@ -947,10 +947,10 @@ class ConceptGenerationPipeline:
         if not values:
             raise ValueError("Cannot aggregate an empty set of concept values.")
         iterator = iter(values.values())
-        first = next(iterator).annotation
+        first = next(iterator).annotations
         if any(
             not ConceptGenerationPipeline._annotations_match(
-                value.annotation,
+                value.annotations,
                 first,
             )
             for value in iterator

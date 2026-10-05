@@ -90,7 +90,7 @@ def main():
     batch = next(iter(dm.train_dataloader()))
     print(f"   inputs:   {tuple(batch['inputs']['x'].shape)}")
     print(f"   concepts: {tuple(batch['concepts']['c'].shape)} "
-          f"labels={batch['concepts']['c'].annotation.labels}")
+          f"labels={batch['concepts']['c'].annotations.labels}")
 
 
 if __name__ == "__main__":

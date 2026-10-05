@@ -1,20 +1,24 @@
 """Distribution utilities shared across all inference backends.
 
-Backend-agnostic helpers used by both the pure-PyTorch and the Pyro engines:
+Backend-agnostic helpers used by every engine, whichever backend it runs on:
 temperature schedules, event reshaping, exact distribution construction,
-teacher forcing, and the discrete-state count an enumeration-based engine needs.
+teacher forcing, the discrete-state count and factor-table enumeration an
+enumeration-based engine needs, and plate unpacking for the engines that would
+rather not know about plates.
 """
 
 from __future__ import annotations
 
 import math
 import warnings
-from typing import Callable, Dict, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Union
 
 import torch
 import torch.distributions as dist
+import torch.nn as nn
 
 from ..distributions import spec_for
+from ..graph.probabilistic_model import ProbabilisticModel
 from ..variable import Variable
 
 
@@ -113,9 +117,10 @@ def teacher_force(
 def enumerable_cardinality(variable: Variable) -> int:
     """Number of discrete states of ``variable``.
 
-    Used by the enumeration-based engines (currently
-    :class:`~torch_concepts.nn.BeliefPropagation`) to size the state axis of a
-    variable's messages and to build a factor's log-potential table.
+    Used by the enumeration-based engines
+    (:class:`~torch_concepts.nn.BeliefPropagation`,
+    :class:`~torch_concepts.nn.PgmpyVariableElimination`) to size the state axis
+    of a variable's messages and to build a factor's log-potential table.
 
     - Bernoulli-family with ``size == 1`` -> ``2`` (states ``0`` and ``1``).
     - Categorical/OneHot-family -> ``variable.size`` (one state per class).
@@ -152,9 +157,109 @@ def enumerable_cardinality(variable: Variable) -> int:
         )
     raise ValueError(
         f"Variable {variable.name!r}: distribution {D.__name__} is not discretely "
-        "enumerable, so it cannot be a free (queried/latent) variable under belief "
-        "propagation. Observe it as evidence, or use a discrete distribution."
+        "enumerable, so it cannot be a free (queried/latent) variable under an "
+        "enumeration-based engine (belief propagation, variable elimination). "
+        "Observe it as evidence, or use a discrete distribution."
     )
+
+
+# ---------------------------------------------------------------------------
+# Factor enumeration
+# ---------------------------------------------------------------------------
+# How an enumeration-based engine turns a *parametrized* factor into a plain
+# table of numbers. Shared by every such engine — ``BeliefPropagation`` runs the
+# tables through message passing, ``PgmpyVariableElimination`` hands them to
+# pgmpy — so the enumeration itself lives here, next to its collaborator
+# ``enumerable_cardinality`` and to ``unpack_plates``.
+
+
+def encode_states(
+    variable: Variable,
+    states: torch.Tensor,
+    leading: torch.Size,
+    dtype: torch.dtype,
+) -> torch.Tensor:
+    """Value tensor for a whole *grid* of discrete states of ``variable``.
+
+    ``states`` is a ``(grid,)`` vector of state indices; the result is
+    ``(grid, *leading, width)`` — scalar ``{0., 1.}`` for a binary variable,
+    one-hot otherwise — broadcast (as a view) over the leading dimensions.
+    Batching the grid into a leading axis is what lets a factor's whole
+    table come out of a *single* ``log_potential`` call instead of one call
+    per cell.
+    """
+    card = enumerable_cardinality(variable)
+    if card == 2 and variable.size == 1:
+        width = 1
+        flat = states.to(dtype).unsqueeze(-1)
+    else:
+        width = variable.size
+        flat = torch.nn.functional.one_hot(states, variable.size).to(dtype)
+    grid = int(states.shape[0])
+    return flat.reshape(grid, *([1] * len(leading)), width).expand(
+        grid, *leading, width
+    )
+
+
+def factor_table(
+    factor,
+    free_variables: List[str],
+    handles: Dict[str, Variable],
+    member_blocks: Dict[str, torch.Tensor],
+    leading: torch.Size,
+    dtype: torch.dtype,
+    device: torch.device,
+) -> Optional[torch.Tensor]:
+    """Log-potential table over ``free_variables`` (axis order preserved).
+
+    The free grid is enumerated into a **leading** axis and scored in one
+    ``factor.log_potential`` call — uniform for CPDs and energy-based
+    potentials alike, since both accept any number of leading dimensions.
+    Observed variables read their value from ``member_blocks`` and are baked
+    in (factor reduction), which is also how *continuous* evidence enters.
+    Returns ``None`` when the factor has no free variable: it is then a
+    constant w.r.t. the active variables and contributes nothing.
+
+    The result is shaped ``(*leading, *free_cards)`` — the state axes are
+    appended after however many leading dimensions the query carries.
+
+    NOTE: folding the grid into the batch is transparent to any module that
+    acts **per element**, including ``nn.Dropout`` — its mask has the shape
+    of its input, so every cell of the table still gets an independent mask,
+    exactly as when the cells were scored one call at a time. What *does*
+    change is a module that couples across the batch (``BatchNorm`` in
+    training mode, or anything reducing over the batch axis): its statistics
+    are now taken over ``grid * leading`` rows rather than ``leading``. Such
+    a module makes ``log_potential`` batch-dependent, which is outside the
+    factor contract to begin with.
+    """
+    free_cards = [enumerable_cardinality(handles[m]) for m in free_variables]
+    if not free_cards:
+        return None
+    grid = math.prod(free_cards)
+
+    # ``cartesian_prod`` enumerates in C order (last slot varies fastest),
+    # which is what makes the final reshape map axis ``a`` to slot ``a``.
+    states = torch.cartesian_prod(
+        *[torch.arange(c, device=device) for c in free_cards]
+    ).reshape(grid, len(free_cards))
+    blocks: Dict[str, torch.Tensor] = {
+        m: encode_states(handles[m], states[:, a], leading, dtype)
+        for a, m in enumerate(free_variables)
+    }
+
+    def block(name: str) -> torch.Tensor:
+        """This variable's ``(grid, *leading, width)`` value: enumerated or observed."""
+        if name in blocks:
+            return blocks[name]
+        observed = member_blocks[name]
+        return observed.unsqueeze(0).expand(grid, *observed.shape)
+
+    assignment = {v: block(v.name) for v in factor.scope}
+
+    logp = factor.log_potential(assignment).reshape(grid, *leading)
+    # (grid, *leading) -> (*leading, grid) -> (*leading, *free_cards)
+    return torch.movedim(logp, 0, -1).reshape(*leading, *free_cards)
 
 
 def make_temperature_schedule(
@@ -196,97 +301,6 @@ def make_temperature_schedule(
     )
 
 
-def reshape_value_to_event(
-    variable: Variable, value: torch.Tensor
-) -> torch.Tensor:
-    """Reshape a variable's *realization* to ``(*leading, *variable.shape)``.
-
-    ``leading`` may be any number of batch-like dimensions: the trailing block
-    is identified by :func:`leading_shape`, so a value arriving flat as
-    ``(*leading, size)`` (what a CPD produces) and one already in event layout
-    (what a user passes as evidence) both land on the same result. A value
-    already shaped exactly ``(*leading, *event)`` — including a variable with
-    no event shape — is returned unchanged rather than reshaped.
-    """
-    event = tuple(variable.shape)
-    if not event:
-        return value
-    leading = leading_shape(event, variable.size, value, variable.name)
-    target = (*leading, *event)
-    return value if tuple(value.shape) == target else value.reshape(*target)
-
-
-def flatten_event(variable: Variable, value: torch.Tensor) -> torch.Tensor:
-    """Inverse of :func:`reshape_value_to_event`.
-
-    Flattens ``(*leading, *variable.shape)`` to ``(*leading, size)`` — the layout
-    every distribution parameter and every annotated output tensor uses. A value
-    that is already flat is returned unchanged.
-    """
-    if len(variable.shape) <= 1:
-        return value
-    leading = leading_shape(variable.shape, variable.size, value, variable.name)
-    return value.reshape(*leading, variable.size)
-
-
-def leading_shape(
-    event: Tuple[int, ...],
-    size: int,
-    value: torch.Tensor,
-    context: str = "",
-) -> torch.Size:
-    """The batch-like dimensions of ``value`` given the event it carries.
-
-    Three layouts are accepted, tried in this order:
-
-    1. **event** — ``(*leading, *event)``, what a caller passes as evidence;
-    2. **flat** — ``(*leading, size)``, what a CPD produces;
-    3. **squeezed scalar** — ``(*leading,)`` for a width-1 variable, where the
-       trailing axis of size 1 is left off (a ``(batch,)`` vector of labels for
-       a binary concept).
-
-    The leading dimensions are whatever precedes the matched trailing block.
-    This is the one place the mid level decides where "batch" ends and "event"
-    begins, so engines never have to assume a single leading dimension.
-
-    ``event``/``size`` are passed rather than a :class:`Variable` because a
-    plate *member*'s event is its own per-member block, not the whole plate's.
-
-    When several layouts match — they can only differ for a width-1 variable,
-    where e.g. ``(1,)`` reads as either one flat observation or one squeezed
-    one — the first that leaves a non-empty leading shape wins, since every
-    engine expects at least one batch-like dimension.
-
-    Raises
-    ------
-    ValueError
-        If ``value`` matches no layout.
-    """
-    event = tuple(event)
-    n_event = len(event)
-    candidates: list = []
-    if value.dim() >= n_event and tuple(value.shape[value.dim() - n_event:]) == event:
-        candidates.append(value.shape[: value.dim() - n_event])
-    if value.dim() >= 1 and value.shape[-1] == size:
-        candidates.append(value.shape[:-1])
-    if size == 1:
-        candidates.append(value.shape)
-
-    for leading in candidates:
-        if len(leading):
-            return leading
-    if candidates:
-        return candidates[0]
-
-    prefix = f"{context}: " if context else ""
-    raise ValueError(
-        f"{prefix}tensor of shape {tuple(value.shape)} matches none of the accepted "
-        f"layouts: event (*leading, {', '.join(map(str, event))}), flat "
-        f"(*leading, {size})"
-        + (", or squeezed (*leading,)." if size == 1 else ".")
-    )
-
-
 #: Hard counterpart of each relaxed family. The estimators draw *exact*
 #: samples so that equality matching works, even from a variable declared with
 #: a Concrete/relaxed family for gradient flow.
@@ -306,59 +320,30 @@ else:
     EXACT_FAMILY[_pyro_dist.RelaxedOneHotCategoricalStraightThrough] = dist.OneHotCategorical
 
 
-def _splits_per_member(spec, params: Dict[str, torch.Tensor], variable: Variable) -> bool:
-    """Whether ``variable``'s parameters can be folded into one row per member.
-
-    True when every supplied parameter is one scalar per event element, so
-    ``(*batch, k * member_size)`` reshapes cleanly to ``(*batch, k,
-    member_size)``. It is False for a parameter whose size is a *function* of
-    the width rather than proportional to it — ``MultivariateNormal``'s
-    ``scale_tril`` holds ``size * (size + 1) / 2`` Cholesky entries, and a plate
-    of those needs one factor per member, not a reshape. Such a plate is left
-    building a single joint distribution, as it always has.
-    """
-    return all(
-        name in spec.param_sizes and spec.param_sizes[name](variable.size) == variable.size
-        for name in params
-    )
-
-
-def build_plate(
+def build_in_member_layout(
     variable: Variable,
     spec,
     params: Dict[str, torch.Tensor],
     make: Callable[[Dict[str, torch.Tensor]], dist.Distribution],
 ) -> dist.Distribution:
-    """Build ``make(params)``, splitting a plate whose event spans the width.
+    """Build ``make(params)`` over the canonical member layout.
 
-    ``make`` maps a (possibly folded) parameter dict to a distribution over its
-    trailing axis. A family whose event is univariate — Bernoulli, Normal, the
-    ``wrap_independent`` families — already gives one scalar per member, so it
-    is built as-is (the caller wraps it in ``Independent`` if it needs to). A
-    family whose event spans the *whole* width (``OneHotCategorical`` and its
-    relaxed twin) is wrong on a plate: ``k`` members of ``member_size`` classes
-    are ``k`` independent distributions, not one over ``k * member_size``
-    classes. So its params are folded to ``(*batch, k, member_size)``, built in
-    one call, wrapped ``Independent`` over the member axis, and the event
-    reshaped back to the flat ``(*batch, size)`` that every caller passes values
-    in and reads samples out with.
+    Parameters are reshaped to ``(*leading, n_members, *member_shape)``, so the
+    family sees **one member per batch row**: ``k`` members of ``m`` classes are
+    ``k`` independent categoricals rather than one distribution over ``k*m``
+    classes, and that now falls out of the layout instead of needing a fold,
+    build, wrap and reshape-back round trip.
 
-    This is the single place the member split lives, so the exact
-    (:func:`build_distribution`) and relaxed (``build_relaxed_distribution``)
-    builders cannot disagree about it.
+    The member axis and the member's own event are then reinterpreted as the
+    event, leaving ``batch_shape == (*leading,)`` — what a ``pyro.plate`` over
+    the batch needs, and what makes ``log_prob`` return one score per leading
+    element. ``spec.event_ndims`` is subtracted because a family such as
+    ``OneHotCategorical`` already claims its trailing class axis as its event.
     """
-    if (
-        len(variable.members) > 1
-        and not spec.wrap_independent
-        and _splits_per_member(spec, params, variable)
-    ):
-        k, m = len(variable.members), variable.member_size
-        folded = {name: v.reshape(*v.shape[:-1], k, m) for name, v in params.items()}
-        return dist.TransformedDistribution(
-            dist.Independent(make(folded), 1),
-            dist.transforms.ReshapeTransform((k, m), (variable.size,)),
-        )
-    return make(params)
+    member = {name: variable.to_member(t, name) for name, t in params.items()}
+    return dist.Independent(
+        make(member), 1 + len(variable.member_shape) - spec.event_ndims
+    )
 
 
 def build_distribution(
@@ -372,30 +357,145 @@ def build_distribution(
     asks for a *hard* draw from a variable declared with a relaxed family (see
     :data:`EXACT_FAMILY`). ``variable.dist_kwargs`` (a Concrete family's
     temperature) belongs to the declared family, so it is dropped when the
-    family is overridden. Everything else — the plate split below included —
-    is shared, which is the point: the layout rules live in one place.
+    family is overridden.
 
-    Parameters arrive flat as ``(*batch, size)`` (the CPD's untouched output), so
-    univariate-event families (Bernoulli, Normal) are wrapped in ``Independent``
-    over the single trailing ``size`` axis, giving ``batch_shape == (*batch,)``
-    and ``event_shape == (size,)``. This keeps the batch dim intact (required for
-    Pyro plates to line up) regardless of the variable's declared ``shape``; the
-    variable's event shape is restored on the *realization* by
-    :func:`reshape_value_to_event`, not on the distribution parameters.
+    The result always has ``batch_shape == (*leading,)`` and
+    ``event_shape == (n_members, *member_shape)``, so ``log_prob`` returns one
+    score per leading element and a draw comes back in the member layout.
     """
     D = family if family is not None else variable.distribution
     dist_kwargs = {} if family is not None else variable.dist_kwargs
     spec = spec_for(D, f"Variable {variable.name!r}")
-
-    # ``wrap_independent`` marks the families whose event is univariate (a
-    # Delta point mass, by contrast, already has ``batch_shape == ()``). For
-    # those, a plate already works: one scalar per column, k of them.
-    if spec.wrap_independent:
-        return dist.Independent(D(**params, **dist_kwargs), 1)
-
-    return build_plate(
+    return build_in_member_layout(
         variable, spec, params, lambda p: D(**p, **dist_kwargs)
     )
 
 
+# ---------------------------------------------------------------------------
+# Plates
+# ---------------------------------------------------------------------------
 
+class _MemberSlice(nn.Module):
+    """One plate member's columns out of the plate's shared parametrization head.
+
+    A plate's head emits all ``k`` members' parameters in one flat row; an
+    unpacked member variable wants only its own. The head object itself is
+    shared by all ``k`` slices, so the unpacked model trains the same weights as
+    the packed one.
+    """
+
+    def __init__(self, head: nn.Module, cols: slice):
+        super().__init__()
+        self.head = head
+        self.cols = cols
+
+    def forward(self, *args, **kwargs):
+        return self.head(*args, **kwargs)[..., self.cols]
+
+
+def unpack_plates(pgm: ProbabilisticModel) -> ProbabilisticModel:
+    """A copy of ``pgm`` with one ordinary variable per plate member.
+
+    For an engine that has no reason to know what a plate is — belief
+    propagation, say — this removes the concept entirely: every variable has one
+    member, so every factor scope entry is a single variable. Returns ``pgm``
+    itself when it holds no plate.
+
+    A plate's CPD becomes ``k`` CPDs, one per member, sharing the plate's head
+    through :class:`_MemberSlice`. That is exact: a plate's members are
+    conditionally independent given the parents, so ``log p(c_1..c_k | pa)``
+    equals ``sum_i log p(c_i | pa)``. Every other factor keeps its identity and
+    only has its plate inputs replaced by the members, in order — which is the
+    same concatenated row the plate produced.
+
+    The result is a **separate** model sharing the original's modules. Callers
+    must not register it as a submodule: ``state_dict`` does not deduplicate
+    shared modules, so doing so would double the checkpoint and rename its keys.
+
+    Raises
+    ------
+    ValueError
+        If a plate appears in a :class:`ParametricPotential`'s scope. An energy
+        module ties its whole scope together, so those members are not
+        separable; declare them as individual variables instead.
+    """
+    from ..factors.cpd import ParametricCPD
+    from ..factors.potential import ParametricPotential
+
+    if not any(v.is_plate for v in pgm.variables.values()):
+        return pgm
+
+    # Every plate expands to its members; everything else is reused as-is, so a
+    # factor that touches no plate keeps working on the very same objects.
+    by_name: Dict[str, Variable] = {}
+    for var in pgm.variables.values():
+        if not var.is_plate:
+            by_name[var.name] = var
+            continue
+        for name in var.members:
+            handle = var.member(name)
+            # A member handle points back at its plate, and the adjacency map is
+            # keyed by that plate — which is not a registered variable here.
+            handle._plate = None
+            by_name[name] = handle
+
+    def unpacked(v: Variable) -> List[Variable]:
+        """``v``'s stand-ins: a plate's members, anything else just itself."""
+        return [by_name[m] for m in (v.members if v.plate is v else [v.name])]
+
+    factors: List = []
+    for factor in pgm.factors.values():
+        if isinstance(factor, ParametricPotential):
+            if any(v.is_plate for v in factor.scope):
+                plates = [v.name for v in factor.scope if v.is_plate]
+                raise ValueError(
+                    f"unpack_plates: potential {factor.name!r} has plates {plates} in "
+                    "its scope. An energy module ties its whole scope together, so a "
+                    "plate's members are not separable there — declare them as "
+                    "individual variables instead."
+                )
+            scope = [by_name[v.name] for v in factor.scope]
+            factors.append(
+                factor if scope == factor.scope else ParametricPotential(
+                    scope=scope,
+                    parametrization=dict(factor.parametrization),
+                    name=factor.name,
+                    aggregate=factor._aggregate_arg,
+                )
+            )
+            continue
+
+        parents = [p for v in factor.parents for p in unpacked(v)]
+        child = factor.variable
+        if not child.is_plate:
+            # Compare the whole scope, not just the parents: a *member handle*
+            # keeps a back-reference to its plate, which the graph rejects as
+            # "not the registered variable", so it has to be swapped out too.
+            scope = [by_name[child.name], *parents]
+            factors.append(
+                factor if scope == factor.scope else ParametricCPD(
+                    scope[0],
+                    parametrization=dict(factor.parametrization),
+                    parents=parents,
+                    aggregate=factor._aggregate_arg,
+                    trunk=factor.trunk,
+                )
+            )
+            continue
+
+        width = child.member_size
+        for name in child.members:
+            start = child.index_of(name) * width
+            cols = slice(start, start + width)
+            factors.append(ParametricCPD(
+                by_name[name],
+                parametrization={
+                    p: _MemberSlice(mod, cols)
+                    for p, mod in factor.parametrization.items()
+                },
+                parents=parents,
+                aggregate=factor._aggregate_arg,
+                trunk=factor.trunk,
+            ))
+
+    return type(pgm)(variables=list(by_name.values()), factors=factors)

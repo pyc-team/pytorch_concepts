@@ -6,8 +6,6 @@ for all concept-based datasets in the torch_concepts package.
 """
 from abc import abstractmethod
 import os
-import hashlib
-import json
 import logging
 import numpy as np
 import pandas as pd
@@ -125,7 +123,7 @@ class ConceptDataset(Dataset):
         self.use_as_gt = False
         self.generated_gt_name: Optional[str] = None
         self.generated_concepts: Dict[str, AnnotatedTensor] = {}
-        self._ground_truth_annotation: Optional[Annotations] = None
+        self._ground_truth_annotations: Optional[Annotations] = None
         self._ground_truth_source: Optional[str] = None
 
         self.input_data: Tensor = parse_tensor(input_data, 'input', self.precision)
@@ -134,17 +132,17 @@ class ConceptDataset(Dataset):
         )
 
         # sanity check
-        axis_annotation = annotations
+        axis_annotations = annotations
 
-        if axis_annotation is not None and axis_annotation.cardinalities is not None:
-            concept_names_with_cardinality = [name for name, card in zip(axis_annotation.labels, axis_annotation.cardinalities) if card is not None]
-            concept_names_without_cardinality = [name for name in axis_annotation.labels if name not in concept_names_with_cardinality]
+        if axis_annotations is not None and axis_annotations.cardinalities is not None:
+            concept_names_with_cardinality = [name for name, card in zip(axis_annotations.labels, axis_annotations.cardinalities) if card is not None]
+            concept_names_without_cardinality = [name for name in axis_annotations.labels if name not in concept_names_with_cardinality]
             if concept_names_without_cardinality:
                 raise ValueError(f"Cardinalities list provided but missing cardinality for concepts: {concept_names_without_cardinality}")
 
         # set concept annotations
         self._annotations = annotations
-        self._all_concept_annotation: Optional[Annotations] = None
+        self._all_concept_annotations: Optional[Annotations] = None
         if annotations is None:
             if concept_names_subset is not None:
                 raise ValueError(
@@ -168,13 +166,8 @@ class ConceptDataset(Dataset):
 
         # Store graph
         self._graph = None
-        self._graph_native = None
-        self._graph_generator = None
         if graph is not None:
             self.set_graph(graph)  # graph among all concepts
-            self._graph_native = self._graph
-            if list(self._graph.node_names) != list(self.concept_names):
-                self._graph = None
 
         self.scalers = {}  # dict of fitted scalers for input and concepts
 
@@ -196,7 +189,7 @@ class ConceptDataset(Dataset):
                     "AnnotatedTensor; use its attached annotation."
                 )
             self._validate_native_concepts(concepts)
-            annotations = concepts.annotation
+            annotations = concepts.annotations
             values = concepts.tensor
         elif isinstance(concepts, (Tensor, np.ndarray, pd.DataFrame)):
             if concepts.ndim != 2:
@@ -226,13 +219,13 @@ class ConceptDataset(Dataset):
             )
 
         values = parse_tensor(values, 'concepts', self.precision)
-        concept_annotation = annotations.to_concept_space()
-        if values.shape[1] != concept_annotation.size:
+        concept_annotations = annotations.to_concept_space()
+        if values.shape[1] != concept_annotations.size:
             raise ValueError(
                 "Native concepts must have one column per concept; "
-                f"got {values.shape[1]} columns for {concept_annotation.size} concepts."
+                f"got {values.shape[1]} columns for {concept_annotations.size} concepts."
             )
-        native_values = AnnotatedTensor(values, concept_annotation, axis=1)
+        native_values = AnnotatedTensor(values, concept_annotations, axis=1)
         self._validate_native_concepts(native_values)
         return native_values, annotations
 
@@ -250,7 +243,7 @@ class ConceptDataset(Dataset):
                 f"Concepts has {concepts.shape[0]} samples but "
                 f"input_data has {self.n_samples}."
             )
-        if concepts.shape[1] != len(concepts.annotation.labels):
+        if concepts.shape[1] != len(concepts.annotations.labels):
             raise ValueError(
                 "Native concepts must have one column per concept; "
                 "categorical values must be class indices, not per-state scores."
@@ -318,7 +311,7 @@ class ConceptDataset(Dataset):
         original scale). Used as the DataLoader ``collate_fn`` by
         :class:`ConceptDataModule`.
         """
-        def collate_optional(values, annotation, name):
+        def collate_optional(values, annotations, name):
             if all(value is None for value in values):
                 return None
             if any(value is None for value in values):
@@ -326,8 +319,8 @@ class ConceptDataset(Dataset):
                     f"Cannot collate {name}: only some samples contain values."
                 )
             collated = default_collate(values)
-            if annotation is not None:
-                collated = AnnotatedTensor(collated, annotation, axis=1)
+            if annotations is not None:
+                collated = AnnotatedTensor(collated, annotations, axis=1)
             return collated
 
         generated_keys = tuple(self.generated_concepts)
@@ -347,13 +340,13 @@ class ConceptDataset(Dataset):
             "concepts": {
                 "c": collate_optional(
                     [concepts["c"] for concepts in concept_samples],
-                    self._ground_truth_annotation,
+                    self._ground_truth_annotations,
                     "selected concepts",
                 ),
                 "native": collate_optional(
                     [concepts["native"] for concepts in concept_samples],
                     (
-                        self.native_concepts.annotation
+                        self.native_concepts.annotations
                         if self.native_concepts is not None
                         else None
                     ),
@@ -362,7 +355,7 @@ class ConceptDataset(Dataset):
                 "generated": {
                     name: collate_optional(
                         [concepts["generated"][name] for concepts in concept_samples],
-                        self.generated_concepts[name].annotation,
+                        self.generated_concepts[name].annotations,
                         f"generated concepts {name!r}",
                     )
                     for name in generated_keys
@@ -416,18 +409,18 @@ class ConceptDataset(Dataset):
         """
         if self.concepts is None:
             return []
-        return self.concepts.annotation.labels
+        return self.concepts.annotations.labels
 
     @property
     def annotations(self) -> Optional[Annotations]:
         """The concept schema: a categorical concept keeps its cardinality, so a
         model can size its variables. Native ground truth returns the declared
         schema, a generated one the annotation its pipeline produced.
-        ``concepts.annotation`` describes the stored tensor instead — one column
+        ``concepts.annotations`` describes the stored tensor instead — one column
         per concept when native, whatever the pipeline shipped when generated."""
         if self._ground_truth_source == "native" and self._annotations is not None:
             return self._annotations
-        return self.concepts.annotation if self.concepts is not None else None
+        return self.concepts.annotations if self.concepts is not None else None
 
     @property
     def shape(self) -> tuple:
@@ -450,16 +443,6 @@ class ConceptDataset(Dataset):
     def graph(self) -> Optional[ConceptGraph]:
         """Adjacency matrix of the causal graph between concepts."""
         return self._graph
-
-    @property
-    def graph_native(self) -> Optional[ConceptGraph]:
-        """Graph supplied by the dataset before graph generation."""
-        return self._graph_native
-
-    @property
-    def graph_generator(self):
-        """Graph generator configured for this dataset."""
-        return self._graph_generator
 
     # Dataset flags #####################################################
 
@@ -653,97 +636,6 @@ class ConceptDataset(Dataset):
             backbone.train(was_training)
         return torch.cat(embeddings_list, dim=0)
 
-
-    # Graph precomputation #############################################
-    def precompute_graph(
-        self,
-        graph_generator,
-        cache: bool = True,
-        cache_dir: Optional[str] = None,
-        force: bool = False,
-    ) -> None:
-        """Precompute a fixed graph, optionally caching it to disk."""
-        if getattr(graph_generator, "trainable", False):
-            raise TypeError(
-                "precompute_graph only accepts fixed graph generators; use "
-                "set_graph_generator for a learnable generator."
-            )
-        if (
-            graph_generator.name == "ground_truth"
-            and self.graph_native is not None
-            and list(self.graph_native.node_names) != list(self.concept_names)
-        ):
-            raise ValueError("Native graph nodes must match the selected concept names and order.")
-        self._graph_generator = graph_generator
-
-        graph = None
-        cache_path = None
-        cache_key = None
-        if cache and graph_generator.name != "ground_truth":
-            graph_generator._resolve_context(self)
-            cache_key = graph_generator._cache_key(self)
-            cache_dir = cache_dir or self.root_dir
-            os.makedirs(cache_dir, exist_ok=True)
-            digest = hashlib.sha256(
-                json.dumps(cache_key).encode("utf-8")
-            ).hexdigest()
-            cache_path = os.path.join(cache_dir, f"graph_{digest}.pt")
-            if os.path.exists(cache_path) and not force:
-                payload = torch.load(cache_path, weights_only=True)
-                if payload.get("cache_key") == cache_key:
-                    graph = ConceptGraph(
-                        payload["adjacency"],
-                        node_names=list(self.concept_names),
-                    )
-                    graph_generator._validate_graph(graph)
-                    graph_generator.graph = graph
-                    graph_generator.fitted = True
-                    logger.info(
-                        "Loading a pre-existing graph from %s; "
-                        "set force=True to recompute it.",
-                        cache_path,
-                    )
-                    warnings.warn(
-                        "Loading a pre-existing graph cache for "
-                        f"dataset={type(self).__name__}(name={self.name!r}), "
-                        f"method={graph_generator.name!r}, "
-                        f"source={graph_generator.source!r}, "
-                        f"refinement={cache_key['refinement']!r}. If refinement logic, "
-                        "prompting, descriptions, or other hidden behavior changed "
-                        "without changing this cache identity, pass force=True to "
-                        "recompute it.",
-                        UserWarning,
-                        stacklevel=2,
-                    )
-
-        if graph is None:
-            graph = graph_generator.construct_graph(self)
-            if list(graph.node_names) != list(self.concept_names):
-                graph_generator.invalidate_cache()
-                raise ValueError("Graph nodes must match the selected concept names and order.")
-            if cache_path is not None and cache_key is not None:
-                logger.info("Saving graph to %s", cache_path)
-                torch.save(
-                    {
-                        "cache_key": cache_key,
-                        "adjacency": graph.data.cpu(),
-                    },
-                    cache_path,
-                )
-        self._graph = graph
-
-    def set_graph_generator(self, graph_generator) -> None:
-        """Register a learnable graph generator without materializing or caching it."""
-        if not getattr(graph_generator, "trainable", False):
-            raise TypeError(
-                "set_graph_generator only accepts learnable graph generators; "
-                "use precompute_graph for a fixed generator."
-            )
-        if list(graph_generator.concept_names) != list(self.concept_names):
-            raise ValueError("Generator concepts must match the selected concept names and order.")
-        self._graph_generator = graph_generator
-        self._graph = None
-
     def _subset_rows(self, indices) -> None:
         """Subset every row-aligned source and rebuild selected supervision."""
         row_indices = (
@@ -775,7 +667,7 @@ class ConceptDataset(Dataset):
         def subset_concepts(values: AnnotatedTensor) -> AnnotatedTensor:
             return AnnotatedTensor(
                 values.tensor[row_indices],
-                values.annotation,
+                values.annotations,
                 axis=1,
             )
 
@@ -901,7 +793,7 @@ class ConceptDataset(Dataset):
             normalized[name] = (
                 values
                 if values.axis == 1
-                else AnnotatedTensor(values.tensor, values.annotation, axis=1)
+                else AnnotatedTensor(values.tensor, values.annotations, axis=1)
             )
 
         selects_generated = bool(normalized) and (
@@ -950,16 +842,9 @@ class ConceptDataset(Dataset):
         else:
             selected = None
             self._ground_truth_source = None
-        previous_names = list(self.concept_names)
         self.concepts = selected
-        if previous_names != list(self.concept_names):
-            self._graph = None
-            generator = getattr(self, "_graph_generator", None)
-            if generator is not None:
-                generator.invalidate_cache()
-                self._graph_generator = None
-        self._ground_truth_annotation = (
-            selected.annotation if selected is not None else None
+        self._ground_truth_annotations = (
+            selected.annotations if selected is not None else None
         )
 
     def _resolve_generated_gt_name(self) -> str:
@@ -995,7 +880,7 @@ class ConceptDataset(Dataset):
             concept_names_subset: List of strings naming the subset of concepts to use.
                                     If :obj:`None`, will use all concepts.
         """
-        self._all_concept_annotation = annotations
+        self._all_concept_annotations = annotations
         if concept_names_subset is not None:
             self._annotations = annotations.subset(concept_names_subset)
 
@@ -1066,7 +951,7 @@ class ConceptDataset(Dataset):
             )
 
         selected_labels = list(self._annotations.labels)
-        missing = [label for label in selected_labels if label not in concepts.annotation.labels]
+        missing = [label for label in selected_labels if label not in concepts.annotations.labels]
         if missing:
             raise ValueError(f"Native concepts are missing required labels: {missing}.")
         concepts = concepts[selected_labels]

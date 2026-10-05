@@ -57,7 +57,11 @@ class Delta(Distribution):
         if isinstance(value, list):
             value = torch.tensor(value, dtype=torch.float32)
 
-        super().__init__(batch_shape=torch.Size([]), validate_args=validate_args)
+        # ``batch_shape`` follows the value, so a Delta composes with
+        # ``Independent`` like every other family. A hardcoded empty batch shape
+        # made ``Independent(Delta(v), n)`` raise, forcing every caller to
+        # special-case the one family used for deterministic nodes.
+        super().__init__(batch_shape=value.shape, validate_args=validate_args)
         self._value = value.clone()
 
     @property
@@ -114,7 +118,10 @@ class Delta(Distribution):
         Returns:
             torch.Tensor: Log probability (zeros).
         """
-        return torch.zeros(value.shape[:-len(self.event_shape)])
+        # Drop the event dims, keeping the batch dims. Note ``shape[:-n]`` is
+        # wrong here: ``event_shape`` is empty, and ``-0`` slices everything
+        # away rather than nothing, which used to collapse this to a scalar.
+        return torch.zeros(value.shape[: value.ndim - len(self.event_shape)])
 
     def __repr__(self):
         """

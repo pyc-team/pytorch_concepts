@@ -67,7 +67,7 @@ class TestForwardGoldenContract:
         out = eng.query(query=["g", "y", "m1"], evidence={"x": torch.randn(3, 4)})
         # params: only queried names; samples: every computed var + queried member.
         assert set(out.variables) == {"g", "m1", "m2", "y"}
-        assert set(out.samples.annotation.labels) == {"m1", "m2", "y"}
+        assert set(out.samples.annotations.labels) == {"m1", "m2", "y"}
         assert out.samples["g"].shape == (3, 2)
         assert out.samples["y"].shape == (3, 1)
         assert _is_view_of(out.samples["m1"], out.samples["g"])
@@ -80,4 +80,4 @@ class TestForwardGoldenContract:
         out = eng.query(query=["y"], evidence={"x": torch.randn(3, 4)})
         # y's ancestor g is sampled (hence in samples) but not queried (not in params).
         assert set(out.variables) == {"y"}
-        assert set(out.samples.annotation.labels) == {"m1", "m2", "y"}
+        assert set(out.samples.annotations.labels) == {"m1", "m2", "y"}

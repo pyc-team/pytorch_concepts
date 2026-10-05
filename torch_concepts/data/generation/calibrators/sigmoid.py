@@ -23,7 +23,7 @@ class SigmoidCalibrator(Calibrator):
     ...     calibrated.tensor,
     ...     torch.sigmoid(torch.tensor([[-2.0], [0.0], [2.0]])),
     ... )
-    >>> calibrated.annotation.labels
+    >>> calibrated.annotations.labels
     ['is_red']
     """
 

@@ -1210,7 +1210,7 @@ class TestAnnotatedTensorCoverage(unittest.TestCase):
     def test_init_1d_tensor_allowed_on_last_axis(self):
         # The default axis=-1 annotates the last axis, which a 1-D tensor has.
         t = self.AnnotatedTensor(self.torch.rand(3), self.ann)
-        self.assertEqual(t.annotation.labels, ['a', 'b', 'c'])
+        self.assertEqual(t.annotations.labels, ['a', 'b', 'c'])
 
     def test_init_mismatched_size_raises(self):
         with self.assertRaises(ValueError):
@@ -1227,14 +1227,14 @@ class TestAnnotatedTensorCoverage(unittest.TestCase):
     def test_getitem_list_syntax(self):
         result = self.t[['a', 'b']]
         self.assertIsInstance(result, self.AnnotatedTensor)
-        self.assertEqual(result.annotation.labels, ['a', 'b'])
+        self.assertEqual(result.annotations.labels, ['a', 'b'])
 
     def test_getitem_fallback_index_keeps_annotation_on_last_axis(self):
         # Under the default axis=-1, indexing a row of (4, 3) leaves a (3,)
         # whose last axis is still the annotated one, so the labels survive.
         result = self.t[0]
         self.assertIsInstance(result, self.AnnotatedTensor)
-        self.assertEqual(result.annotation.labels, ['a', 'b', 'c'])
+        self.assertEqual(result.annotations.labels, ['a', 'b', 'c'])
 
     def test_getitem_fallback_index_drops_annotation_for_axis_1(self):
         # With axis=1 the same index drops to 1-D, so axis 1 no longer exists.
@@ -1260,8 +1260,8 @@ class TestAnnotatedTensorCoverage(unittest.TestCase):
         t2 = AT(torch.rand(4, 3), ann2)
         merged = t1.union_with(t2)
         # 'd' added; 'b','c' not duplicated
-        self.assertIn('d', merged.annotation.labels)
-        self.assertEqual(merged.annotation.labels.count('b'), 1)
+        self.assertIn('d', merged.annotations.labels)
+        self.assertEqual(merged.annotations.labels.count('b'), 1)
 
     def test_type_accessor_returns_subtensor(self):
         torch = self.torch
@@ -1273,7 +1273,7 @@ class TestAnnotatedTensorCoverage(unittest.TestCase):
         from torch_concepts.tensor import AnnotatedTensor as AT
         t = AT(torch.rand(3, 2), ann)
         self.assertIsInstance(t.binary(), AT)
-        self.assertEqual(t.binary().annotation.labels, ['x', 'y'])
+        self.assertEqual(t.binary().annotations.labels, ['x', 'y'])
 
     def test_type_accessor_returns_none_when_absent(self):
         torch = self.torch
@@ -1360,7 +1360,7 @@ class TestAnnotatedTensorLastAxis(unittest.TestCase):
         # 'g' is not a label, but it names the group both labels came from.
         self.assertIn('g', t)
         self.assertTrue(torch.equal(t['g'].tensor, t.tensor))
-        self.assertEqual(t['g'].annotation.labels, ['m1', 'm2'])
+        self.assertEqual(t['g'].annotations.labels, ['m1', 'm2'])
 
     def test_union_with_concatenates_on_the_last_axis(self):
         left = AnnotatedTensor(
@@ -1371,7 +1371,7 @@ class TestAnnotatedTensorLastAxis(unittest.TestCase):
         )
         merged = left.union_with(right)
         self.assertEqual(tuple(merged.tensor.shape), (2, 3, 3))
-        self.assertEqual(merged.annotation.labels, ['a', 'b'])
+        self.assertEqual(merged.annotations.labels, ['a', 'b'])
 
     def test_requires_explicit_axis_for_more_than_2d(self):
         # The default is only well-defined where axis 1 and -1 coincide (<=2-D).
@@ -1399,7 +1399,7 @@ class TestAnnotatedTensorLastAxis(unittest.TestCase):
         t = AnnotatedTensor(torch.randn(5, 4), self.ann, axis=-1)
         u = t.unsqueeze(0)
         self.assertIsInstance(u, AnnotatedTensor)
-        self.assertEqual(u.annotation.labels, ['a', 'b', 'c'])
+        self.assertEqual(u.annotations.labels, ['a', 'b', 'c'])
         e = u.expand(3, 5, 4)
         self.assertIsInstance(e, AnnotatedTensor)
         self.assertEqual(tuple(e['b'].tensor.shape), (3, 5, 2))
@@ -1411,7 +1411,7 @@ class TestAnnotatedTensorLastAxis(unittest.TestCase):
         ann = Annotations(labels=['a', 'b', 'c'])
         r = AnnotatedTensor(torch.randn(6, 3), ann, axis=-1).reshape(2, 3, 3)
         self.assertIsInstance(r, AnnotatedTensor)
-        self.assertEqual(r.annotation.labels, ['a', 'b', 'c'])
+        self.assertEqual(r.annotations.labels, ['a', 'b', 'c'])
 
     def test_reduction_dropping_an_axis_on_3d_drops_annotation(self):
         # The mislabel hazard: on a 3-D source a reduction can slide a different,
@@ -1447,7 +1447,7 @@ class TestAnnotatedTensorLastAxis(unittest.TestCase):
         t = AnnotatedTensor(torch.randn(2, 5, 3), ann, axis=-1)
         moved = t.transpose(0, 1)  # swaps the two leading axes; last axis intact
         self.assertIsInstance(moved, AnnotatedTensor)
-        self.assertEqual(moved.annotation.labels, ['a', 'b', 'c'])
+        self.assertEqual(moved.annotations.labels, ['a', 'b', 'c'])
         self.assertEqual(tuple(moved.tensor.shape), (5, 2, 3))
         self.assertTrue(torch.equal(moved.tensor, t.tensor.transpose(0, 1)))
 
@@ -1460,7 +1460,7 @@ class TestDerivedCaches(unittest.TestCase):
     when ``groups`` is reassigned.
     """
 
-    def _annotation(self):
+    def _annotations(self):
         ann = Annotations(
             labels=['a', 'b', 'c'],
             cardinalities=[1, 1, 1],
@@ -1472,7 +1472,7 @@ class TestDerivedCaches(unittest.TestCase):
     # ------------------------------------------------------------- subset --
 
     def test_subset_is_memoised_and_correct(self):
-        ann = self._annotation()
+        ann = self._annotations()
         first = ann.subset(['b', 'a'])
         self.assertEqual(first.labels, ['b', 'a'])
         self.assertIs(ann.subset(['b', 'a']), first)
@@ -1481,12 +1481,12 @@ class TestDerivedCaches(unittest.TestCase):
         self.assertEqual(ann.subset(['c']).labels, ['c'])
 
     def test_subset_still_rejects_unknown_labels(self):
-        ann = self._annotation()
+        ann = self._annotations()
         with self.assertRaises(ValueError):
             ann.subset(['nope'])
 
     def test_subset_invalidated_on_groups_reassignment(self):
-        ann = self._annotation()
+        ann = self._annotations()
         first = ann.subset(['a', 'b'])
         self.assertEqual(first.label_groups, {'plate': ['a', 'b']})
         ann.groups = {'plate': ['a']}  # reassign -> drops the subset cache
@@ -1497,17 +1497,17 @@ class TestDerivedCaches(unittest.TestCase):
     # ------------------------------------------- AnnotatedTensor slicing --
 
     def test_label_and_group_slicing_are_cached_but_track_the_data(self):
-        ann = self._annotation()
+        ann = self._annotations()
         data = torch.arange(3).float().expand(4, 3)
         t = AnnotatedTensor(data, ann, axis=-1)
 
         # repeated access resolves to the same columns every time
         for _ in range(3):
-            self.assertEqual(t['a'].annotation.labels, ['a'])
+            self.assertEqual(t['a'].annotations.labels, ['a'])
             self.assertTrue(torch.equal(t['a'].tensor, data[:, 0:1]))
-            self.assertEqual(t['plate'].annotation.labels, ['a', 'b'])
+            self.assertEqual(t['plate'].annotations.labels, ['a', 'b'])
             self.assertTrue(torch.equal(t['plate'].tensor, data[:, 0:2]))
-            self.assertEqual(t['c', 'a'].annotation.labels, ['c', 'a'])
+            self.assertEqual(t['c', 'a'].annotations.labels, ['c', 'a'])
 
         # a second tensor sharing the annotation reuses the resolution but
         # must slice *its own* data
@@ -1516,18 +1516,18 @@ class TestDerivedCaches(unittest.TestCase):
         self.assertTrue(torch.equal(t['plate'].tensor, data[:, 0:2]))
 
     def test_group_slicing_invalidated_on_groups_reassignment(self):
-        ann = self._annotation()
+        ann = self._annotations()
         data = torch.arange(3).float().expand(4, 3)
         t = AnnotatedTensor(data, ann, axis=-1)
-        self.assertEqual(t['plate'].annotation.labels, ['a', 'b'])
+        self.assertEqual(t['plate'].annotations.labels, ['a', 'b'])
 
         # 'plate' now covers all three labels
         ann.groups = {'plate': ['a', 'b', 'c']}
-        self.assertEqual(t['plate'].annotation.labels, ['a', 'b', 'c'])
+        self.assertEqual(t['plate'].annotations.labels, ['a', 'b', 'c'])
         self.assertTrue(torch.equal(t['plate'].tensor, data))
 
     def test_unknown_key_still_raises_after_caching(self):
-        ann = self._annotation()
+        ann = self._annotations()
         t = AnnotatedTensor(torch.randn(4, 3), ann, axis=-1)
         t['a']  # populate the cache first
         with self.assertRaises(ValueError):
@@ -1536,7 +1536,7 @@ class TestDerivedCaches(unittest.TestCase):
     # -------------------------------------------------------------- resolve --
 
     def test_resolve_matches_manual_and_is_memoised(self):
-        ann = self._annotation()
+        ann = self._annotations()
         selector, sub_ann = ann.resolve(('c', 'a'))
         self.assertEqual(selector, ann.get_slice(['c', 'a']))
         self.assertIs(sub_ann, ann.subset(['c', 'a']))
@@ -1548,18 +1548,18 @@ class TestDerivedCaches(unittest.TestCase):
     def test_resolve_cache_key_by_type_is_a_short_string_not_the_label_tuple(self):
         """``resolve(labels, cache_key=<type>)`` never keys the cache by the
         (potentially huge) label tuple -- it keys it by the short type string."""
-        ann = self._annotation()
+        ann = self._annotations()
         ann.resolve(ann.labels, cache_key='binary')
         cache_keys = ann.__dict__['_slice_cache'].keys()
         self.assertIn('binary', cache_keys)
         self.assertNotIn(tuple(ann.labels), cache_keys)
 
     def test_type_accessors_are_cached_and_share_the_resolve_cache(self):
-        ann = self._annotation()
+        ann = self._annotations()
         data = torch.arange(3).float().expand(4, 3)
         t = AnnotatedTensor(data, ann, axis=-1)
         first = t.binary()
-        self.assertIs(t.binary().annotation, first.annotation)
+        self.assertIs(t.binary().annotations, first.annotations)
         self.assertIn('binary', ann.__dict__['_slice_cache'])
 
 
@@ -1579,7 +1579,7 @@ class TestRegisterPlateLabel(unittest.TestCase):
     def test_owner_expands_to_its_members(self):
         t, data = self._tensor()
         t.register_plate_label('plate', ['A', 'B', 'C'])
-        self.assertEqual(t['plate'].annotation.labels, ['A', 'B', 'C'])
+        self.assertEqual(t['plate'].annotations.labels, ['A', 'B', 'C'])
         self.assertTrue(torch.equal(t['plate'].tensor, data[:, 0:3]))
         # members stay individually addressable
         self.assertTrue(torch.equal(t['B'].tensor, data[:, 1:2]))
@@ -1587,14 +1587,14 @@ class TestRegisterPlateLabel(unittest.TestCase):
     def test_owner_adds_no_column(self):
         t, _ = self._tensor()
         t.register_plate_label('plate', ['A', 'B'])
-        self.assertEqual(t.annotation.labels, ['A', 'B', 'C', 'D'])
-        self.assertEqual(t.annotation.size, 4)
-        self.assertNotIn('plate', t.annotation.label_to_index)
+        self.assertEqual(t.annotations.labels, ['A', 'B', 'C', 'D'])
+        self.assertEqual(t.annotations.size, 4)
+        self.assertNotIn('plate', t.annotations.label_to_index)
 
     def test_registration_order_is_the_slice_order(self):
         t, data = self._tensor()
         t.register_plate_label('plate', ['C', 'A'])
-        self.assertEqual(t['plate'].annotation.labels, ['C', 'A'])
+        self.assertEqual(t['plate'].annotations.labels, ['C', 'A'])
         self.assertTrue(torch.equal(t['plate'].tensor,
                                     torch.cat([data[:, 2:3], data[:, 0:1]], dim=-1)))
 
@@ -1602,7 +1602,7 @@ class TestRegisterPlateLabel(unittest.TestCase):
         t, _ = self._tensor()
         t.register_plate_label('plate', ['A', 'B'])
         self.assertIn('plate', t)
-        self.assertEqual(t['D', 'plate'].annotation.labels, ['D', 'A', 'B'])
+        self.assertEqual(t['D', 'plate'].annotations.labels, ['D', 'A', 'B'])
 
     def test_registration_survives_derived_tensors(self):
         """It lives on the shared annotation, so operations that build a new
@@ -1610,19 +1610,19 @@ class TestRegisterPlateLabel(unittest.TestCase):
         t, data = self._tensor()
         t.register_plate_label('plate', ['A', 'B'])
         for derived in (t * 2, t[:3], t.unsqueeze(0), t.to(torch.float64)):
-            self.assertEqual(derived['plate'].annotation.labels, ['A', 'B'])
+            self.assertEqual(derived['plate'].annotations.labels, ['A', 'B'])
         # even one built separately from the same annotation
-        other = AnnotatedTensor(torch.ones(2, 4), t.annotation, axis=-1)
+        other = AnnotatedTensor(torch.ones(2, 4), t.annotations, axis=-1)
         self.assertTrue(torch.equal(other['plate'].tensor, torch.ones(2, 2)))
 
     def test_registering_after_slicing_invalidates_the_cache(self):
         t, data = self._tensor()
         t['A']  # populate the slice cache first
         t.register_plate_label('plate', ['A', 'B'])
-        self.assertEqual(t['plate'].annotation.labels, ['A', 'B'])
+        self.assertEqual(t['plate'].annotations.labels, ['A', 'B'])
         # re-registering the same owner over different members takes effect
         t.register_plate_label('plate', ['C', 'D'])
-        self.assertEqual(t['plate'].annotation.labels, ['C', 'D'])
+        self.assertEqual(t['plate'].annotations.labels, ['C', 'D'])
         self.assertTrue(torch.equal(t['plate'].tensor, data[:, 2:4]))
 
     def test_rejects_unknown_members(self):
@@ -1647,26 +1647,26 @@ class TestGroupPropagation(unittest.TestCase):
     """Groups survive every operation that derives a new annotation, so an
     owner stays addressable after slicing, merging or a round trip."""
 
-    def _annotation(self):
+    def _annotations(self):
         ann = Annotations(labels=['A', 'B', 'C', 'D'], cardinalities=[1] * 4,
                           types=['binary'] * 4)
         ann.register_group('plate', ['A', 'B', 'C'])
         return ann
 
     def test_subset_keeps_the_owner_addressable(self):
-        ann = self._annotation()
+        ann = self._annotations()
         t = AnnotatedTensor(torch.arange(4).float().expand(3, 4), ann, axis=-1)
         sub = t['plate']
-        self.assertEqual(sub.annotation.groups, {'plate': ['A', 'B', 'C']})
+        self.assertEqual(sub.annotations.groups, {'plate': ['A', 'B', 'C']})
         # the owner still resolves on the slice, so chained access works
-        self.assertEqual(sub['plate'].annotation.labels, ['A', 'B', 'C'])
+        self.assertEqual(sub['plate'].annotations.labels, ['A', 'B', 'C'])
 
     def test_subset_keeps_only_surviving_members(self):
-        ann = self._annotation()
+        ann = self._annotations()
         self.assertEqual(ann.subset(['A', 'D']).groups, {'plate': ['A']})
 
     def test_group_dropped_when_no_member_survives(self):
-        ann = self._annotation()
+        ann = self._annotations()
         self.assertIsNone(ann.subset(['D']).groups)
 
     def test_subset_preserves_registration_order(self):
@@ -1676,17 +1676,17 @@ class TestGroupPropagation(unittest.TestCase):
         self.assertEqual(ann.subset(['A', 'B', 'C']).groups, {'plate': ['C', 'A', 'B']})
 
     def test_round_trips_through_to_dict(self):
-        ann = self._annotation()
+        ann = self._annotations()
         self.assertEqual(ann.to_dict()['groups'], {'plate': ['A', 'B', 'C']})
         self.assertEqual(Annotations.from_dict(ann.to_dict()).groups,
                          {'plate': ['A', 'B', 'C']})
 
     def test_to_concept_space_keeps_groups(self):
-        ann = self._annotation()
+        ann = self._annotations()
         self.assertEqual(ann.to_concept_space().groups, {'plate': ['A', 'B', 'C']})
 
     def test_union_keeps_groups_from_both_sides(self):
-        left = self._annotation()
+        left = self._annotations()
         right = Annotations(labels=['E', 'F'], cardinalities=[1, 1],
                             types=['binary'] * 2)
         right.register_group('other', ['E', 'F'])
@@ -1697,7 +1697,7 @@ class TestGroupPropagation(unittest.TestCase):
     def test_union_drops_a_group_whose_owner_becomes_a_label(self):
         """A label always wins the lookup, so an alias that would be shadowed is
         dropped rather than kept as dead state."""
-        left = self._annotation()
+        left = self._annotations()
         right = Annotations(labels=['plate'], cardinalities=[1], types=['binary'])
         merged = left.union_with(right)
         self.assertIsNone(merged.groups)

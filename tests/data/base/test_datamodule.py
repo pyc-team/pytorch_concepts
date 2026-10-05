@@ -517,7 +517,7 @@ class TestConceptDataModuleScalerFitting:
         dm.setup('fit')
 
         fitted = dm.dataset.scalers['concepts']
-        assert list(fitted.mean.annotation.labels) == ['a', 'b']
+        assert list(fitted.mean.annotations.labels) == ['a', 'b']
 
     def test_statistics_use_the_train_split_only(self):
         """The decisive property: validation/test rows must not leak into the

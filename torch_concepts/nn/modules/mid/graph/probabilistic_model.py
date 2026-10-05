@@ -16,10 +16,9 @@ from ..variable import Variable
 class ProbabilisticModel(nn.Module, ABC):
     """Abstract probabilistic graphical model represented as a factor graph.
 
-    **Abstract**: instantiate :class:`BayesianNetwork`, :class:`MarkovNetwork`
-    or :class:`ChainGraph` instead. Subclasses inherit the shared machinery and
-    add their own structural validation by overriding
-    :meth:`_validate_factors`.
+    **Abstract**: instantiate :class:`BayesianNetwork` or :class:`MarkovNetwork`
+    instead. Subclasses inherit the shared machinery and add their own
+    structural validation by overriding :meth:`_validate_factors`.
 
     Parameters
     ----------
@@ -43,15 +42,13 @@ class ProbabilisticModel(nn.Module, ABC):
         variables: List[Variable],
         factors: Optional[List[ParametricFactor]] = None,
     ) -> None:
-        # ``ABC`` alone does not block instantiation when there are no abstract
-        # methods, and there is no method every subclass must override — the
-        # shared implementation is the point. So the abstractness is enforced
-        # explicitly here.
+        # There are no abstract methods. 
+        # So we raise an error if the user tries to instantiate this class directly.
         if type(self) is ProbabilisticModel:
             raise TypeError(
                 "ProbabilisticModel is abstract and cannot be instantiated directly. "
-                "Use BayesianNetwork (all directed CPDs), MarkovNetwork (all "
-                "undirected potentials), or ChainGraph (a mix of both)."
+                "Use BayesianNetwork (all directed CPDs) or MarkovNetwork (all "
+                "undirected potentials)."
             )
 
         super().__init__()
@@ -233,16 +230,21 @@ class ProbabilisticModel(nn.Module, ABC):
         """Value for any queryable ``name`` from whole-variable ``values``.
 
         The whole tensor for a variable name, a column slice (a view) for a
-        plate-member name. Delegates to the owning variable's ``select_value``,
-        so it is independent of how many factors reference the variable (works
-        for directed and undirected models alike).
+        plate-member name. Independent of how many factors reference the
+        variable, so it works for directed and undirected models alike.
         """
         var = self.resolve(name)
-        return var.select_value(values[var.name], name)
+        value = values[var.name]
+        if name == var.name:
+            return var.to_flat(var.to_member(value))
+        return var.member_of(value, name)
 
     def extract_params(
         self, name: str, params: Dict[str, Dict[str, torch.Tensor]]
     ) -> Dict[str, torch.Tensor]:
         """Same as :meth:`extract` for per-parameter dicts (``select``)."""
         var = self.resolve(name)
-        return var.select(params[var.name], name)
+        params = params[var.name]
+        if name == var.name:
+            return {k: var.as_event(v, k) for k, v in params.items()}
+        return {k: var.member_of(v, name, k) for k, v in params.items()}

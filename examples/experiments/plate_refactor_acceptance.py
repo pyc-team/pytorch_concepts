@@ -177,18 +177,13 @@ def verify():
     # 9. (post-refactor) Pyro engines, skipped if pyro is absent
     try:
         import pyro  # noqa: F401
-        from torch_concepts.nn import VariationalInference, PyroImportanceSampling
+        from torch_concepts.nn import VariationalInference
         vi = VariationalInference(pgm)
         seed_everything(0)
         y_hi = vi.query(query=["y"], evidence={"x": xt, "c1": ones}).probs["y"]
         seed_everything(0)
         y_lo = vi.query(query=["y"], evidence={"x": xt, "c1": zeros}).probs["y"]
         assert not torch.allclose(y_hi, y_lo), "member evidence ignored by model_fn"
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            pis = PyroImportanceSampling(pgm, n_samples=200)
-            p = pis.query({"y": ones4}, evidence={"c1": ones4}).probabilities
-            assert p.shape == (B4,) and torch.isfinite(p).all()
         print("9. Pyro engines honor member evidence                     OK")
     except ImportError:
         print("9. pyro-ppl not installed                                 SKIPPED")

@@ -80,7 +80,6 @@ from .modules.mid.factors.potential import ParametricPotential
 from .modules.mid.graph.probabilistic_model import ProbabilisticModel
 from .modules.mid.graph.bayesian_network import BayesianNetwork
 from .modules.mid.graph.markov_network import MarkovNetwork
-from .modules.mid.graph.chain_graph import ChainGraph
 from .modules.mid.variable import Variable, ConceptVariable, EmbeddingVariable
 
 # Inference (mid-level)
@@ -88,6 +87,7 @@ from .modules.mid.variable import Variable, ConceptVariable, EmbeddingVariable
 from .modules.mid.inference.base import BaseInference
 from .modules.mid.inference.torch.base import TorchBaseInference
 from .modules.mid.inference.pyro.base import PyroBaseInference
+from .modules.mid.inference.pgmpy.base import PgmpyBaseInference
 # torch
 from .modules.mid.inference.torch.forward import ForwardInference
 from .modules.mid.inference.torch.deterministic import DeterministicInference
@@ -99,9 +99,10 @@ from .modules.mid.inference.torch.importance_sampling.importance_sampling import
 from .modules.mid.inference.torch.importance_sampling.base_proposal import BaseProposal
 from .modules.mid.inference.torch.importance_sampling.mutilated_network import MutilatedNetworkProposal
 from .modules.mid.inference.torch.belief_propagation import BeliefPropagation
+# pgmpy
+from .modules.mid.inference.pgmpy.variable_elimination import PgmpyVariableElimination
 # pyro
 from .modules.mid.inference.pyro.variational import VariationalInference
-from .modules.mid.inference.pyro.importance import PyroImportanceSampling
 
 from .modules.mid.intervention import intervention
 
@@ -214,7 +215,6 @@ __all__ = [
     "ProbabilisticModel",
     "BayesianNetwork",
     "MarkovNetwork",
-    "ChainGraph",
     "Variable",
     "ConceptVariable",
     "EmbeddingVariable",
@@ -232,9 +232,10 @@ __all__ = [
     "BaseProposal",
     "MutilatedNetworkProposal",
     "BeliefPropagation",
+    "PgmpyVariableElimination",
     "PyroBaseInference",
+    "PgmpyBaseInference",
     "VariationalInference",
-    "PyroImportanceSampling",
 
     # Interventions
     "InterventionModule",

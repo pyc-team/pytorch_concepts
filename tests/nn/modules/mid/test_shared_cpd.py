@@ -82,25 +82,18 @@ class TestPlateVariableConstruction:
 # ===========================================================================
 
 class TestPlateAddressing:
-    def test_column_of_returns_slice(self):
+    def test_flat_columns_returns_indices(self):
         g = _plate2()
-        sl = g.column_of("m1")
-        assert isinstance(sl, slice)
+        assert g.flat_columns("m1") == [0]
 
-    def test_column_of_m1_starts_at_0(self):
+    def test_flat_columns_m2_starts_at_1(self):
         g = _plate2()
-        sl = g.column_of("m1")
-        assert sl.start == 0
+        assert g.flat_columns("m2") == [1]
 
-    def test_column_of_m2_starts_at_1(self):
+    def test_flat_columns_unknown_raises(self):
         g = _plate2()
-        sl = g.column_of("m2")
-        assert sl.start == 1
-
-    def test_column_of_unknown_raises(self):
-        g = _plate2()
-        with pytest.raises((KeyError, ValueError)):
-            g.column_of("unknown")
+        with pytest.raises(KeyError):
+            g.flat_columns("unknown")
 
     def test_member_returns_handle(self):
         g = _plate2()
@@ -114,17 +107,18 @@ class TestPlateAddressing:
 
     def test_member_size_from_handle(self):
         g = ConceptVariable("g", members=["c1", "c2"], distribution=dist.Bernoulli, size=2)
-        sl = g.column_of("c1")
-        assert sl.stop - sl.start == 2
+        assert len(g.flat_columns("c1")) == 2
+        assert g.member("c1").size == 2
 
     def test_actual_tensor_slicing(self):
         g = _plate3()
         B = 4
         full = torch.rand(B, 3)
-        sl_c2 = g.column_of("c2")
-        sliced = full[:, sl_c2]
+        sliced = full[:, g.flat_columns("c2")]
         assert sliced.shape == (B, 1)
         assert (sliced == full[:, 1:2]).all()
+        # member_of reads the same member, as a view
+        assert torch.equal(g.member_of(full, "c2"), sliced)
 
 
 # ===========================================================================
@@ -143,11 +137,13 @@ class TestPlateCPD:
         assert cpd.is_root is True
 
     def test_root_plate_cpd_forward(self):
+        """A CPD reports its parameters in member layout (*leading, n_members, member_size)."""
         g = _plate2()
         cpd = ParametricCPD(variable=g, parametrization={"probs": LearnablePrior(g.size)})
         B = 5
         out = cpd.root_params(B)
-        assert out["probs"].shape == (B, 2)
+        assert out["probs"].shape == (B, 2, 1)
+        assert g.to_event(out["probs"], "probs").shape == (B, 2)
 
     def test_nonroot_plate_cpd_forward(self):
         x = ConceptVariable("x", distribution=Delta, size=4)
@@ -155,35 +151,33 @@ class TestPlateCPD:
         cpd = ParametricCPD(variable=g, parametrization={"probs": nn.Sequential(nn.Linear(4, 3), nn.Sigmoid())}, parents=[x])
         B = 3
         out = cpd(parent_values={"x": torch.randn(B, 4)})
-        assert out["probs"].shape == (B, 3)
+        assert out["probs"].shape == (B, 3, 1)
 
-    def test_cpd_select_plate_name(self):
+    def test_whole_plate_in_event_layout(self):
         g = _plate2()
         cpd = ParametricCPD(variable=g, parametrization={"probs": LearnablePrior(g.size)})
         B = 4
         params = cpd.root_params(B)
-        selected = cpd.select(params, "g")
-        assert selected["probs"].shape == (B, 2)
+        assert g.to_event(params["probs"], "probs").shape == (B, 2)
 
-    def test_cpd_select_member_name(self):
+    def test_member_of_member_name(self):
         g = _plate2()
         cpd = ParametricCPD(variable=g, parametrization={"probs": LearnablePrior(g.size)})
         B = 4
         params = cpd.root_params(B)
-        selected = cpd.select(params, "m1")
-        assert selected["probs"].shape == (B, 1)
+        assert g.member_of(params["probs"], "m1", "probs").shape == (B, 1)
 
-    def test_cpd_select_both_members_different(self):
+    def test_members_reconstruct_the_plate(self):
         g = _plate2()
         cpd = ParametricCPD(variable=g, parametrization={"probs": LearnablePrior(g.size)})
         B = 2
         params = cpd.root_params(B)
-        m1 = cpd.select(params, "m1")["probs"]
-        m2 = cpd.select(params, "m2")["probs"]
+        m1 = g.member_of(params["probs"], "m1", "probs")
+        m2 = g.member_of(params["probs"], "m2", "probs")
         assert m1.shape == (B, 1)
         assert m2.shape == (B, 1)
         # Together they reconstruct the full tensor
-        assert torch.allclose(torch.cat([m1, m2], dim=1), params["probs"])
+        assert torch.allclose(torch.cat([m1, m2], dim=1), g.to_event(params["probs"], "probs"))
 
 
 # ===========================================================================
@@ -191,51 +185,51 @@ class TestPlateCPD:
 # ===========================================================================
 
 class TestClampMembers:
+    """``clamp_members`` works on values in member layout (B, n_members, member_size)."""
+
     def test_empty_observed_no_op(self):
         g = _plate2()
         cpd = ParametricCPD(variable=g, parametrization={"probs": LearnablePrior(g.size)})
         B = 3
-        value = torch.rand(B, 2)
+        value = torch.rand(B, 2, 1)
         clamped = cpd.clamp_members(value, {})
         assert torch.equal(clamped, value)
 
-    def test_clamp_m1_replaces_column(self):
+    def test_clamp_m1_replaces_member(self):
         g = _plate2()
         cpd = ParametricCPD(variable=g, parametrization={"probs": LearnablePrior(g.size)})
         B = 3
-        value = torch.zeros(B, 2)
-        obs_m1 = torch.ones(B, 1)
-        clamped = cpd.clamp_members(value, {"m1": obs_m1})
-        assert (clamped[:, 0:1] == 1.0).all()
-        assert (clamped[:, 1:2] == 0.0).all()
+        value = torch.zeros(B, 2, 1)
+        clamped = cpd.clamp_members(value, {"m1": torch.ones(B, 1)})
+        assert (clamped[:, 0] == 1.0).all()
+        assert (clamped[:, 1] == 0.0).all()
 
-    def test_clamp_m2_replaces_column(self):
+    def test_clamp_m2_replaces_member(self):
         g = _plate2()
         cpd = ParametricCPD(variable=g, parametrization={"probs": LearnablePrior(g.size)})
         B = 3
-        value = torch.zeros(B, 2)
-        obs_m2 = torch.ones(B, 1)
-        clamped = cpd.clamp_members(value, {"m2": obs_m2})
-        assert (clamped[:, 1:2] == 1.0).all()
-        assert (clamped[:, 0:1] == 0.0).all()
+        value = torch.zeros(B, 2, 1)
+        clamped = cpd.clamp_members(value, {"m2": torch.ones(B, 1)})
+        assert (clamped[:, 1] == 1.0).all()
+        assert (clamped[:, 0] == 0.0).all()
 
     def test_clamp_both_members(self):
         g = _plate2()
         cpd = ParametricCPD(variable=g, parametrization={"probs": LearnablePrior(g.size)})
         B = 2
-        value = torch.zeros(B, 2)
+        value = torch.zeros(B, 2, 1)
         clamped = cpd.clamp_members(value, {
             "m1": torch.ones(B, 1),
             "m2": torch.full((B, 1), 0.5),
         })
-        assert (clamped[:, 0:1] == 1.0).all()
-        assert (clamped[:, 1:2] == 0.5).all()
+        assert (clamped[:, 0] == 1.0).all()
+        assert (clamped[:, 1] == 0.5).all()
 
     def test_clamp_does_not_mutate_original(self):
         g = _plate2()
         cpd = ParametricCPD(variable=g, parametrization={"probs": LearnablePrior(g.size)})
         B = 2
-        value = torch.zeros(B, 2)
+        value = torch.zeros(B, 2, 1)
         value_copy = value.clone()
         cpd.clamp_members(value, {"m1": torch.ones(B, 1)})
         assert torch.equal(value, value_copy)

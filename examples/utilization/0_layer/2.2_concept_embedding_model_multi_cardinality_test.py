@@ -98,8 +98,8 @@ def main():
         # so every concept is addressed by name: `c_pred[name]` is its score
         # column(s), `c_train[name]` its integer class column.
         c_pred = AnnotatedTensor(c_pred, concept_annotations)
-        binary_names = c_pred.binary().annotation.labels
-        categorical_names = c_pred.categorical().annotation.labels
+        binary_names = c_pred.binary().annotations.labels
+        categorical_names = c_pred.categorical().annotations.labels
 
         binary_loss = F.binary_cross_entropy_with_logits(
             c_pred[binary_names], c_train[binary_names].float()

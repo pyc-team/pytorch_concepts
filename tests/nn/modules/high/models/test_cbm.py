@@ -858,8 +858,8 @@ class TestGraphCBMContinuousConcepts:
     def test_mixed_types_split_across_quantities(self):
         model = self._model(['binary', 'continuous'])
         out = model(query=['x', 'y'], input=torch.randn(4, 6))
-        assert list(out.logits.annotation.labels) == ['x']
-        assert list(out.loc.annotation.labels) == ['y']
+        assert list(out.logits.annotations.labels) == ['x']
+        assert list(out.loc.annotations.labels) == ['y']
 
     def test_gradients_flow(self):
         model = self._model(['continuous', 'continuous'])

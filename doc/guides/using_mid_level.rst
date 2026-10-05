@@ -183,6 +183,12 @@ Concept Bottleneck Model ``input → latent → concepts → task`` as a probabi
       point predictions.
     - :class:`~torch_concepts.nn.AncestralSamplingInference` — draws a (reparameterised) sample per
       variable in topological order.
+    - :class:`~torch_concepts.nn.BeliefPropagation` — differentiable sum-product marginals over any
+      factor graph (directed, undirected or mixed). Exact on trees, the standard approximation with
+      loops. This is the engine to *train* an undirected model with.
+    - :class:`~torch_concepts.nn.PgmpyVariableElimination` — **exact** marginals on any factor
+      graph, via pgmpy. Evaluation only: it exports a static table per observation, so it carries
+      no gradients.
     - :class:`~torch_concepts.nn.ForwardInference`, :class:`~torch_concepts.nn.IndependentInference`,
       :class:`~torch_concepts.nn.RejectionSampling`, :class:`~torch_concepts.nn.ImportanceSampling`,
       and the Pyro-backed :class:`~torch_concepts.nn.VariationalInference` provide further

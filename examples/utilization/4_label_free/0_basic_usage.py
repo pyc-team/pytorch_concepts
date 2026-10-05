@@ -143,7 +143,7 @@ def dataset_aware_prompt(
     for index in example_indices:
         sample = dataset[index]
         native = sample["concepts"]["native"]
-        native_names = metadata_dataset.native_concepts.annotation.labels
+        native_names = metadata_dataset.native_concepts.annotations.labels
         digit = int(native[native_names.index("digit")])
         color_id = int(native[native_names.index("color")])
         color = ("red", "green")[color_id]
@@ -282,15 +282,15 @@ def main():
     )
 
     generated = dataset.generated_concepts[generated_name]
-    generated_annotation = generated.annotation
-    if "parity" in generated_annotation.labels:
+    generated_annotations = generated.annotations
+    if "parity" in generated_annotations.labels:
         raise ValueError(
             "The generated vocabulary contains 'parity', which collides with "
             "the downstream task name. Regenerate concepts without that label."
         )
 
-    parity_annotation = dataset._all_concept_annotation.subset(["parity"])
-    model_annotations = generated_annotation.union_with(parity_annotation)
+    parity_annotations = dataset._all_concept_annotations.subset(["parity"])
+    model_annotations = generated_annotations.union_with(parity_annotations)
 
     def cbm_collate(samples):
         batch = dataset.collate(samples)
@@ -357,7 +357,7 @@ def main():
             total += target.numel()
     val_acc = correct / total
 
-    print("Generated concepts:", generated_annotation.labels)
+    print("Generated concepts:", generated_annotations.labels)
     print("Model concepts:", model_annotations.labels)
     print(f"Validation accuracy: {val_acc:.3f}")
 

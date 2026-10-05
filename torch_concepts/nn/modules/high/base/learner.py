@@ -246,9 +246,9 @@ class BaseLearner(pl.LightningModule):
         c = concepts['c']
         scaler = transforms.get('concepts') if self.scale_concepts else None
         if scaler is not None and c is not None:
-            labels = c.annotation.labels_by_type.get('continuous')
+            labels = c.annotations.labels_by_type.get('continuous')
             if labels:
-                scaled = AnnotatedTensor(c.tensor.clone(), c.annotation, c.axis)
+                scaled = AnnotatedTensor(c.tensor.clone(), c.annotations, c.axis)
                 scaled[labels] = scaler.transform(c[labels].tensor)
                 c = scaled
         return {'c': c}
@@ -273,7 +273,7 @@ class BaseLearner(pl.LightningModule):
             if pred is None:
                 continue
             setattr(out, quantity, AnnotatedTensor(
-                scaler.inverse_transform(pred.tensor), pred.annotation, pred.axis
+                scaler.inverse_transform(pred.tensor), pred.annotations, pred.axis
             ))
         return out
 

@@ -1383,8 +1383,8 @@ class TestBlackBoxContinuousConcepts:
     def test_mixed_types_split_across_quantities(self):
         ann = self._ann(['binary', 'continuous'])
         out = BlackBox(input_size=8, annotations=ann)(torch.randn(4, 8))
-        assert list(out.logits.annotation.labels) == ['c0']
-        assert list(out.loc.annotation.labels) == ['c1']
+        assert list(out.logits.annotations.labels) == ['c0']
+        assert list(out.loc.annotations.labels) == ['c1']
 
     def test_all_discrete_still_reports_only_logits(self):
         ann = self._ann(['binary', 'binary'])

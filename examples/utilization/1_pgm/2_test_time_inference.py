@@ -26,23 +26,23 @@ from torch_concepts import seed_everything, ConceptVariable
 from torch_concepts.data import BnLearnDataset
 from torch_concepts.nn import ParametricCPD, BayesianNetwork, \
     AncestralSamplingInference, LearnablePrior, RejectionSampling, \
-    ImportanceSampling, MutilatedNetworkProposal, PyroImportanceSampling, \
-    BeliefPropagation
+    ImportanceSampling, MutilatedNetworkProposal, BeliefPropagation, \
+    PgmpyVariableElimination
 
 
 def _compare_query(
     query_name, evidence_names, targets,
-    rejection_engine, torch_is_engine, pyro_is_engine, bp_engine,
+    rejection_engine, is_engine, bp_engine, ve_engine,
 ):
     """Estimate P(query_name=1 | evidence) with every engine and the data.
 
     Enumerates every {0,1} assignment of ``evidence_names`` (each a single
-    binary node), queries the four inference engines plus the empirical
+    binary node), queries every inference engine plus the empirical
     frequency in ``targets``, and prints one row per estimator.
     """
     combos = list(itertools.product([0., 1.], repeat=len(evidence_names)))
-    rows = {"empirical": [], "reject S": [], "torch IS": [], "pyro  IS": [],
-            "belief prop": []}
+    rows = {"empirical": [], "reject S": [], "torch IS": [],
+            "belief prop": [], "exact VE": []}
 
     for combo in combos:
         evidence = {n: torch.tensor([[v]]) for n, v in zip(evidence_names, combo)}
@@ -51,11 +51,12 @@ def _compare_query(
         rows["reject S"].append(
             rejection_engine.query(query, evidence).probabilities.item())
         rows["torch IS"].append(
-            torch_is_engine.query(query, evidence).probabilities.item())
-        rows["pyro  IS"].append(
-            pyro_is_engine.query(query, evidence).probabilities.item())
+            is_engine.query(query, evidence).probabilities.item())
         rows["belief prop"].append(
             bp_engine.query(query=[query_name], evidence=evidence)
+            .probs[query_name].item())
+        rows["exact VE"].append(
+            ve_engine.query(query=[query_name], evidence=evidence)
             .probs[query_name].item())
 
         mask = torch.ones(targets[query_name].shape[0], dtype=torch.bool)
@@ -71,8 +72,8 @@ def _compare_query(
     fmt = lambda vals: "  ".join(f"{v:6.3f}" for v in vals)
     print(f"\n=== P({query_name}=1 | {', '.join(evidence_names)}) ===")
     print(f"{'':>14} | {header}")
-    for label in ("empirical", "reject S", "torch IS", "pyro  IS", "belief prop"):
-        print(f"{label:>14} | {fmt(rows[label])}")
+    for label, vals in rows.items():
+        print(f"{label:>14} | {fmt(vals)}")
 
 
 def main():
@@ -229,12 +230,14 @@ def main():
     # a purely forward computation.
     n_test_samples = 20_000
     rejection_engine = RejectionSampling(concept_model, n_samples=n_test_samples)
-    torch_is_engine = ImportanceSampling(
+    is_engine = ImportanceSampling(
         concept_model, MutilatedNetworkProposal(concept_model),
         n_samples=n_test_samples, initial_temperature=0.1,
     )
-    pyro_is_engine = PyroImportanceSampling(concept_model, n_samples=n_test_samples)
     bp_engine = BeliefPropagation(concept_model, iters=20, damping=0.2)
+    # Exact marginals: the reference the approximate engines are judged
+    # against. Evaluation only -- it carries no gradients.
+    ve_engine = PgmpyVariableElimination(concept_model)
 
     for query_name, evidence_names in [
         ("tub", ("either", "lung")),
@@ -243,7 +246,7 @@ def main():
     ]:
         _compare_query(
             query_name, evidence_names, targets,
-            rejection_engine, torch_is_engine, pyro_is_engine, bp_engine,
+            rejection_engine, is_engine, bp_engine, ve_engine,
         )
         
     return

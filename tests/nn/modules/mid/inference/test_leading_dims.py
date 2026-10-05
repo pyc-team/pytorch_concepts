@@ -35,7 +35,11 @@ from torch_concepts.nn.modules.mid.variable import ConceptVariable, EmbeddingVar
 
 # One, two and three leading dimensions, all holding the same 6 observations, so
 # every case can be compared against the flattened (6,) run.
-LEADINGS = [(6,), (2, 3), (2, 3, 1)]
+# A size-1 leading axis sits in the middle, never last: a tensor ending in
+# ``(..., 1, *event)`` is read with that 1 as the member axis (see
+# ``Variable._fit``), so a trailing singleton leading dim is ambiguous by
+# design and cannot round-trip.
+LEADINGS = [(6,), (2, 3), (3, 1, 2)]
 
 
 @pytest.fixture
@@ -232,8 +236,8 @@ class TestAnnotatedOutput:
         eng = _engine(DeterministicInference, net, p_int=0.0)
         out = eng.query(query=["g", "y", "n"], evidence={"x": torch.randn(2, 3, 4)})
         assert set(out.quantities) == {"logits", "loc", "scale"}
-        assert out.logits.annotation.labels == ["m1", "m2", "y"]
-        assert out.loc.annotation.labels == ["n"]
+        assert out.logits.annotations.labels == ["m1", "m2", "y"]
+        assert out.loc.annotations.labels == ["n"]
 
     def test_label_slice_is_a_view_not_a_copy(self, net):
         eng = _engine(DeterministicInference, net, p_int=0.0)
@@ -246,15 +250,15 @@ class TestAnnotatedOutput:
         eng = _engine(DeterministicInference, net, p_int=0.0)
         out = eng.query(query=["g", "y"], evidence={"x": torch.randn(2, 3, 4)})
         # 'g' is not a label — its members are — but it still slices the block.
-        assert "g" not in out.logits.annotation.labels
+        assert "g" not in out.logits.annotations.labels
         assert out.logits["g"].shape == (2, 3, 2)
         assert torch.equal(out.logits["g"].tensor, out.logits["m1", "m2"].tensor)
 
     def test_split_by_type(self, net):
         eng = _engine(DeterministicInference, net, p_int=0.0)
         out = eng.query(query=["g", "y", "n"], evidence={"x": torch.randn(5, 4)})
-        assert out.logits.binary().annotation.labels == ["m1", "m2", "y"]
-        assert out.loc.continuous().annotation.labels == ["n"]
+        assert out.logits.binary().annotations.labels == ["m1", "m2", "y"]
+        assert out.loc.continuous().annotations.labels == ["n"]
 
 
 class TestAnnotationSurvivesAcrossEngines:
@@ -265,15 +269,15 @@ class TestAnnotationSurvivesAcrossEngines:
     def test_ancestral_labels_survive(self, net, leading):
         eng = _engine(AncestralSamplingInference, net, p_int=0.0)
         out = eng.query(query=["g", "y", "n"], evidence={"x": torch.randn(*leading, 4)})
-        assert out.logits.annotation.labels == ["m1", "m2", "y"]
-        assert out.samples.annotation.labels == ["m1", "m2", "y", "n"]
+        assert out.logits.annotations.labels == ["m1", "m2", "y"]
+        assert out.samples.annotations.labels == ["m1", "m2", "y", "n"]
         assert out.samples.shape == (*leading, 6)  # m1,m2,y (1 each) + n (3)
 
     @pytest.mark.parametrize("leading", LEADINGS)
     def test_belief_propagation_labels_survive(self, chain, leading):
         eng = BeliefPropagation(chain, iters=5)
         out = eng.query(query=["c1"], evidence={"c2": torch.rand(*leading, 1).round()})
-        assert out.probs.annotation.labels == ["c1"]
+        assert out.probs.annotations.labels == ["c1"]
         assert out.probs["c1"].shape == (*leading, 1)
 
 
@@ -305,7 +309,7 @@ class TestPyroVariationalLeadingDims:
             eng = VariationalInference(pgm, latents={"z": guide})
         return eng, pgm
 
-    @pytest.mark.parametrize("leading", [(4,), (2, 3), (2, 3, 1)])
+    @pytest.mark.parametrize("leading", [(4,), (2, 3), (3, 1, 2)])
     def test_restore_shapes_and_labels(self, leading):
         eng, _ = self._engine_and_pgm()
         with warnings.catch_warnings():
@@ -314,7 +318,7 @@ class TestPyroVariationalLeadingDims:
                             evidence={"x": torch.randn(*leading, 3)})
         for tensor in list(out.params.values()) + list(out.guide_params.values()):
             assert tensor.shape[:len(leading)] == leading
-            assert hasattr(tensor, "annotation")
+            assert hasattr(tensor, "annotations")
 
     def test_matches_the_flattened_run(self):
         import pyro

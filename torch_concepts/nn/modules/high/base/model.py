@@ -781,6 +781,6 @@ class BaseModel(nn.Module, ABC):
         AnnotatedTensor or None
             Concept-space annotated target.
         """
-        if target is None or hasattr(target, 'annotation'):
+        if target is None or hasattr(target, 'annotations'):
             return target
         return AnnotatedTensor(target, self.concept_annotations.to_concept_space(), axis=-1)

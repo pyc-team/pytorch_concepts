@@ -262,7 +262,7 @@ class TestAnnotationSpaces(unittest.TestCase):
         self.assertEqual(list(dataset.annotations.cardinalities), [3, 10])
         self.assertFalse(dataset.annotations.concept_space)
         # The tensor holds one integer column per concept, and says so.
-        self.assertTrue(dataset.concepts.annotation.concept_space)
+        self.assertTrue(dataset.concepts.annotations.concept_space)
         self.assertEqual(dataset.concepts.shape[1], 2)
 
 

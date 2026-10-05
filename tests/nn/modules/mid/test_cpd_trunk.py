@@ -67,7 +67,7 @@ class TestSharedForward:
         )
         out = cpd(parent_values={"x": torch.randn(6, 4)})
         assert trunk.calls == 1
-        assert out["loc"].shape == (6, 3)
+        assert out["loc"].shape == (6, 1, 3)  # member layout (B, n_members, size)
         assert bool((out["scale"] > 0).all())
 
     def test_without_a_trunk_each_parameter_runs_its_own_head(self, parent, normal_child):
@@ -136,7 +136,7 @@ class TestLazySizing:
                 "scale": LazyConstructor(head_cls),
             },
         )
-        assert cpd(parent_values={"x": torch.randn(5, 4)})["loc"].shape == (5, 3)
+        assert cpd(parent_values={"x": torch.randn(5, 4)})["loc"].shape == (5, 1, 3)
         assert trunk.calls == 1
 
     def test_a_trunk_without_out_features_is_rejected_for_a_lazy_head(

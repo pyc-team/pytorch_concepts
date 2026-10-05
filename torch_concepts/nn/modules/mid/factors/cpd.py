@@ -30,8 +30,7 @@ class ParametricCPD(ParametricFactor):
     variable : Variable or list of Variable
         The child variable this CPD parametrizes. A **list** builds one
         independent CPD per variable, all sharing the same ``parents``, and
-        returns them as a list. A plate (a ``Variable`` with named members) is
-        still a single variable: one CPD produces every member at once.
+        returns them as a list.
     parametrization : nn.Module or dict[str, nn.Module] or list of dict
         Required — no default is inferred. Accepts:
 
@@ -48,11 +47,10 @@ class ParametricCPD(ParametricFactor):
         :class:`LazyConstructor` entry is instantiated here, sized from the
         parents and from ``variable.param_sizes``.
     parents : list of Variable, optional
-        The conditioning set — this *is* the graph structure. Entries may be
-        whole variables or plate-member handles (``plate.member('c1')``), in
-        which case only that member's column is sliced out of the plate's value.
         Empty or omitted makes this a **root** CPD, whose modules are called
-        with no arguments.
+        with no arguments. 
+        Entries may be whole variables or plate-member handles (``plate.member('c1')``), 
+        in which case only that member's column is sliced out of the plate's value.
     aggregate : callable or dict[str, callable], optional
         How parent values are combined into each module's input; see
         :class:`ParametricFactor`. Defaults to concatenating the parents along
@@ -83,19 +81,31 @@ class ParametricCPD(ParametricFactor):
     --------
     A root Bernoulli prior, with the logits held by a learnable parameter:
 
+    >>> import torch.nn as nn
+    >>> from torch.distributions import Bernoulli
+    >>> from torch_concepts.distributions import Delta
+    >>> from torch_concepts.nn import (
+    ...     ConceptVariable, EmbeddingVariable, LearnablePrior)
+    >>> z = ConceptVariable("z", distribution=Bernoulli, size=2)
     >>> prior = ParametricCPD(
     ...     variable=z,
     ...     parametrization={"logits": LearnablePrior(z.size)},
     ... )
+    >>> prior.is_root
+    True
 
     A non-root Bernoulli CPD using the single-module shorthand, which expands
     to ``{'probs': ...}`` automatically:
 
+    >>> x = EmbeddingVariable("x", distribution=Delta, size=4)
+    >>> c = ConceptVariable("c", distribution=Bernoulli)
     >>> cpd = ParametricCPD(
     ...     variable=c,
     ...     parametrization=nn.Linear(4, 1),
     ...     parents=[x],
     ... )
+    >>> sorted(cpd.parametrization)
+    ['probs']
     """
 
     def __new__(
@@ -280,20 +290,6 @@ class ParametricCPD(ParametricFactor):
           ``MultivariateNormal``'s ``scale_tril`` module is sized to its
           ``size * (size + 1) // 2`` Cholesky entries, not just ``size``.
 
-        Input parents carry a multi-dimensional ``shape`` (a ``torch.Size``); the
-        sizes above are the flat widths (``Variable.size == math.prod(shape)``),
-        which is what a lazy layer's constructor asks for. Note this is only a
-        sizing convention — the default aggregators do **not** flatten: a parent
-        reaches the module in its full event shape (see ``_cat_parents``).
-
-        The lazy layer may be the parametrization entry itself, or the **first**
-        module of a ``Sequential`` — a continuous variable's scale head is composed
-        with its activation as ``Sequential(LazyConstructor(...), softplus)``, and
-        the layer before the activation is what needs sizing.
-
-        With a ``trunk``, the parameter modules consume the trunk's output rather
-        than the parents, so their input width is the trunk's ``out_features``
-        instead of the summed parent sizes.
         """
         from ...low.lazy import LazyConstructor
 
@@ -377,14 +373,16 @@ class ParametricCPD(ParametricFactor):
         parameter verbatim, so the module must already emit a value in the
         parameter's natural domain.
 
-        Returns a ``Dict[str, Tensor]`` ready to pass to the distribution
-        constructor (e.g. ``{"probs": ...}`` for Bernoulli,
-        ``{"loc": ..., "scale": ...}`` for Normal).
+        Returns a ``Dict[str, Tensor]`` in the canonical member layout
+        ``(*leading, n_members, *member_shape)`` — the single boundary where a
+        parametrization module's own output shape (a flat row, a Cholesky
+        matrix, an embedding matrix) is normalised, so nothing downstream has
+        to know which kind it was.
         """
         if self.is_root:
             # Root CPD: no parents expected.
             return {
-                pname: mod()
+                pname: self.variable.to_member(mod(), pname)
                 for pname, mod in self.parametrization.items()
             }
 
@@ -393,24 +391,20 @@ class ParametricCPD(ParametricFactor):
             p: self.resolve_value(p, parent_values) for p in self.parents
         }
 
+        # Trunk path: aggregate and extract features once, 
+        # then let each parameter's head map those features to its parameter.
         if self.trunk is not None:
-            # Shared trunk: aggregate and extract features **once**, then let each
-            # parameter's head map those features to its parameter. The heads take
-            # a plain feature tensor, so ``layer_kwargs`` goes to the trunk only.
             cat = self._aggregators[_TRUNK_KEY](parent_variable_values)
             if isinstance(cat, dict):
                 features = self.trunk(**{**layer_kwargs, **cat})
             else:
                 features = self.trunk(cat, **layer_kwargs)
             return {
-                pname: mod(features) for pname, mod in self.parametrization.items()
+                pname: self.variable.to_member(mod(features), pname)
+                for pname, mod in self.parametrization.items()
             }
 
-        # Each parameter module uses its own pre-resolved aggregation function.
-        # The aggregated inputs are merged into a *fresh* kwargs dict per
-        # parameter: a PyC-style module contributes ``concepts``/``embeddings``
-        # keys that a standard module in the same parametrization cannot accept,
-        # so they must not leak across iterations.
+        # No trunk path: let each parameter's head aggregate and map the parents to its parameter.
         result = {}
         for pname, mod in self.parametrization.items():
             cat = self._aggregators[pname](parent_variable_values)
@@ -418,7 +412,7 @@ class ParametricCPD(ParametricFactor):
                 out = mod(**{**layer_kwargs, **cat})
             else:
                 out = mod(cat, **layer_kwargs)
-            result[pname] = out
+            result[pname] = self.variable.to_member(out, pname)
         return result
 
     def root_params(
@@ -427,13 +421,7 @@ class ParametricCPD(ParametricFactor):
         """Root (parent-less) params broadcast over the leading dimensions.
 
         A root CPD's parametrization produces a single batch-less prior; this
-        runs it and expands each parameter to ``(*leading, *param_shape)`` so the
-        engine doesn't have to. ``leading`` may be a plain batch size or any
-        leading shape, e.g. ``(batch1, batch2)``. A prior module may opt out by
-        setting ``broadcast=False`` (e.g. a matrix shared across the batch that
-        should stay unbatched and broadcast downstream). Only meaningful for
-        root CPDs.
-
+        runs it and expands each parameter to ``(*leading, *param_shape)``.
         The expansion is a broadcast view, not a copy.
         """
         if isinstance(leading, int):
@@ -469,9 +457,11 @@ class ParametricCPD(ParametricFactor):
         taken from ``assignment`` (keyed by ``Variable``).
         """
         # local imports: avoid an import cycle with the inference package
-        from ..inference.utils import build_distribution, leading_shape
+        from ..inference.utils import build_distribution
 
+        # Create the Dict mapping variable names to their values.
         values: Dict[str, torch.Tensor] = {var.name: val for var, val in assignment.items()}
+        # Get the child value from the assignment dict.
         child_value: Optional[torch.Tensor] = values.get(self.variable.name)
         if child_value is None:
             raise KeyError(
@@ -479,30 +469,20 @@ class ParametricCPD(ParametricFactor):
                 f"the child variable {self.variable.name!r} in the assignment."
             )
 
-        leading = leading_shape(
-            self.variable.shape, self.variable.size, child_value,
-            f"ParametricCPD({self.variable.name!r}).log_potential",
-        )
-        params = self.root_params(leading) if self.is_root else self(parent_values=values)
+        # Get params given parent values, then build the distribution.
+        params = self(parent_values=values)
         d = build_distribution(self.variable, params)
-        param_dtype = next(iter(params.values())).dtype
-        child_flat = child_value.reshape(*leading, self.variable.size).to(param_dtype)
-        return d.log_prob(child_flat)
+
+        # Reshape the child value into the canonical member layout.
+        child = self.variable.to_member(child_value)
+
+        # Get the log-probability of the child value under the conditional distribution.
+        return d.log_prob(child.to(next(iter(params.values())).dtype))
 
     # ---- member addressing (delegates to Variable; kept for back-compat) -----
     # Slicing a member's column span is a pure function of the variable's own
     # column layout, so the logic lives on ``Variable``. These thin delegators
     # preserve the historical CPD-level API every inference backend already calls.
-    def select(
-        self, params: Dict[str, torch.Tensor], name: str
-    ) -> Dict[str, torch.Tensor]:
-        """Distribution params for ``name`` (delegates to :meth:`Variable.select`)."""
-        return self.variable.select(params, name)
-
-    def select_value(self, value: torch.Tensor, name: str) -> torch.Tensor:
-        """Realised value for ``name`` (delegates to :meth:`Variable.select_value`)."""
-        return self.variable.select_value(value, name)
-
     def clamp_members(
         self, value: torch.Tensor, observed: Dict[str, torch.Tensor]
     ) -> torch.Tensor:

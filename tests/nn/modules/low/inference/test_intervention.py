@@ -131,21 +131,22 @@ class TestDoIntervention:
             assert torch.allclose(out[i], constants[0])
 
     def test_forward_3d_raises_value_error(self):
+        # constants has more dims than x, so it cannot broadcast against x's shape
         strat = DoIntervention(torch.ones(1, 1, 3))
         x = torch.randn(B, F)
-        with pytest.raises(ValueError, match="constants must be scalar"):
+        with pytest.raises(ValueError, match="cannot be broadcast"):
             strat(x)
 
     def test_forward_wrong_feature_size_raises(self):
         strat = DoIntervention(torch.tensor([0.5, 1.0]))  # 2 features, expect 3
         x = torch.randn(B, F)
-        with pytest.raises(AssertionError):
+        with pytest.raises(ValueError, match="cannot be broadcast"):
             strat(x)
 
     def test_forward_wrong_batch_size_raises(self):
         strat = DoIntervention(torch.ones(5, F))  # B=5, expect B=4
         x = torch.randn(B, F)
-        with pytest.raises(AssertionError):
+        with pytest.raises(ValueError, match="cannot be broadcast"):
             strat(x)
 
     def test_output_dtype_matches_input(self):

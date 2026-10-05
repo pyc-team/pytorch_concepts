@@ -737,8 +737,8 @@ class TestC2BMContinuousConcepts:
             input_size=8, annotations=ann, graph=chain_graph,
         )
         out = model(query=['A', 'B', 'C'], input=torch.randn(5, 8))
-        assert list(out.logits.annotation.labels) == ['A']
-        assert list(out.loc.annotation.labels) == ['B', 'C']
+        assert list(out.logits.annotations.labels) == ['A']
+        assert list(out.loc.annotations.labels) == ['B', 'C']
 
     def test_gradients_reach_the_predictor(self, chain_graph):
         ann = self._continuous_ann(['A', 'B', 'C'])

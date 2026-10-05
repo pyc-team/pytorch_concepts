@@ -87,10 +87,10 @@ class ParamsDict(Dict[str, AnnotatedTensor]):
             return dict.__getitem__(self, key)
         views: Dict[str, AnnotatedTensor] = {}
         for quantity, tensor in dict.items(self):
-            annotation = tensor.annotation
+            annotations = tensor.annotations
             if (
-                key in annotation.label_to_index
-                or key in annotation.label_groups
+                key in annotations.label_to_index
+                or key in annotations.label_groups
             ):
                 views[quantity] = tensor[key]
         if not views:
@@ -113,8 +113,8 @@ def supervised_subset(tensor, target):
     """
     if tensor is None or target is None:
         return tensor
-    labels = list(tensor.annotation.labels)
-    keep = [n for n in labels if n in target.annotation.label_to_index]
+    labels = list(tensor.annotations.labels)
+    keep = [n for n in labels if n in target.annotations.label_to_index]
     if len(keep) == len(labels):
         return tensor
     return tensor[keep] if keep else None
@@ -222,11 +222,11 @@ class InferenceOutput:
         """
         names: Dict[str, None] = {}
         for tensor in params.values():
-            annotation = tensor.annotation
+            annotations = tensor.annotations
             names.update(
-                dict.fromkeys(annotation.label_groups)
+                dict.fromkeys(annotations.label_groups)
             )
-            names.update(dict.fromkeys(annotation.labels))
+            names.update(dict.fromkeys(annotations.labels))
         return tuple(names)
 
     @property

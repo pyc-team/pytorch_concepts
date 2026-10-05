@@ -2,9 +2,8 @@
 
 Algorithm
 ---------
-1. Draw ``n_samples`` joint samples from the PGM by calling
-   :class:`AncestralSamplingInference` (ancestral mode) with every variable
-   declared as a query and no evidence.
+1. Draw ``n_samples`` joint samples from the PGM in topological order
+   (:meth:`RejectionSampling._draw_joint`), clamping any root evidence.
 2. For each row b in the batch:
    a. Build an **evidence mask**: samples where every E variable equals e_b.
    b. Build a **full mask**: evidence mask AND every Q variable equals q_b.
@@ -22,8 +21,11 @@ different numbers of samples:
 
 Constraints
 -----------
-- All query and evidence variables **must** be discrete (Bernoulli,
-  Categorical, OneHotCategorical).  Exact equality matching is used.
+- Query variables and **non-root** evidence variables **must** be discrete
+  (Bernoulli, Categorical, OneHotCategorical): they are matched by exact
+  equality.
+- Evidence on a **root** variable may be continuous (e.g. an input embedding):
+  it is clamped into every joint draw, never matched.
 - Hidden variables (neither query nor evidence) may be continuous.
 """
 
@@ -31,15 +33,14 @@ from __future__ import annotations
 
 import math
 import warnings
-from typing import Dict, List
+from typing import Dict, List, Set
 
 import torch
-import torch.distributions as dist
 
 from ...graph.bayesian_network import BayesianNetwork
 from ...distributions import spec_for
 from ....outputs import InferenceOutput
-from ..utils import reshape_value_to_event
+from .ancestral import AncestralSamplingInference
 from .base import TorchBaseInference
 
 
@@ -61,8 +62,10 @@ def _match(sampled: torch.Tensor, observed: torch.Tensor) -> torch.Tensor:
 class RejectionSampling(TorchBaseInference):
     """Approximate conditional inference via pure rejection sampling.
 
-    Internally delegates joint sampling to :class:`AncestralSamplingInference`
-    so the topological ordering logic is not duplicated.
+    The joint draw is :class:`AncestralSamplingInference` in ``exact=True`` mode:
+    the same topological traversal, but hard draws from the exact family. The
+    relaxed surrogate would propagate *soft* parent values, which leaves the
+    marginals right and the joint wrong — and rejection filters on the joint.
 
     Parameters
     ----------
@@ -96,6 +99,18 @@ class RejectionSampling(TorchBaseInference):
         )
 
     # ------------------------------------------------------------------
+    def _root_names(self) -> Set[str]:
+        """Whole-variable names of the roots.
+
+        Evidence on these is clamped during generation rather than matched.
+        A plate member's name is never in this set, so member evidence is
+        always matched, even on a root plate.
+        """
+        return {
+            v.name for v in self.pgm.variables.values()
+            if self.pgm.factors[v.name].is_root
+        }
+
     def _require_discrete(self, names: List[str], role: str) -> None:
         for name in names:
             v = self.pgm.resolve(name)  # a member's family is its plate's family
@@ -120,60 +135,30 @@ class RejectionSampling(TorchBaseInference):
     # ------------------------------------------------------------------
     def _draw_joint(
         self,
+        sampler: AncestralSamplingInference,
         root_evidence: Dict[str, torch.Tensor],
         layer_kwargs: Dict[str, Dict],
     ) -> Dict[str, torch.Tensor]:
         """Draw ``n_samples`` hard joint samples conditioned on root evidence.
 
-        Root evidence variables are clamped so that all ``n_samples`` samples
-        already agree with those observations. Every other variable is sampled
-        from its exact (non-relaxed) discrete or continuous distribution using
-        the topological order of the PGM. Hard sampling (``dist.sample()``) is
-        used so that exact equality matching in :meth:`_build_mask` works.
+        Root evidence is expanded to the sample dimension and clamped, so all
+        ``n_samples`` already agree with those observations; every other
+        variable is drawn from its exact family in topological order. Returns
+        the raw per-variable cache, in the member layout.
         """
         N = self.n_samples
-        samples: Dict[str, torch.Tensor] = {}
-
-        # Pre-expand root-clamped evidence to the sample dimension.
+        evidence = {}
         for name, val in root_evidence.items():
-            samples[name] = val.unsqueeze(0).expand(N, *val.shape)
-
+            val = self.pgm.variables[name].to_member(val)
+            evidence[name] = val.unsqueeze(0).expand(N, *val.shape)
         with torch.no_grad():
-            for level in self.pgm.levels:
-                for var in level:
-                    name = var.name
-                    if name in samples:
-                        continue  # already set (root evidence)
-                    cpd = self.pgm.factors[name]
-                    if cpd.is_root:
-                        params = cpd(parent_values={})
-                        params = {k: v.unsqueeze(0).expand(N, *v.shape)
-                                  for k, v in params.items()}
-                    else:
-                        # ``samples`` is keyed by whole-variable names; the CPD
-                        # resolves member-handle parents from the plate value.
-                        params = cpd(parent_values=samples,
-                                     **layer_kwargs.get(name, {}))
-
-                    # One construction path for every family, so the layout
-                    # rules (Independent wrapping, and the per-member split of
-                    # a plate) are not re-derived here. ``EXACT_FAMILY`` swaps
-                    # a relaxed declaration for its hard counterpart, which is
-                    # what equality matching in _build_mask needs.
-                    from ..utils import EXACT_FAMILY, build_distribution
-
-                    D = var.distribution
-                    if issubclass(D, dist.Categorical):
-                        # Plain Categorical samples *indices*, not a one-hot.
-                        s = dist.Categorical(**params).sample()
-                    else:
-                        s = build_distribution(
-                            var, params, family=EXACT_FAMILY.get(D)
-                        ).sample()
-
-                    samples[name] = reshape_value_to_event(var, s)
-
-        return samples
+            _, cache, _ = sampler._run(
+                query={v.name: None for v in self.pgm.variables.values()},
+                evidence=evidence,
+                layer_kwargs=layer_kwargs,
+                n_samples=N,
+            )
+        return cache
 
     def _build_mask(
         self,
@@ -218,21 +203,20 @@ class RejectionSampling(TorchBaseInference):
         # Partition evidence into root vars (conditioned during generation)
         # and non-root vars (handled by rejection filtering). The PGM might
         # require constant evidence on certain roots (e.g. a root image).
-        root_names = {
-            v.name for v in self.pgm.variables.values()
-            if self.pgm.factors[v.name].is_root
-        }
+        root_names = self._root_names()
         root_evidence_names = set(evidence.keys()) & root_names
         nonroot_evidence_names = set(evidence.keys()) - root_names
 
         probs: List[float] = []
+        # Local, so it never becomes a submodule of self (state_dict untouched).
+        sampler = AncestralSamplingInference(self.pgm, exact=True)
 
         for b in range(B):
             root_evidence_b    = {name: evidence[name][b] for name in root_evidence_names}
             nonroot_evidence_b = {name: evidence[name][b] for name in nonroot_evidence_names}
             query_b            = {name: v[b] for name, v in query.items()}
 
-            stacked_samples = self._draw_joint(root_evidence_b, layer_kwargs)
+            stacked_samples = self._draw_joint(sampler, root_evidence_b, layer_kwargs)
 
             e_mask  = self._build_mask(stacked_samples, nonroot_evidence_b)
             qe_mask = e_mask & self._build_mask(stacked_samples, query_b)
@@ -302,4 +286,9 @@ class RejectionSampling(TorchBaseInference):
             )
 
         self._require_discrete(list(query.keys()), "query")
-        self._require_discrete(list(evidence.keys()), "evidence")
+        # Root evidence is clamped into the draw, never matched, so it may be
+        # continuous; only evidence the mask compares must be discrete.
+        root_names = self._root_names()
+        self._require_discrete(
+            [name for name in evidence if name not in root_names], "non-root evidence"
+        )

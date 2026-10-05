@@ -245,7 +245,7 @@ Pipeline steps
           values = list(outputs.values())
           return AnnotatedTensor(
               torch.stack([value.tensor for value in values]).mean(dim=0),
-              values[0].annotation,
+              values[0].annotations,
               axis=1,
           )
 
@@ -331,7 +331,7 @@ Complete example
       outputs = pipeline(dataset, class_names=class_names)
       print(list(outputs))
       # ['CLIPAnnotator', 'CLIPAnnotator_1', 'aggregated']
-      print(outputs["aggregated"].annotation.labels)
+      print(outputs["aggregated"].annotations.labels)
 
    ``class_names`` gives the LLM task context, not the desired concept names.
    This string prompt reads no samples. To supply samples, use a callable prompt;
