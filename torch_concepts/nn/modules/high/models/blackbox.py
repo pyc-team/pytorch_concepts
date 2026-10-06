@@ -304,7 +304,7 @@ class BlackBoxTaskOnly(BaseModel):
         sliced_annotated = AnnotatedTensor(sliced, self.task_annotations.to_concept_space(), axis=-1)
         return {**batch['inputs'], 'c': sliced_annotated}
 
-    def unscale_output(self, out, transforms):
+    def unscale_output(self, out, transforms, labels):
         """Not supported: :meth:`BaseLearner.unscale_output` assumes a
         prediction covers exactly the concepts the scaler was fit on, but this
         model's ``task_names`` is a strict subset of them.
@@ -322,7 +322,7 @@ class BlackBoxTaskOnly(BaseModel):
                 "Pass a datamodule without a 'concepts' scaler, or construct "
                 "this model with scale_concepts=False."
             )
-        return super().unscale_output(out, transforms)
+        return super().unscale_output(out, transforms, labels)
 
     def setup_metrics(self, metrics: ConceptMetrics):
         """Rebuild metrics with task-only annotations.

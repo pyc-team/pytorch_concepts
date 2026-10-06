@@ -740,23 +740,19 @@ class BaseModel(nn.Module, ABC):
         """The ``target`` a loss receives, built from a batch.
 
         Default: the batch inputs (``'x'``, ...) plus the concept ground truth
-        under ``'c'``, as a concept-space :class:`AnnotatedTensor` (one column per
-        concept) so losses and metrics align it to the predictions by name; a
-        ``'c'`` that already carries an annotation is kept as is. Override to
+        under ``'c'``, the concept-space :class:`AnnotatedTensor` (one column per
+        concept) losses and metrics align to the predictions by name. Override to
         organize the target for a model (e.g. supervise only the tasks).
 
         Parameters
         ----------
         batch : dict
-            ``{'inputs': {...}, 'concepts': {'c': ..., ...}, ...}`` — under the
-            learner, with inputs and concepts already scaled.
+            ``{'inputs': {...}, 'concepts': {'c': AnnotatedTensor, ...}, ...}`` —
+            under the learner, with inputs and concepts already scaled.
 
         Returns
         -------
         dict
-            ``{**batch['inputs'], 'c': concept-space AnnotatedTensor or None}``.
+            ``{**batch['inputs'], 'c': concept-space AnnotatedTensor}``.
         """
-        c = batch['concepts']['c']
-        if c is not None and not hasattr(c, 'annotations'):
-            c = AnnotatedTensor(c, self.concept_annotations.to_concept_space(), axis=-1)
-        return {**batch['inputs'], 'c': c}
+        return {**batch['inputs'], 'c': batch['concepts']['c']}

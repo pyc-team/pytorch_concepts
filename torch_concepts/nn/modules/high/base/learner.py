@@ -169,6 +169,8 @@ class BaseLearner(pl.LightningModule):
             batch (dict): Batch dictionary from dataloader.
         Raises:
             KeyError: If required keys 'inputs' or 'concepts' are missing from batch
+            TypeError: If ``batch['concepts']['c']`` is not an
+                :class:`AnnotatedTensor` (the dataset's collate always builds one).
         """
         # Validate batch structure
         if not isinstance(batch, dict):
@@ -195,6 +197,11 @@ class BaseLearner(pl.LightningModule):
             raise KeyError(
                 "Batch concepts are missing the learner-facing 'c' entry. "
                 f"Found keys: {list(batch['concepts'].keys())}."
+            )
+        if not isinstance(batch['concepts']['c'], AnnotatedTensor):
+            raise TypeError(
+                "Expected batch['concepts']['c'] to be an AnnotatedTensor in concept "
+                f"space layout, got {type(batch['concepts']['c']).__name__}."
             )
 
     def unpack_batch(self, batch):
@@ -243,7 +250,7 @@ class BaseLearner(pl.LightningModule):
         """
         c = concepts['c']
         scaler = transforms.get('concepts') if self.scale_concepts else None
-        if scaler is not None and c is not None:
+        if scaler is not None:
             labels = c.annotations.labels_by_type.get('continuous')
             if labels:
                 scaled = AnnotatedTensor(c.tensor.clone(), c.annotations, c.axis)
@@ -251,7 +258,7 @@ class BaseLearner(pl.LightningModule):
                 c = scaled
         return {'c': c}
 
-    def unscale_output(self, out, transforms):
+    def unscale_output(self, out, transforms, labels):
         """Inverse-transform continuous predictions ('loc'/'value') back to
         natural units, so metrics are always reported on the original data scale.
         A no-op when :attr:`scale_concepts` is off or no 'concepts'
@@ -260,19 +267,22 @@ class BaseLearner(pl.LightningModule):
         Args:
             out: Model output whose continuous quantities are in scaled space.
             transforms: The batch's fitted scalers.
+            labels: The continuous concept labels, in the column order the
+                'concepts' scaler was fitted on. Predictions are matched to them
+                by name.
         Returns:
             The output with continuous quantities restored to the original scale.
         """
         scaler = transforms.get('concepts') if self.scale_concepts else None
-        if scaler is None:
+        if scaler is None or not labels:
             return out
         for quantity in CONTINUOUS_QUANTITIES:  # ('loc', 'value')
             pred = out.params.get(quantity)
-            if pred is None:
+            if pred is None or set(labels).isdisjoint(pred.annotations.label_to_index):
                 continue
-            setattr(out, quantity, AnnotatedTensor(
-                scaler.inverse_transform(pred.tensor), pred.annotations, pred.axis
-            ))
+            restored = AnnotatedTensor(pred.tensor.clone(), pred.annotations, pred.axis)
+            restored[labels] = scaler.inverse_transform(pred[labels].tensor)
+            setattr(out, quantity, restored)
         return out
 
     @cached_property
@@ -338,9 +348,10 @@ class BaseLearner(pl.LightningModule):
             self.log_loss(step, loss, batch_size=batch_size)
 
         # --- Update and log metrics (original scale) ---
-        out = self.unscale_output(out, transforms)
-        target_concepts = self.prepare_target(batch).get('c', None)
-        self.update_and_log_metrics(out, target_concepts, step, batch_size)
+        # The scaler was fitted on the batch's continuous concepts, in its order.
+        labels = concepts['c'].annotations.labels_by_type.get('continuous')
+        out = self.unscale_output(out, transforms, labels)
+        self.update_and_log_metrics(out, self.prepare_target(batch)['c'], step, batch_size)
         return loss
 
     def training_step(self, batch):

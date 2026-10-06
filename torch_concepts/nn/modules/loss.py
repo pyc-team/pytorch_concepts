@@ -256,7 +256,7 @@ class CompositeLoss(PyCLoss):
         ]
         return f"{self.__class__.__name__}({' + '.join(parts)})"
 
-    def breakdown(self, input: InferenceOutput, target=None, model=None) -> Dict[str, torch.Tensor]:
+    def breakdown(self, input: InferenceOutput, target: dict=None, model: nn.Module=None) -> Dict[str, torch.Tensor]:
         """Each term's **weighted** contribution, keyed by term name.
 
         :meth:`forward` returns exactly ``sum(breakdown(...).values())``, so the
@@ -269,7 +269,12 @@ class CompositeLoss(PyCLoss):
             for name, term, weight in zip(self.term_names, self.terms, self.weights)
         }
 
-    def forward(self, input: InferenceOutput, target=None, model=None) -> torch.Tensor:
+    def forward(
+        self, 
+        input: InferenceOutput, 
+        target: dict = None, 
+        model: nn.Module = None
+    ) -> torch.Tensor:
         return sum(self.breakdown(input, target, model).values())
 
 
@@ -703,7 +708,7 @@ class ConceptLoss(PyCLoss):
         self, 
         input: Union[InferenceOutput, AnnotatedTensor], 
         target: Union[dict, AnnotatedTensor],
-        model=None
+        model: nn.Module = None
     ) -> torch.Tensor:
         """Total loss across all concept types.
 
@@ -823,6 +828,8 @@ class ConceptSubset(PyCLoss):
         >>> loss_fn
         CompositeLoss(0.5*concepts + tasks)
     """
+
+    # FIXME: returns zero when names don't match labels. Silent. Should break?
 
     def __init__(self, loss: nn.Module, names=None, exclude=None):
         super().__init__()
