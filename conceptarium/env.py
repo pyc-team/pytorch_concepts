@@ -54,5 +54,3 @@ if HUGGINGFACEHUB_TOKEN:
 # OpenAI API key for GPT models
 # Set this if you're using OpenAI models for concept generation or evaluation
 OPENAI_API_KEY = env.get("OPENAI_API_KEY", "")
-
-GROQ_API_KEY = env.get("GROQ_API_KEY", "")
