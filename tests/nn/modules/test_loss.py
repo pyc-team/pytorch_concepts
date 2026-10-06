@@ -704,6 +704,20 @@ class TestConceptSubsetNames(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, "Task"):
             loss_fn(self.out, self.target)
 
+    def test_other_target_entries_reach_the_wrapped_loss(self):
+        """Only the concepts are narrowed: e.g. per-sample weights still arrive."""
+        seen = {}
+
+        class _Recorder(ConceptLoss):
+            def forward(self, input, target, model=None):
+                seen.update(target)
+                return super().forward(input, target, model)
+
+        weights = torch.rand(8)
+        ConceptSubset(_Recorder(**self.bce), names=['a'])(self.out, {'c': self.target, 'w': weights})
+        self.assertIs(seen['w'], weights)
+        self.assertEqual(list(seen['c'].annotations.labels), ['a'])
+
 
 # ======================================================================
 # L1LogitRegularizer tests

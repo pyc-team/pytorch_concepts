@@ -169,7 +169,8 @@ class Annotations:
     #: Caches that carry ``groups`` into derived annotations, dropped whenever
     #: ``groups`` is reassigned. Everything else derives from the write-once
     #: structural fields, so only these need invalidating.
-    _GROUP_DERIVED_CACHES = ('_subset_cache', '_slice_cache', '_concept_space_view', '_union_cache')
+    _GROUP_DERIVED_CACHES = ('_subset_cache', '_slice_cache', '_concept_space_view', '_union_cache',
+                             '_rename_cache')
 
     def __setattr__(self, key, value):
         # ``groups`` is the one field that may change after construction, so it is
@@ -787,7 +788,15 @@ class Annotations:
         return result
 
     def rename(self, mapping) -> "Annotations":
-        """New annotations with labels renamed; `mapping` is a dict or a callable."""
+        """New annotations with labels renamed; `mapping` is a dict or a callable.
+
+        Memoised for a dict: renaming the same way again returns the same object,
+        so caches keyed on it (e.g. :meth:`union_with`'s) stay warm and bounded.
+        """
+        key = tuple(mapping.items()) if isinstance(mapping, dict) else None
+        cache = self.__dict__.setdefault('_rename_cache', {})
+        if key in cache:
+            return cache[key]
         fn = mapping.get if isinstance(mapping, dict) else mapping
         result = Annotations(
             labels=[fn(l) or l for l in self.labels],
@@ -797,6 +806,8 @@ class Annotations:
         )
         result._carry_groups({fn(owner) or owner: [fn(m) or m for m in members]
                               for owner, members in self.label_groups.items()})
+        if key is not None:
+            cache[key] = result
         return result
 
 

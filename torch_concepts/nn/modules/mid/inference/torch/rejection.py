@@ -246,7 +246,7 @@ class RejectionSampling(TorchBaseInference):
 
         return InferenceOutput(
             probabilities=self._restore_leading(
-                torch.tensor(probs, device=next(iter(query.values())).device), leading)
+                torch.tensor(probs, device=e_mask.device), leading)
         )
 
     def _validate(

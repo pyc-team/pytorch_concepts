@@ -58,3 +58,12 @@ def test_two_probability_estimates_are_refused():
     with pytest.raises(ValueError, match="probabilities"):
         _out("c1", probabilities=torch.rand(4)).union_with(
             _out("c2", probabilities=torch.rand(4)))
+
+
+def test_merging_a_renamed_query_every_step_keeps_one_cache_entry():
+    """A model renaming and merging on every forward must hit the caches, not
+    grow them: `rename` returns the same annotation for the same mapping."""
+    first = _out("c1")
+    for _ in range(5):
+        first.union_with(first.rename_variable("c1", "c1_again").rename_variable("z_c1", "z_c1_again"))
+    assert len(first.logits.annotations.__dict__["_union_cache"]) == 1

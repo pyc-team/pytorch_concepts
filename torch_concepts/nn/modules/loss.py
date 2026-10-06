@@ -825,16 +825,16 @@ class ConceptSubset(PyCLoss):
         return f"exclude={self.exclude}"
 
     def forward(self, input: InferenceOutput, target, model=None) -> torch.Tensor:
-        target = _concepts(target)
+        c = _concepts(target)
         # A name that is not a target concept (a typo, a plate name) raise here.
         given = set(self.names if self.names is not None else self.exclude)
-        assert given <= target.annotations.label_to_index.keys(), (
-            f"ConceptSubset: {sorted(given - target.annotations.label_to_index.keys())} "
-            f"are not concepts of the target {list(target.annotations.labels)}.")
-        
+        assert given <= c.annotations.label_to_index.keys(), (
+            f"ConceptSubset: {sorted(given - c.annotations.label_to_index.keys())} "
+            f"are not concepts of the target {list(c.annotations.labels)}.")
+
         names = self.names
         if names is None:
-            names = [n for n in target.annotations.labels if n not in self.exclude]
+            names = [n for n in c.annotations.labels if n not in self.exclude]
 
         sub = subset_output(input, names)
         if not sub.params:
@@ -844,7 +844,10 @@ class ConceptSubset(PyCLoss):
             reference = next(iter(input.params.values()), None)
             return torch.zeros((), device=None if reference is None else reference.device)
 
-        return self.loss(sub, target[names], model)
+        # Only the concepts are narrowed: other target entries (e.g. sample
+        # weights from `prepare_target`) still reach the wrapped loss.
+        sub_target = {**target, 'c': c[names]} if isinstance(target, dict) else c[names]
+        return self.loss(sub, sub_target, model)
 
 
 class WeightedConceptLoss(CompositeLoss):
