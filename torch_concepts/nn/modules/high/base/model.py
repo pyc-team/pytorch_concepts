@@ -716,28 +716,37 @@ class BaseModel(nn.Module, ABC):
             query[name] = torch.cat(pieces, dim=-1)
         return query
 
-    def default_query(self, c, step='train'):
-        """The query a training/eval step asks for: every concept, teacher-forced
-        at ``'train'`` and latent otherwise, so evaluation measures the model unaided.
+    def prepare_query(self, batch: Dict, step='train') -> Dict:
+        """The query a training/eval step asks for, built from a batch: every
+        concept, teacher-forced at ``'train'`` and latent otherwise, so
+        evaluation measures the model unaided.
 
         The keys are the same either way, only the values differ, so this makes a
         difference only to an engine with ``p_int > 0`` (``VariationalInference``,
-        ``IndependentInference``). Override to observe a subset::
+        ``IndependentInference``). Override to observe a subset, or to read other
+        batch entries::
 
-            q = self.fully_observed_query(c)
+            q = self.fully_observed_query(batch['concepts']['c'])
             return {n: (v if n in KEEP else None) for n, v in q.items()}
+
+        Parameters
+        ----------
+        batch : dict
+            ``{'inputs': {...}, 'concepts': {'c': AnnotatedTensor, ...}, ...}`` —
+            under the learner, with inputs and concepts already scaled.
+        step : {'train', 'val', 'test'}
         """
-        query = self.fully_observed_query(c)
+        query = self.fully_observed_query(batch['concepts']['c'])
         return query if step == 'train' else {name: None for name in query}
 
-    def default_evidence(self, inputs, step='train'):
-        """The evidence a training/eval step observes: the raw input only
-        (``{"input": inputs["x"]}``).
+    def prepare_evidence(self, batch: Dict, step='train') -> Dict:
+        """The evidence a training/eval step observes, built from a batch: the
+        input only (``{"input": batch['inputs']['x']}``).
 
         Override to supply additional observed (non-concept) variables, per
         ``step`` if they differ between training and evaluation.
         """
-        return {"input": inputs["x"]}
+        return {"input": batch['inputs']['x']}
 
     def prepare_target(self, batch: Dict) -> Dict:
         """The ``target`` a loss receives, built from a batch.

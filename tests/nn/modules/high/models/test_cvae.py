@@ -77,8 +77,8 @@ def categorical_annotations():
 
 
 def binary_query(model, batch=5):
-    """A `default_query` over random binary concept values."""
-    return model.default_query(torch.randint(0, 2, (batch, 2)).float())
+    """A `prepare_query` over random binary concept values."""
+    return model.prepare_query({'concepts': {'c': torch.randint(0, 2, (batch, 2)).float()}})
 
 
 class TestConditionalVAE:
@@ -214,8 +214,8 @@ class TestConditionalPrior:
         ignored `c` would be the old fixed one wearing a network."""
         model = build_model(binary_annotations, plate=False)
         x = torch.rand(5, INPUT_SIZE)
-        a = model(query=model.default_query(torch.zeros(5, 2)), input=x)
-        b = model(query=model.default_query(torch.ones(5, 2)), input=x)
+        a = model(query=model.prepare_query({'concepts': {'c': torch.zeros(5, 2)}}), input=x)
+        b = model(query=model.prepare_query({'concepts': {'c': torch.ones(5, 2)}}), input=x)
         assert not torch.allclose(a.params["z"]["loc"], b.params["z"]["loc"])
         assert not torch.allclose(a.params["z"]["scale"], b.params["z"]["scale"])
 
@@ -314,8 +314,8 @@ class TestPriorSwitch:
             binary_annotations, plate=False, conditional_prior=conditional_prior
         )
         x = torch.rand(5, INPUT_SIZE)
-        a = model(query=model.default_query(torch.zeros(5, 2)), input=x)
-        b = model(query=model.default_query(torch.ones(5, 2)), input=x)
+        a = model(query=model.prepare_query({'concepts': {'c': torch.zeros(5, 2)}}), input=x)
+        b = model(query=model.prepare_query({'concepts': {'c': torch.ones(5, 2)}}), input=x)
         # Same image, different condition: q(z | x, c) must move regardless of prior.
         assert not torch.allclose(
             a.guide_params["loc"]["z"], b.guide_params["loc"]["z"]
@@ -389,8 +389,8 @@ class TestGuideSharesOneBackbonePass:
     def test_both_parameters_still_depend_on_the_input(self, binary_annotations):
         model = self._model(binary_annotations, CountingBackbone(INPUT_SIZE, 32))
         c = torch.randint(0, 2, (6, 2)).float()
-        a = model(query=model.default_query(c), input=torch.rand(6, INPUT_SIZE))
-        b = model(query=model.default_query(c), input=torch.rand(6, INPUT_SIZE))
+        a = model(query=model.prepare_query({'concepts': {'c': c}}), input=torch.rand(6, INPUT_SIZE))
+        b = model(query=model.prepare_query({'concepts': {'c': c}}), input=torch.rand(6, INPUT_SIZE))
         # An amortised posterior: a different image gives a different q(z | x, c).
         assert not torch.allclose(a.guide_params["loc"]["z"], b.guide_params["loc"]["z"])
         assert not torch.allclose(
@@ -461,7 +461,7 @@ class TestTrainingAndGeneration:
         )
         c = torch.randint(0, 2, (5, 2)).float()
         x = torch.rand(5, INPUT_SIZE)
-        out = model(query=model.default_query(c), input=x)
+        out = model(query=model.prepare_query({'concepts': {'c': c}}), input=x)
         c_ann = AnnotatedTensor(c, binary_annotations.to_concept_space(), axis=1)
         terms = loss_fn.breakdown(out, model.prepare_target({'inputs': {'x': x}, 'concepts': {'c': c_ann}}))
         assert all(torch.isfinite(t) for t in terms.values())
@@ -488,7 +488,7 @@ class TestTrainingAndGeneration:
                  'concepts': {'c': AnnotatedTensor(c, binary_annotations.to_concept_space(), axis=1)}}
 
         for step in ('train', 'val', 'test'):
-            assert torch.equal(model.default_query(c, step)["a"], c[:, :1])
+            assert torch.equal(model.prepare_query({'concepts': {'c': c}}, step)["a"], c[:, :1])
             assert torch.isfinite(model.shared_step(batch, step))
 
     def test_unconditional_generation_through_ancestral_sampling(self, binary_annotations):
@@ -516,7 +516,7 @@ class TestContinuousConcepts:
         )
         model = build_model(annotations, plate=False)
         c = torch.rand(5, 2)
-        out = model(query=model.default_query(c), input=torch.rand(5, INPUT_SIZE))
+        out = model(query=model.prepare_query({'concepts': {'c': c}}), input=torch.rand(5, INPUT_SIZE))
         assert sorted(out.params["h"]) == ["loc", "scale"]
         assert sorted(out.params["a"]) == ["logits"]
         assert bool((out.scale["h"] > 0).all())

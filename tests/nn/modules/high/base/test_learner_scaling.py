@@ -9,7 +9,7 @@ Without one — or with ``scale_concepts=False`` — every scaling step is an
 identity.
 
 ``unscale_output`` assumes a queried quantity covers exactly the concepts the
-scaler was fit on (the standard case: ``default_query`` asks for every
+scaler was fit on (the standard case: ``prepare_query`` asks for every
 concept). ``BlackBoxTaskOnly`` queries a strict subset and explicitly refuses
 that combination instead of silently producing wrong values.
 """
@@ -173,9 +173,8 @@ class TestScaledSpaceSeparation:
         transforms = {'concepts': scaler}
         c_scaled = model.maybe_scale_concepts({'c': c}, transforms)['c']
         out = model.forward(
-            query=model.default_query(c_scaled, 'test'),
-            evidence=model.default_evidence(
-                model.maybe_scale_inputs(batch['inputs'], transforms), 'test'),
+            query=model.prepare_query({'concepts': {'c': c_scaled}}, 'test'),
+            evidence=model.prepare_evidence({'inputs': model.maybe_scale_inputs(batch['inputs'], transforms)}, 'test'),
         )
         loc = out.loc
         preds = scaler.inverse_transform(loc.tensor)

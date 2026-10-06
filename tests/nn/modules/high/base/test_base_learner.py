@@ -51,8 +51,8 @@ class FullMockLearner(BaseLearner):
     """
 
     # Borrowed rather than restated, so the split behaviour under test is the real one.
-    default_query = BaseModel.default_query
-    default_evidence = BaseModel.default_evidence
+    prepare_query = BaseModel.prepare_query
+    prepare_evidence = BaseModel.prepare_evidence
 
     def __init__(self, annotations, n_concepts=2, **kwargs):
         super().__init__(**kwargs)

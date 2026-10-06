@@ -533,7 +533,7 @@ class TestTeacherForcingRate:
         weight = self._state_embedding_weight(model)
 
         x = torch.rand(8, INPUT_SIZE)
-        query = model.default_query(torch.ones(8, 1))
+        query = model.prepare_query({'concepts': {'c': torch.ones(8, 1)}})
         model.zero_grad()
         out = model(query=query, input=x)
         MSEReconstructionLoss(variable="input")(out, {"x": x}).backward()
@@ -567,16 +567,16 @@ class TestTeacherForcingRate:
         annotations = Annotations(labels=["a"], cardinalities=[1], types=["binary"])
         ground_truth = torch.ones(4, 1)
         for p_int in (0.0, 0.5, 1.0):
-            forced = self._model(annotations, p_int).default_query(ground_truth)["a"]
+            forced = self._model(annotations, p_int).prepare_query({'concepts': {'c': ground_truth}})["a"]
             assert torch.equal(forced, ground_truth)
 
     def test_the_eval_query_withholds_the_ground_truth(self):
         """Evaluation measures the model unaided: same keys, no values."""
         annotations = Annotations(labels=["a"], cardinalities=[1], types=["binary"])
         model = self._model(annotations, p_int=1.0)
-        train = model.default_query(torch.ones(4, 1))
+        train = model.prepare_query({'concepts': {'c': torch.ones(4, 1)}})
         for step in ("val", "test"):
-            query = model.default_query(torch.ones(4, 1), step)
+            query = model.prepare_query({'concepts': {'c': torch.ones(4, 1)}}, step)
             assert set(query) == set(train)
             assert all(value is None for value in query.values())
 
@@ -603,7 +603,7 @@ class TestTeacherForcingRate:
         model = self._model(annotations, p_int=p_int)
         ground_truth = torch.tensor([[1.0, 2.0]]).expand(4, -1)
         out = model(
-            query=model.default_query(ground_truth), input=torch.rand(4, INPUT_SIZE)
+            query=model.prepare_query({'concepts': {'c': ground_truth}}), input=torch.rand(4, INPUT_SIZE)
         )
 
         assert "logits" in out.params

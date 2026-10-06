@@ -192,8 +192,8 @@ Expand each block below for an explanation and an example.
     The step builds the query for you: training observes the concepts (so that certain 
     inference strategies can do teacher-forcing, e.g., IndependentInference), while
     validation and test leave them latent so evaluation measures the model unaided.
-    Override ``default_query`` (or ``default_evidence``), both of which take the split as
-    ``step``, to change what a split observes.
+    Override ``prepare_query`` (or ``prepare_evidence``), both of which take the full batch
+    and the split as ``step``, to change what a split observes.
 
 
 .. dropdown:: Putting It Together: Concept Bottleneck Model

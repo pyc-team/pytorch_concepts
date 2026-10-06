@@ -327,9 +327,9 @@ class BaseLearner(pl.LightningModule):
 
         # --- Model forward (scaled space) ---
         # Both are split-aware: the concepts are teacher-forced at 'train' and
-        # left latent at 'val'/'test' (see `default_query`).
-        query = self.default_query(scaled['concepts']['c'], step)
-        evidence = self.default_evidence(scaled['inputs'], step)
+        # left latent at 'val'/'test' (see `prepare_query`).
+        query = self.prepare_query(scaled, step)
+        evidence = self.prepare_evidence(scaled, step)
         out = self.forward(query=query, evidence=evidence)
 
         target = self.prepare_target(scaled)
