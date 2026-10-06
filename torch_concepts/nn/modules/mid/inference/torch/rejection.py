@@ -166,7 +166,8 @@ class RejectionSampling(TorchBaseInference):
         obs_dict: Dict[str, torch.Tensor],
     ) -> torch.Tensor:
         """Build an ``(N,)`` boolean mask for a single-observation dict."""
-        mask = torch.ones(self.n_samples, dtype=torch.bool)
+        device = next(iter(stacked_samples.values())).device
+        mask = torch.ones(self.n_samples, dtype=torch.bool, device=device)
         for name, val in obs_dict.items():
             # ``extract`` reads a whole variable or a member column uniformly, so
             # member evidence joins the rejection mask (exact conditioning).
@@ -244,7 +245,8 @@ class RejectionSampling(TorchBaseInference):
             probs.append(prob_b)
 
         return InferenceOutput(
-            probabilities=self._restore_leading(torch.tensor(probs), leading)
+            probabilities=self._restore_leading(
+                torch.tensor(probs, device=next(iter(query.values())).device), leading)
         )
 
     def _validate(

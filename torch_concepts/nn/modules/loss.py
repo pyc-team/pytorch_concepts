@@ -226,6 +226,8 @@ class CompositeLoss(PyCLoss):
         self.terms = nn.ModuleList(terms)
         self.weights = list(weights)
         self.term_names = list(names) if names is not None else _unique_names(terms)
+        if len(set(self.term_names)) != len(self.term_names):
+            raise ValueError(f"CompositeLoss: term names must be unique, got {self.term_names}.")
 
     def __repr__(self) -> str:
         parts = [

@@ -299,10 +299,7 @@ class BlackBoxTaskOnly(BaseModel):
     def prepare_target(self, batch) -> dict:
         """The default target with ``'c'`` sliced to the task columns and
         annotated in task concept-space, matching the task-only output."""
-        concepts = batch['concepts']['c']
-        sliced = concepts[:, self.task_concept_idx].as_subclass(torch.Tensor)
-        sliced_annotated = AnnotatedTensor(sliced, self.task_annotations.to_concept_space(), axis=-1)
-        return {**batch['inputs'], 'c': sliced_annotated}
+        return {**batch['inputs'], 'c': batch['concepts']['c'][self.task_names]}
 
     def unscale_output(self, out, transforms, labels):
         """Not supported: :meth:`BaseLearner.unscale_output` assumes a

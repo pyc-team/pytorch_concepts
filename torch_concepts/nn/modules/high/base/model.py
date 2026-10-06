@@ -697,7 +697,10 @@ class BaseModel(nn.Module, ABC):
             dict[str, torch.Tensor]: Map from concept variable name to its query
             tensor, keyed for lookup via ``query.get(variable.name)``.
         """
-        raw = ground_truth.tensor if isinstance(ground_truth, AnnotatedTensor) else ground_truth
+        # By name, not position: the batch may order (or hold more) concepts.
+        if isinstance(ground_truth, AnnotatedTensor):
+            ground_truth = ground_truth[list(self.concept_annotations.labels)].tensor
+        raw = ground_truth
         query = {}
         for name, segments in self._query_segments.items():
             if len(segments) == 1 and segments[0][0] == 'plain':
