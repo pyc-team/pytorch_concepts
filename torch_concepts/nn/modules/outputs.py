@@ -193,7 +193,7 @@ class InferenceOutput:
             self.guide_params = ParamsDict(self.guide_params)
 
     # Declared as fields so they can be passed to the
-    # constructor (``ModelOutput(logits=...)``), but each is turned into a
+    # constructor (``InferenceOutput(logits=...)``), but each is turned into a
     # property below, so assigning one — in ``__init__`` or later — writes
     # straight through to ``params`` and there is still only one storage
     # location per quantity. ``repr=False`` keeps them out of the generated
@@ -239,6 +239,69 @@ class InferenceOutput:
         """Every name addressable in ``guide_params``. See :meth:`_addressable`."""
         return self._addressable(self.guide_params)
 
+    def union_with(self, *others: "InferenceOutput") -> "InferenceOutput":
+        """One output holding this one's and ``others``' variables.
+
+        Merges the results of successive ``query`` calls into the single output
+        a loss takes: each quantity is concatenated along the annotated axis
+        (see :meth:`AnnotatedTensor.union_with`), so ``out.logits['c1']`` works
+        whichever query reported ``c1``.
+
+        Raises:
+            ValueError: If a variable is reported by more than one output (use
+                :meth:`rename_variable` on one side first), or if more than one
+                carries ``probabilities`` — a joint estimate is not their merge.
+        """
+        outputs = (self, *others)
+        seen = set()
+        for out in outputs:
+            names = set(out.variables) | set(out.guide_variables)
+            if out.samples is not None:
+                names |= set(out._addressable({"samples": out.samples}))
+            if names & seen:
+                raise ValueError(
+                    f"union_with: {sorted(names & seen)} reported by more than one "
+                    "output. Rename one side with `rename_variable` first."
+                )
+            seen |= names
+        probabilities = [o.probabilities for o in outputs if o.probabilities is not None]
+        if len(probabilities) > 1:
+            raise ValueError("union_with: more than one output carries `probabilities`.")
+        samples = _merge({"samples": o.samples} for o in outputs if o.samples is not None)
+        return InferenceOutput(
+            params=_merge(o.params for o in outputs),
+            guide_params=_merge(o.guide_params for o in outputs),
+            samples=samples.get("samples"),
+            probabilities=probabilities[0] if probabilities else None,
+        )
+
+    def rename_variable(self, old: str, new: str) -> "InferenceOutput":
+        """A copy with variable ``old`` (a label or a plate) called ``new``.
+
+        Data is shared, only the annotations change. Querying one variable twice
+        and renaming one result is what makes the two :meth:`union_with`-able.
+        """
+        def rename(tensor):
+            if tensor is None:
+                return None
+            return AnnotatedTensor(tensor.tensor, tensor.annotations.rename({old: new}), tensor.axis)
+
+        return InferenceOutput(
+            params={q: rename(t) for q, t in self.params.items()},
+            guide_params={q: rename(t) for q, t in self.guide_params.items()},
+            samples=rename(self.samples),
+            probabilities=self.probabilities,
+        )
+
+
+def _merge(dicts) -> Dict[str, AnnotatedTensor]:
+    """Quantity-keyed dicts merged key by key, each quantity in one ``union_with``."""
+    grouped = {}
+    for d in dicts:
+        for quantity, tensor in d.items():
+            grouped.setdefault(quantity, []).append(tensor)
+    return {q: ts[0].union_with(*ts[1:]) for q, ts in grouped.items()}
+
 
 # Replace each quantity field with a property backed by ``params``. Attached
 # after ``@dataclass`` has run so the decorator saw a plain ``UNSET`` default;
@@ -249,22 +312,3 @@ for _q in QUANTITIES:
     setattr(InferenceOutput, _q, _quantity_property(_q))
 del _q
 
-
-@dataclass
-class ModelOutput(InferenceOutput):
-    """Structured output from a high-level model's ``forward()`` method.
-
-    An :class:`InferenceOutput` — same contract, same quantity-keyed layout —
-    plus the extra fields the high level attaches around a query.
-
-    Attributes
-    ----------
-    target : torch.Tensor or None
-        The prepared ground-truth tensor aligned with the annotated axis of
-        ``logits``.
-    extra : dict[str, torch.Tensor] or None
-        Model-specific extras that do not belong to the inference contract.
-    """
-
-    target: Optional[torch.Tensor] = None
-    extra: Optional[Dict[str, torch.Tensor]] = None

@@ -6,7 +6,7 @@ from torchmetrics import Metric, MetricCollection
 from copy import deepcopy
 
 from ...annotations import Annotations
-from .outputs import CONTINUOUS_QUANTITIES, ModelOutput, supervised_subset
+from .outputs import CONTINUOUS_QUANTITIES, InferenceOutput, supervised_subset
 from .utils import by_type, check_collection
 
 
@@ -325,27 +325,24 @@ class ConceptMetrics(nn.Module):
         cat_target = cat_target.T.reshape(-1).long()
         return cat_pred, cat_target
 
-    def update(self, preds, target: torch.Tensor = None):
+    def update(self, preds, target: torch.Tensor):
         """Update metrics by routing predictions to the correct type collection.
 
         Summary metrics receive aggregated data for all concepts of a type.
         Per-concept metrics receive individual concept data.
 
         Args:
-            preds: A ``ModelOutput`` or a single :class:`AnnotatedTensor` of
+            preds: A ``InferenceOutput`` or a single :class:`AnnotatedTensor` of
                 discrete predictions.
-            target: Annotated concept-space ground truth. Defaults to
-                ``preds.target`` when *preds* is a ``ModelOutput``; required
-                otherwise.
+            target: Annotated concept-space ground truth.
         """
-        # A ModelOutput carries one AnnotatedTensor per quantity (logits/probs for
+        # A InferenceOutput carries one AnnotatedTensor per quantity (logits/probs for
         # discrete concepts, loc/scale for continuous); each type is scored on the
         # quantity that represents it. A bare tensor is taken as the discrete params.
-        if isinstance(preds, ModelOutput):
+        if isinstance(preds, InferenceOutput):
             out = preds
-            target = target if target is not None else out.target
         else:
-            out = ModelOutput()
+            out = InferenceOutput()
             out.logits = preds
 
         discrete = out.logits if out.logits is not None else out.probs

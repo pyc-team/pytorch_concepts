@@ -27,7 +27,7 @@ from ....mid.factors.cpd import ParametricCPD
 from ....mid.inference.base import BaseInference
 from ....mid.inference.torch.deterministic import DeterministicInference
 from ....low.priors import FixedPrior, TiedPrior
-from .....modules.outputs import ModelOutput
+from .....modules.outputs import InferenceOutput
 
 from .steerling_low import SteerlingLowLevelModel
 from .steerling_utils import (
@@ -45,7 +45,7 @@ class SteerlingModel(SteerlingLowLevelModel):
     its modules in a :class:`~torch_concepts.nn.BayesianNetwork` so individual
     variables (concepts, latents, tokens) can be queried by name. Unlike the
     low-level model, :meth:`forward` returns a
-    :class:`~torch_concepts.nn.ModelOutput` and takes an optional ``query``.
+    :class:`~torch_concepts.nn.InferenceOutput` and takes an optional ``query``.
 
     Internal PGM graph::
 
@@ -376,7 +376,7 @@ class SteerlingModel(SteerlingLowLevelModel):
         query: Optional[list[str]] = None,
         evidence: Optional[dict] = None,
         input_ids: Optional[torch.Tensor] = None,
-    ) -> ModelOutput:
+    ) -> InferenceOutput:
         """Run inference over the concept-bottleneck PGM.
 
         Args:
@@ -386,7 +386,7 @@ class SteerlingModel(SteerlingLowLevelModel):
                 ``input_ids``.
 
         Returns:
-            ModelOutput: quantity-keyed ``params`` (``out.logits``,
+            InferenceOutput: quantity-keyed ``params`` (``out.logits``,
             ``out.value``, ...), each an annotated tensor sliceable by variable
             name and token-aligned ``(B, T, ...)``.
         """
@@ -407,13 +407,7 @@ class SteerlingModel(SteerlingLowLevelModel):
             "evidence must always include 'input' (the token sequence)."
         )
 
-        result = self.inference.query(query, evidence=evidence)
-        return ModelOutput(
-            params=result.params,
-            guide_params=result.guide_params,
-            samples=result.samples,
-            probabilities=result.probabilities,
-        )
+        return self.inference.query(query, evidence=evidence)
 
     # ------------------------------------------------------------------
     # Convenience methods

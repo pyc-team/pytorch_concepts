@@ -170,7 +170,8 @@ def main():
             out = model(query=var_list, input=x)
 
             # 'breakdown' returns a dict of the individual loss terms
-            terms = loss_fn.breakdown(out, c)
+            # the target carries the observed image for the reconstruction term
+            terms = loss_fn.breakdown(out, {'x': x, 'c': c})
             loss = sum(terms.values())
             optimizer.zero_grad()
             loss.backward()

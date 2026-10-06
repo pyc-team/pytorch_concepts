@@ -62,7 +62,7 @@ from .modules.callbacks import LossWeightWarmup
 from .modules.metrics import ConceptMetrics, compute_cace
 
 # Output containers
-from .modules.outputs import ModelOutput, InferenceOutput
+from .modules.outputs import InferenceOutput
 
 # Models (high-level)
 from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
@@ -196,7 +196,6 @@ __all__ = [
     "compute_cace",
 
     # Output containers
-    "ModelOutput",
     "InferenceOutput",
 
     # Models (high-level)

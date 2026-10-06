@@ -35,7 +35,7 @@ from .....annotations import Annotations
 from .....tensor import AnnotatedTensor
 from .....distributions import Delta
 from ...utils import with_training_mode
-from ...outputs import ModelOutput
+from ...outputs import InferenceOutput
 from ...low.encoders.linear import LinearEmbeddingToConcept
 from ...low.sequential import Sequential
 from ...mid.distributions import DEFAULT_DIST_KWARGS
@@ -585,25 +585,13 @@ class BaseModel(nn.Module, ABC):
     #     """
     #     return self._encoder
 
-    def default_extra(
-        self,
-        evidence: Optional[Dict[str, torch.Tensor]] = None,
-        query: Optional[Union[List[str], Dict[str, Optional[torch.Tensor]]]] = None,
-    ) -> Optional[Dict[str, torch.Tensor]]:
-        """Extra context merged into ``out.extra`` for loss terms that need more
-        than params/target. ``None`` by default (nothing merged); override in a
-        model whose loss needs it, e.g. ``{'evidence': evidence}`` for
-        :class:`~torch_concepts.nn.MSEReconstructionLoss`.
-        """
-        return None
-
     def forward(
         self,
         query: Union[List[str], Dict[str, Optional[torch.Tensor]]],
         evidence: Optional[Dict[str, torch.Tensor]] = None,
         input: Optional[torch.Tensor] = None,
         **inference_kwargs,
-    ) -> ModelOutput:
+    ) -> InferenceOutput:
         """Unified forward pass for all inference engines.
 
         The active inference engine is selected automatically based on
@@ -625,7 +613,7 @@ class BaseModel(nn.Module, ABC):
 
         Returns
         -------
-        ModelOutput
+        InferenceOutput
             ``params``/``samples``/``probabilities`` from the engine.
         """
         if evidence is None:
@@ -633,19 +621,7 @@ class BaseModel(nn.Module, ABC):
         if input is not None:
             evidence['input'] = input
 
-        result = self.inference.query(
-            query=query,
-            evidence=evidence,
-            **inference_kwargs,
-        )
-
-        return ModelOutput(
-            params=result.params,
-            guide_params=result.guide_params,
-            samples=result.samples,
-            probabilities=result.probabilities,
-            extra=self.default_extra(evidence, query),
-        )
+        return self.inference.query(query=query, evidence=evidence, **inference_kwargs)
 
     @functools.cached_property
     def _query_plan(self):
@@ -760,27 +736,27 @@ class BaseModel(nn.Module, ABC):
         """
         return {"input": inputs["x"]}
 
-    def prepare_target(self, target: torch.Tensor, out: Optional[ModelOutput] = None) -> torch.Tensor:
-        """Prepare ground-truth labels for loss/metrics.
+    def prepare_target(self, batch: Dict) -> Dict:
+        """The ``target`` a loss receives, built from a batch.
 
-        Returns the target as a concept-space :class:`AnnotatedTensor` (one column
-        per concept), so losses and metrics can align it to the predictions by
-        name. A target that already carries an annotation is returned unchanged.
-        Override in subclasses that predict a subset of concepts (e.g. task-only).
+        Default: the batch inputs (``'x'``, ...) plus the concept ground truth
+        under ``'c'``, as a concept-space :class:`AnnotatedTensor` (one column per
+        concept) so losses and metrics align it to the predictions by name; a
+        ``'c'`` that already carries an annotation is kept as is. Override to
+        organize the target for a model (e.g. supervise only the tasks).
 
         Parameters
         ----------
-        target : torch.Tensor
-            Raw ground-truth labels from the batch.
-        out : ModelOutput, optional
-            The forward pass output the model produces. Ignored here; it lets a subclass
-            supervise a variable whose truth is defined against a prediction.
+        batch : dict
+            ``{'inputs': {...}, 'concepts': {'c': ..., ...}, ...}`` — under the
+            learner, with inputs and concepts already scaled.
 
         Returns
         -------
-        AnnotatedTensor or None
-            Concept-space annotated target.
+        dict
+            ``{**batch['inputs'], 'c': concept-space AnnotatedTensor or None}``.
         """
-        if target is None or hasattr(target, 'annotations'):
-            return target
-        return AnnotatedTensor(target, self.concept_annotations.to_concept_space(), axis=-1)
+        c = batch['concepts']['c']
+        if c is not None and not hasattr(c, 'annotations'):
+            c = AnnotatedTensor(c, self.concept_annotations.to_concept_space(), axis=-1)
+        return {**batch['inputs'], 'c': c}

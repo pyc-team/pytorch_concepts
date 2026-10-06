@@ -23,8 +23,8 @@ from pytorch_lightning.utilities.types import Optimizer, LRScheduler
 
 from .....tensor import AnnotatedTensor
 from ...metrics import ConceptMetrics
-from ...loss import PyCLoss, CompositeLoss
-from ...outputs import CONTINUOUS_QUANTITIES, ModelOutput, ParamsDict
+from ...loss import CompositeLoss
+from ...outputs import CONTINUOUS_QUANTITIES, InferenceOutput
 
 
 class BaseLearner(pl.LightningModule):
@@ -60,10 +60,8 @@ class BaseLearner(pl.LightningModule):
     ):
         super(BaseLearner, self).__init__(**kwargs)
 
-        # loss function. Only a PyCLoss (e.g. ConceptLoss), which consumes
-        # the whole ModelOutput, is supported.
+        # A PyCLoss (e.g. ConceptLoss), called as loss(out, target, model).
         self.loss = loss
-        self._loss_takes_model_output = isinstance(loss, PyCLoss)
 
         # optimizer and scheduler
         self.optim_class = optim_class
@@ -99,11 +97,11 @@ class BaseLearner(pl.LightningModule):
         self.val_metrics = metrics.clone(prefix="val")
         self.test_metrics = metrics.clone(prefix="test") 
 
-    def update_and_log_metrics(self, out: ModelOutput, target, step: str, batch_size: int):
+    def update_and_log_metrics(self, out: InferenceOutput, target, step: str, batch_size: int):
         """Update metrics and log them.
 
         Args:
-            out (ModelOutput): Model output containing the predictions.
+            out (InferenceOutput): Model output containing the predictions.
             target: Concept-space ground truth.
             step (str): Which split to update ('train', 'val', or 'test').
             batch_size (int): Batch size for metric logging.
@@ -115,11 +113,11 @@ class BaseLearner(pl.LightningModule):
         if collection is not None:
             self.log_metrics(collection, batch_size=batch_size)
 
-    def update_metrics(self, out: ModelOutput, target, step: str):
+    def update_metrics(self, out: InferenceOutput, target, step: str):
         """Update metrics with model output and target.
 
         Args:
-            out (ModelOutput): Model output containing the predictions.
+            out (InferenceOutput): Model output containing the predictions.
             target: Concept-space ground truth.
             step (str): Which split to update ('train', 'val', or 'test').
         """
@@ -309,40 +307,40 @@ class BaseLearner(pl.LightningModule):
         # TODO: needs to extend to arbitrary leading dims (e.g., for text)
         batch_size = batch['inputs']['x'].size(0)
 
-        inputs = self.maybe_scale_inputs(inputs, transforms)
-        c_loss = self.maybe_scale_concepts(concepts, transforms).get('c', None)
+        scaled_inputs = self.maybe_scale_inputs(inputs, transforms)
+        scaled_concepts = self.maybe_scale_concepts(concepts, transforms)
+        scaled = {
+            **batch,
+            'inputs': scaled_inputs,
+            'concepts': {**batch['concepts'], **scaled_concepts},
+        }
 
         # --- Model forward (scaled space) ---
         # Both are split-aware: the concepts are teacher-forced at 'train' and
         # left latent at 'val'/'test' (see `default_query`).
-        query = self.default_query(c_loss, step)
-        evidence = self.default_evidence(inputs, step)
+        query = self.default_query(scaled['concepts']['c'], step)
+        evidence = self.default_evidence(scaled['inputs'], step)
         out = self.forward(query=query, evidence=evidence)
 
-        target = self.prepare_target(c_loss, out)
+        target = self.prepare_target(scaled)
 
         # --- Compute loss (scaled space) ---
         loss = None
         if self.loss is not None:
-            if not self._loss_takes_model_output:
-                raise NotImplementedError(
-                    "Only a PyCLoss (e.g. ConceptLoss) is supported; a plain "
-                    "loss(input, target) is not."
-                )
             if isinstance(self.loss, CompositeLoss):
                 # log each term of a CompositeLoss separately
-                terms = self.loss.breakdown(out, target)
+                terms = self.loss.breakdown(out, target, self)
                 loss = sum(terms.values())
                 for term_name, value in terms.items():
                     self.log_loss(f"{step}_{term_name}", value, batch_size=batch_size)
             else:
-                loss = self.loss(out, target)
+                loss = self.loss(out, target, self)
             self.log_loss(step, loss, batch_size=batch_size)
 
         # --- Update and log metrics (original scale) ---
         out = self.unscale_output(out, transforms)
-        target = self.prepare_target(concepts.get('c', None), out)
-        self.update_and_log_metrics(out, target, step, batch_size)
+        target_concepts = self.prepare_target(batch).get('c', None)
+        self.update_and_log_metrics(out, target_concepts, step, batch_size)
         return loss
 
     def training_step(self, batch):

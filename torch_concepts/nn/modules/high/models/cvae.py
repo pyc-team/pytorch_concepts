@@ -321,11 +321,6 @@ class ConditionalVAE(DirectedGraphModel):
             **self.fully_observed_query(c),
         }
 
-    def default_extra(self, evidence, query=None):
-        """Publish the evidence so :class:`~torch_concepts.nn.MSEReconstructionLoss`
-        can score the observed variable (e.g. ``input``) against it."""
-        return {"evidence": evidence}
-
     # ------------------------------------------------------------------
     # Model assembly
     # ------------------------------------------------------------------
