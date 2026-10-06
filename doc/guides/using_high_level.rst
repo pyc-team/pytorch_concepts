@@ -49,10 +49,10 @@ Expand each block below for an explanation and an example.
     - :class:`~torch_concepts.nn.BlackBox` — non-interpretable baseline for comparison.
 
     All models take an ``input_size``, ``annotations``, and model-specific parameters.
-    A forward pass returns a :class:`~torch_concepts.nn.ModelOutput` — a structured object
-    whose ``params`` dict maps each queried variable name to its distribution parameters
-    (e.g. ``{'logits': ...}`` for binary/categorical, ``{'loc': ..., 'scale': ...}`` for
-    Normal). A ``query`` list controls which variables are computed.
+    A forward pass returns an :class:`~torch_concepts.nn.InferenceOutput` whose ``params``
+    are keyed by quantity — ``out.logits`` for binary/categorical, ``out.loc``/``out.scale``
+    for Normal — each sliceable by variable name (``out.logits['c1']``). A ``query`` list
+    controls which variables are computed.
 
     .. code-block:: python
 
@@ -192,8 +192,8 @@ Expand each block below for an explanation and an example.
     The step builds the query for you: training observes the concepts (so that certain 
     inference strategies can do teacher-forcing, e.g., IndependentInference), while
     validation and test leave them latent so evaluation measures the model unaided.
-    Override ``default_query`` (or ``default_evidence``), both of which take the split as
-    ``step``, to change what a split observes.
+    Override ``prepare_query`` (or ``prepare_evidence``), both of which take the full batch
+    and the split as ``step``, to change what a split observes.
 
 
 .. dropdown:: Putting It Together: Concept Bottleneck Model

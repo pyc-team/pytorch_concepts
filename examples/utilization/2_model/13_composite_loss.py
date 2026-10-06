@@ -134,8 +134,8 @@ def main():
             super().__init__()
             self.scale = scale
 
-        def forward(self, output, target=None):
-            return self.scale * output.logits.tensor.abs().mean()
+        def forward(self, input, target=None, model=None):
+            return self.scale * input.logits.tensor.abs().mean()
 
     loss_fn = CompositeLoss(
         terms=[

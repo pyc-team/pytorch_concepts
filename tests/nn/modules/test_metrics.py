@@ -1183,14 +1183,14 @@ class TestConceptMetricsEdgeCases(unittest.TestCase):
         assert len(results) > 0
 
     def test_update_with_model_output(self):
-        from torch_concepts.nn.modules.outputs import ModelOutput
+        from torch_concepts.nn.modules.outputs import InferenceOutput
         m = ConceptMetrics(annotations=self.ann_binary, binary=self.bin_metrics)
         preds = torch.randn(4, 2)
         targets = torch.randint(0, 2, (4, 2))
-        mo = ModelOutput()
+        mo = InferenceOutput()
         mo.logits = AnnotatedTensor(preds, self.ann_binary, axis=-1)
-        mo.target = AnnotatedTensor(targets, self.ann_binary.to_concept_space(), axis=-1)
-        m.update(mo)
+        target = AnnotatedTensor(targets, self.ann_binary.to_concept_space(), axis=-1)
+        m.update(mo, target)
         results = m.compute()
         assert len(results) > 0
 
@@ -1198,15 +1198,15 @@ class TestConceptMetricsEdgeCases(unittest.TestCase):
         """A continuous concept builds and updates its regression metric on ``loc``."""
         from torchmetrics.regression import MeanSquaredError
         from torch_concepts.tensor import AnnotatedTensor
-        from torch_concepts.nn.modules.outputs import ModelOutput
+        from torch_concepts.nn.modules.outputs import InferenceOutput
 
         ann_cont = Annotations(labels=['cont1'], cardinalities=[1], types=['continuous'])
         m = ConceptMetrics(annotations=ann_cont, continuous={'mse': MeanSquaredError()},
                            per_concept=True)
-        out = ModelOutput()
+        out = InferenceOutput()
         out.loc = AnnotatedTensor(torch.randn(4, 1), ann_cont, axis=-1)
-        out.target = AnnotatedTensor(torch.randn(4, 1), ann_cont.to_concept_space(), axis=-1)
-        m.update(out)
+        target = AnnotatedTensor(torch.randn(4, 1), ann_cont.to_concept_space(), axis=-1)
+        m.update(out, target)
         self.assertIn('cont1_mse', m.compute())
 
     def test_per_concept_categorical(self):
@@ -1298,7 +1298,7 @@ class TestConceptMetricsContinuousPaths(unittest.TestCase):
 
     Continuous concepts are supported: a continuous concept reports ``loc`` (its
     mean), so metrics score it on that quantity rather than on logits. The update
-    tests build a real continuous :class:`ModelOutput`; the collection/clone/compute
+    tests build a real continuous :class:`InferenceOutput`; the collection/clone/compute
     tests reuse a binary metric with an injected continuous collection for brevity.
     """
 
@@ -1372,7 +1372,7 @@ class TestConceptMetricsContinuousPaths(unittest.TestCase):
         """Summary metric for continuous concepts is computed on ``loc``."""
         from torchmetrics.regression import MeanSquaredError
         from torch_concepts.tensor import AnnotatedTensor
-        from torch_concepts.nn.modules.outputs import ModelOutput
+        from torch_concepts.nn.modules.outputs import InferenceOutput
 
         ann = Annotations(labels=['x', 'y'], cardinalities=[1, 1],
                           types=['continuous', 'continuous'])
@@ -1381,10 +1381,10 @@ class TestConceptMetricsContinuousPaths(unittest.TestCase):
             continuous={'mse': MeanSquaredError()},
             summary=True, per_concept=False,
         )
-        out = ModelOutput()
+        out = InferenceOutput()
         out.loc = AnnotatedTensor(torch.randn(4, 2), ann, axis=-1)
-        out.target = AnnotatedTensor(torch.randn(4, 2), ann.to_concept_space(), axis=-1)
-        m.update(out)
+        target = AnnotatedTensor(torch.randn(4, 2), ann.to_concept_space(), axis=-1)
+        m.update(out, target)
         result = m.compute()
         self.assertTrue(any('continuous' in k for k in result))
 
@@ -1395,7 +1395,7 @@ class TestConceptMetricsContinuousPaths(unittest.TestCase):
         """Per-concept metric for a continuous concept reads its ``loc`` and updates."""
         from torchmetrics.regression import MeanSquaredError
         from torch_concepts.tensor import AnnotatedTensor
-        from torch_concepts.nn.modules.outputs import ModelOutput
+        from torch_concepts.nn.modules.outputs import InferenceOutput
 
         ann = Annotations(labels=['x'], cardinalities=[1], types=['continuous'])
         m = ConceptMetrics(
@@ -1403,10 +1403,10 @@ class TestConceptMetricsContinuousPaths(unittest.TestCase):
             continuous={'mse': MeanSquaredError()},
             per_concept=True, summary=False,
         )
-        out = ModelOutput()
+        out = InferenceOutput()
         out.loc = AnnotatedTensor(torch.randn(4, 1), ann, axis=-1)
-        out.target = AnnotatedTensor(torch.randn(4, 1), ann.to_concept_space(), axis=-1)
-        m.update(out)
+        target = AnnotatedTensor(torch.randn(4, 1), ann.to_concept_space(), axis=-1)
+        m.update(out, target)
         result = m.compute()
         self.assertIn('x_mse', result)
 
@@ -1423,3 +1423,41 @@ class TestConceptMetricsContinuousPaths(unittest.TestCase):
         results = m.compute()
         self.assertTrue(any('continuous' in k.lower() or 'mse' in k.lower()
                             for k in results))
+
+
+class TestMetricsReceiveProbabilities(unittest.TestCase):
+    """torchmetrics guesses logits vs probabilities from the value range, so
+    ConceptMetrics must hand it probabilities, whatever the model reports."""
+
+    def test_logits_inside_unit_interval_are_not_read_as_probabilities(self):
+        # Every logit in [0, 0.4]: sigmoid > 0.5, so every concept is predicted 1.
+        ann = Annotations(labels=['a', 'b'], cardinalities=[1, 1])
+        torch.manual_seed(0)
+        logits = AnnotatedTensor(torch.rand(16, 2) * 0.4, ann, axis=-1)
+        target = AnnotatedTensor(torch.randint(0, 2, (16, 2)).float(), ann.to_concept_space(), axis=-1)
+        m = ConceptMetrics(annotations=ann, summary=True, per_concept=True,
+                           binary={'acc': torchmetrics.classification.BinaryAccuracy()})
+        from torch_concepts.nn.modules.outputs import InferenceOutput
+        m.update(InferenceOutput(logits=logits), target)
+        results = m.compute()
+        self.assertAlmostEqual(float(results['SUMMARY-binary_acc']), float(target.tensor.mean()), places=5)
+        self.assertAlmostEqual(float(results['a_acc']), float(target.tensor[:, 0].mean()), places=5)
+
+    def test_categorical_probs_and_logits_score_alike(self):
+        # Padding the narrower concept with -inf must not make torchmetrics
+        # re-normalize probabilities: both quantities must give the same AUROC.
+        from torch_concepts.nn.modules.outputs import InferenceOutput
+        ann = Annotations(labels=['k3', 'k4'], cardinalities=[3, 4])
+        torch.manual_seed(0)
+        logits = torch.randn(32, 7)
+        probs = torch.cat([logits[:, :3].softmax(-1), logits[:, 3:].softmax(-1)], dim=-1)
+        target = AnnotatedTensor(torch.stack([torch.randint(0, 3, (32,)), torch.randint(0, 4, (32,))], 1).float(),
+                                 ann.to_concept_space(), axis=-1)
+        scores = []
+        for quantity, tensor in (('logits', logits), ('probs', probs)):
+            m = ConceptMetrics(annotations=ann, summary=True, per_concept=True, categorical={
+                'auroc': (torchmetrics.classification.MulticlassAUROC, {'average': 'macro'})})
+            m.update(InferenceOutput(**{quantity: AnnotatedTensor(tensor, ann, axis=-1)}), target)
+            scores.append({k: float(v) for k, v in m.compute().items()})
+        for key in scores[0]:
+            self.assertAlmostEqual(scores[0][key], scores[1][key], places=5, msg=key)

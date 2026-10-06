@@ -7,11 +7,11 @@ Tests cover:
 - Training modes (joint, independent)
 - Backbone integration
 - Distribution handling
-- Target preparation (prepare_target)
 - Factory function behavior
 """
 import pytest
 import unittest
+from torch_concepts.tensor import AnnotatedTensor
 import torch
 import torch.nn as nn
 from torch.distributions import Bernoulli, OneHotCategorical, RelaxedBernoulli, RelaxedOneHotCategorical
@@ -166,30 +166,6 @@ class TestCBMForward(unittest.TestCase):
         logits = _logits(out, query)
         self.assertEqual(logits.shape[0], 2)
         self.assertEqual(logits.shape[1], 3 + 2)
-
-
-class TestCBMPrepareTarget(unittest.TestCase):
-    """Test CBM prepare_target."""
-    
-    def setUp(self):
-        """Set up test fixtures."""
-        self.ann = Annotations(
-                labels=['c1', 'c2', 'task'],
-                cardinalities=[1, 1, 1],
-            )
-        
-        self.model = ConceptBottleneckModel(
-            input_size=8,
-            annotations=self.ann,
-            task_names=['task']
-        )
-    
-    def test_prepare_target(self):
-        """Test prepare_target returns target unchanged for CBM."""
-        target = torch.randint(0, 2, (2, 3)).float()
-        
-        prepared = self.model.prepare_target(target)
-        self.assertTrue(torch.allclose(prepared, target))
 
 
 class TestCBMTraining(unittest.TestCase):
@@ -426,7 +402,8 @@ class TestLearnerIntegration(unittest.TestCase):
             )
         self.batch = {
             'inputs': {'x': torch.randn(4, 8)},
-            'concepts': {'c': torch.randint(0, 2, (4, 3)).float()}
+            'concepts': {'c': AnnotatedTensor(torch.randint(0, 2, (4, 3)).float(),
+                                          self.ann.to_concept_space(), axis=1)}
         }
 
     def _make_model(self, lightning=True, with_loss=True, train_inference=None):
@@ -866,3 +843,17 @@ class TestGraphCBMContinuousConcepts:
         out = model(query=['x', 'y'], input=torch.randn(4, 6))
         out.loc.sum().backward()
         assert any(p.grad is not None for p in model.parameters())
+
+
+class TestGroundTruthByName(unittest.TestCase):
+    def test_teacher_forcing_reads_the_ground_truth_by_name(self):
+        """A batch may order (or hold more) concepts than the model."""
+        ann = Annotations(labels=['a', 'b', 'y'], cardinalities=[1, 1, 1])
+        model = ConceptBottleneckModel(input_size=4, annotations=ann, task_names=['y'])
+        in_order = AnnotatedTensor(torch.tensor([[1., 0., 1.]]), ann.to_concept_space(), axis=-1)
+        shuffled = Annotations(labels=['extra', 'y', 'b', 'a'], cardinalities=[1] * 4)
+        reordered = AnnotatedTensor(torch.tensor([[0., 1., 0., 1.]]), shuffled.to_concept_space(), axis=-1)
+        expected, got = model.fully_observed_query(in_order), model.fully_observed_query(reordered)
+        self.assertEqual(expected.keys(), got.keys())
+        for name in expected:
+            self.assertTrue(torch.equal(expected[name], got[name]), name)

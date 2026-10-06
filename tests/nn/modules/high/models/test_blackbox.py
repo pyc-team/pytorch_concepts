@@ -29,6 +29,7 @@ from torch_concepts.nn.modules.high.models.blackbox import (
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
+from torch_concepts.tensor import AnnotatedTensor
 from torch_concepts.nn import MLP
 from torch_concepts.annotations import Annotations
 
@@ -60,6 +61,12 @@ class DummyLatentEncoder(nn.Module):
     
     def forward(self, x):
         return self.linear(x)
+
+
+def _batch(model, concepts):
+    """A batch carrying ``concepts`` annotated as the dataset's collate builds it."""
+    return {'inputs': {}, 'concepts': {'c': AnnotatedTensor(
+        concepts, model.concept_annotations.to_concept_space(), axis=-1)}}
 
 
 def make_annotations(labels, cardinalities, distributions=None):
@@ -377,15 +384,6 @@ class TestBlackBoxPrepareTarget(unittest.TestCase):
             backbone=DummyLatentEncoder(8, hidden_size=4),
             latent_size=4,
         )
-
-    def test_prepare_target(self):
-        """Test prepare_target returns target unchanged for BlackBox."""
-        x = torch.randn(2, 8)
-        out = self.model(x)
-        target = torch.randint(0, 2, _logits(out, ['c1', 'task']).shape)
-
-        prepared = self.model.prepare_target(target)
-        self.assertTrue(torch.allclose(prepared, target))
 
     def test_prepare_target_inherited_from_base(self):
         """Test that prepare_target is inherited from BaseModel (not overridden)."""
@@ -716,7 +714,7 @@ class TestBlackBoxTaskOnlyPrepareTarget(unittest.TestCase):
         target = torch.tensor([[0., 1., 1.],
                                [1., 0., 0.]])
         
-        prepared = self.model.prepare_target(target)
+        prepared = self.model.prepare_target(_batch(self.model, target))['c']
         
         # Target should be sliced to task1 column (concept index 2)
         self.assertEqual(prepared.shape, (2, 1))
@@ -752,7 +750,7 @@ class TestBlackBoxTaskOnlyPrepareTarget(unittest.TestCase):
                                [1., 0., 1.],
                                [0., 1., 0.]])
         
-        prepared = model.prepare_target(target)
+        prepared = model.prepare_target(_batch(model, target))['c']
         
         # Target sliced to task1 (idx 1) and task2 (idx 2)
         self.assertEqual(prepared.shape, (3, 2))
@@ -761,6 +759,16 @@ class TestBlackBoxTaskOnlyPrepareTarget(unittest.TestCase):
     def test_prepare_target_overrides_base_model(self):
         """Test that BlackBoxTaskOnly overrides BaseModel prepare_target."""
         self.assertIn('prepare_target', BlackBoxTaskOnly.__dict__)
+
+    def test_prepare_target_reads_the_tasks_by_name(self):
+        """The batch may order its concepts differently from the model."""
+        model = BlackBoxTaskOnly(input_size=8, annotations=self.ann, task_names='task1')
+        shuffled = Annotations(labels=list(reversed(self.ann.labels)),
+                               cardinalities=list(reversed(self.ann.cardinalities)))
+        c = torch.arange(len(shuffled.labels)).float().unsqueeze(0)
+        prepared = model.prepare_target({'inputs': {}, 'concepts': {'c': AnnotatedTensor(
+            c, shuffled.to_concept_space(), axis=-1)}})['c']
+        self.assertEqual(float(prepared.tensor), float(shuffled.labels.index('task1')))
 
 
 class TestBlackBoxTaskOnlyMultipleTasks(unittest.TestCase):
@@ -1050,7 +1058,7 @@ class TestBlackBoxDeviceConsistency(unittest.TestCase):
         out = model(x)
         target = torch.zeros(2, 2, device=device)
         
-        prepared = model.prepare_target(target)
+        prepared = model.prepare_target(_batch(model, target))['c']
         
         self.assertEqual(prepared.device.type, device.type)
 
@@ -1159,7 +1167,7 @@ class TestBlackBoxTaskOnlyEdgeCases(unittest.TestCase):
 
         # Full target has 2 concept-level columns (c1, task)
         target = torch.zeros(2, 2)
-        prepared = model.prepare_target(target)
+        prepared = model.prepare_target(_batch(model, target))['c']
         # Target sliced to task column only
         self.assertEqual(prepared.shape, (2, 1))
 
@@ -1180,7 +1188,7 @@ class TestBlackBoxTaskOnlyEdgeCases(unittest.TestCase):
 
         # When task is the only concept, prepare_target is identity
         target = torch.zeros(2, 1)
-        prepared = model.prepare_target(target)
+        prepared = model.prepare_target(_batch(model, target))['c']
         self.assertTrue(torch.allclose(prepared, target))
 
     def test_batch_size_one(self):
@@ -1198,7 +1206,7 @@ class TestBlackBoxTaskOnlyEdgeCases(unittest.TestCase):
         
         # Full target has 2 concept-level columns
         target = torch.zeros(1, 2)
-        prepared = model.prepare_target(target)
+        prepared = model.prepare_target(_batch(model, target))['c']
         self.assertEqual(prepared.shape, (1, 1))
 
 
@@ -1225,7 +1233,7 @@ class TestBlackBoxTraining(unittest.TestCase):
 
         # Forward pass
         out = model(x)
-        prepared = model.prepare_target(target)
+        prepared = model.prepare_target(_batch(model, target))['c']
         loss = nn.functional.binary_cross_entropy_with_logits(
             _logits(out, ['c1', 'task']),
             prepared
@@ -1280,7 +1288,7 @@ class TestBlackBoxTraining(unittest.TestCase):
         target = torch.zeros(4, 2)
 
         out = model(x)
-        prepared = model.prepare_target(target)
+        prepared = model.prepare_target(_batch(model, target))['c']
         loss = nn.functional.binary_cross_entropy_with_logits(
             _logits(out, ['task']),
             prepared
@@ -1398,7 +1406,7 @@ class TestBlackBoxContinuousConcepts:
         model = BlackBox(input_size=8, annotations=ann)
         out = model(torch.randn(4, 8))
         loss = ConceptLoss(continuous=torch.nn.MSELoss())(
-            out, model.prepare_target(torch.randn(4, 2))
+            out, AnnotatedTensor(torch.randn(4, 2), ann.to_concept_space(), axis=-1)
         )
         assert loss > 0
         loss.backward()

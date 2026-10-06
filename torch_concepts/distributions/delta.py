@@ -121,7 +121,7 @@ class Delta(Distribution):
         # Drop the event dims, keeping the batch dims. Note ``shape[:-n]`` is
         # wrong here: ``event_shape`` is empty, and ``-0`` slices everything
         # away rather than nothing, which used to collapse this to a scalar.
-        return torch.zeros(value.shape[: value.ndim - len(self.event_shape)])
+        return value.new_zeros(value.shape[: value.ndim - len(self.event_shape)])
 
     def __repr__(self):
         """

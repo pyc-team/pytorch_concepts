@@ -541,6 +541,12 @@ class TestRejectionSamplingQuery:
         out = eng.query(query={"b": torch.tensor([[1.0]])}, evidence={})
         assert isinstance(out, InferenceOutput)
 
+    def test_empty_query_estimates_the_sure_event(self):
+        """P(empty event | e) is 1; the device must not be read off the (empty) query."""
+        eng = RejectionSampling(_make_bernoulli_model(), n_samples=50)
+        out = eng.query(query={}, evidence={"b": torch.tensor([[1.0]])})
+        assert torch.allclose(out.probabilities, torch.ones(1))
+
     def test_probabilities_shape_single_row(self):
         m = _make_bernoulli_model()
         eng = RejectionSampling(m, n_samples=50)

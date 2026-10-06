@@ -5,7 +5,7 @@ from typing import List, Optional, Union
 from .....utils import ensure_list
 from .....annotations import Annotations
 from ...metrics import ConceptMetrics
-from ...outputs import ModelOutput
+from ...outputs import InferenceOutput
 from .....tensor import AnnotatedTensor
 
 from ...low.dense_layers import MLP
@@ -36,8 +36,8 @@ def _drop_pgm_args(kwargs: dict) -> dict:
     return {key: value for key, value in kwargs.items() if key not in _PGM_ONLY_ARGS}
 
 
-def _report_by_type(predictions: AnnotatedTensor) -> ModelOutput:
-    """Wrap a head's output in a :class:`ModelOutput`, keyed by concept type.
+def _report_by_type(predictions: AnnotatedTensor) -> InferenceOutput:
+    """Wrap a head's output in a :class:`InferenceOutput`, keyed by concept type.
 
     A blackbox head is a single flat tensor, but losses and metrics read a
     discrete concept from ``logits`` and a continuous one from ``loc`` — the
@@ -47,7 +47,7 @@ def _report_by_type(predictions: AnnotatedTensor) -> ModelOutput:
     configuration works for both. No ``scale`` is reported: a blackbox head
     predicts a point estimate, not a distribution.
     """
-    out = ModelOutput()
+    out = InferenceOutput()
     continuous = set(predictions.annotations.labels_by_type.get("continuous", []))
     if not continuous:
         out.logits = predictions  # all-discrete: the common case, sliced by nobody
@@ -130,7 +130,7 @@ class BlackBox(BaseModel):
         query=None,
         evidence: torch.Tensor = None,
         **kwargs
-    ) -> ModelOutput:
+    ) -> InferenceOutput:
         """Forward pass through the BlackBox model.
 
         Parameters
@@ -149,7 +149,7 @@ class BlackBox(BaseModel):
 
         Returns
         -------
-        ModelOutput
+        InferenceOutput
             ``logits`` for the queried discrete concepts and ``loc`` for the
             continuous ones — the same quantities the PGM-based models report.
         """
@@ -263,7 +263,7 @@ class BlackBoxTaskOnly(BaseModel):
                 query=None,
                 evidence=None,
                 **kwargs
-        ) -> ModelOutput:
+        ) -> InferenceOutput:
         """Forward pass through the BlackBoxTaskOnly model.
 
         Parameters
@@ -281,7 +281,7 @@ class BlackBoxTaskOnly(BaseModel):
 
         Returns
         -------
-        ModelOutput
+        InferenceOutput
             ``logits`` for the discrete tasks and ``loc`` for the continuous
             ones — the same quantities the PGM-based models report.
         """
@@ -296,24 +296,12 @@ class BlackBoxTaskOnly(BaseModel):
             AnnotatedTensor(output, self.task_annotations, axis=-1)
         )
 
-    def prepare_target(self, target: torch.Tensor, out=None) -> torch.Tensor:
-        """Slice the target to task-only columns and annotate it in task
-        concept-space, matching the task-only output.
+    def prepare_target(self, batch) -> dict:
+        """The default target with ``'c'`` sliced to the task columns and
+        annotated in task concept-space, matching the task-only output."""
+        return {**batch['inputs'], 'c': batch['concepts']['c'][self.task_names]}
 
-        Parameters
-        ----------
-        target : torch.Tensor
-            Full concept-level ground-truth labels.
-
-        Returns
-        -------
-        AnnotatedTensor
-            Task-only concept-space annotated target.
-        """
-        sliced = target[:, self.task_concept_idx].as_subclass(torch.Tensor)
-        return AnnotatedTensor(sliced, self.task_annotations.to_concept_space(), axis=-1)
-
-    def unscale_output(self, out, transforms):
+    def unscale_output(self, out, transforms, labels):
         """Not supported: :meth:`BaseLearner.unscale_output` assumes a
         prediction covers exactly the concepts the scaler was fit on, but this
         model's ``task_names`` is a strict subset of them.
@@ -331,7 +319,7 @@ class BlackBoxTaskOnly(BaseModel):
                 "Pass a datamodule without a 'concepts' scaler, or construct "
                 "this model with scale_concepts=False."
             )
-        return super().unscale_output(out, transforms)
+        return super().unscale_output(out, transforms, labels)
 
     def setup_metrics(self, metrics: ConceptMetrics):
         """Rebuild metrics with task-only annotations.
