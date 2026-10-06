@@ -289,8 +289,11 @@ class ConceptMetrics(nn.Module):
             if tensor is not None and name in tensor.annotations.label_to_index:
                 # Hand torchmetrics a plain tensor; the annotation is no longer
                 # needed and would make each internal torch.* op pay the
-                # __torch_function__ cost.
-                return tensor[name].tensor
+                # __torch_function__ cost. Discrete ones as probabilities (see update).
+                pred = tensor[name].tensor
+                if quantity == 'logits':
+                    pred = pred.sigmoid() if concept_type == 'binary' else pred.softmax(-1)
+                return pred
         raise KeyError(
             f"ConceptMetrics: no {' or '.join(quantities)} reported for {concept_type} "
             f"concept {name!r}; the output carries {tuple(out.params)}."
@@ -346,6 +349,10 @@ class ConceptMetrics(nn.Module):
             out.logits = preds
 
         discrete = out.logits if out.logits is not None else out.probs
+        # torchmetrics guesses logits vs probabilities from the value range, so
+        # logits that all fall in [0, 1] would read as probabilities: hand it
+        # probabilities always (sigmoid / softmax below).
+        from_logits = out.logits is not None
         # `loc` for a Normal, `value` for a Delta (a deterministic point estimate) —
         # mirrors the discrete fallback above; unlike *_param on ConceptLoss, there
         # is no per-instance config here, so both quantities are always tried.
@@ -370,10 +377,13 @@ class ConceptMetrics(nn.Module):
             # torchmetrics makes each internal torch.* op re-enter the
             # __torch_function__ unwrap hook (the dominant per-update cost).
             if binary is not None and len(self.binary):
-                self.binary.update(binary.tensor, target[binary.annotations.labels].tensor.float())
+                pred = binary.tensor.sigmoid() if from_logits else binary.tensor
+                self.binary.update(pred, target[binary.annotations.labels].tensor.float())
             if categorical is not None and len(self.categorical):
                 cat_pred, cat_target = self._prepare_categorical(
                     categorical, target[categorical.annotations.labels])
+                # The -inf padding becomes probability 0 either way.
+                cat_pred = cat_pred.softmax(-1) if from_logits else cat_pred.clamp_min(0)
                 self.categorical.update(cat_pred, cat_target)
             if continuous is not None and len(self.continuous):
                 self.continuous.update(
