@@ -85,9 +85,13 @@ class FullMockLearner(BaseLearner):
         return InferenceOutput(logits=logits, params=params)
 
     def prepare_target(self, batch):
-        c = batch['concepts']['c']
-        return {**batch['inputs'],
-                'c': None if c is None else AnnotatedTensor(c, self.concept_annotations.to_concept_space())}
+        return {**batch['inputs'], 'c': batch['concepts']['c']}
+
+
+def _concepts(batch_size, labels=('C1', 'C2')):
+    """Binary concept ground truth, annotated as the dataset's collate builds it."""
+    ann = Annotations(labels=labels, cardinalities=[1] * len(labels)).to_concept_space()
+    return AnnotatedTensor(torch.randint(0, 2, (batch_size, len(labels))).float(), ann, axis=1)
 
 
 class TestBaseLearnerInitialization(unittest.TestCase):
@@ -254,7 +258,7 @@ class TestBaseLearnerBatchHandling(unittest.TestCase):
         learner = MockLearner(n_concepts=2)
         batch = {
             'inputs': {'x': torch.randn(4, 8)},
-            'concepts': {'c': torch.randint(0, 2, (4, 2)).float()}
+            'concepts': {'c': _concepts(4)}
         }
         
         # Should not raise error
@@ -264,7 +268,7 @@ class TestBaseLearnerBatchHandling(unittest.TestCase):
         """Test _check_batch with missing 'inputs' key."""
         learner = MockLearner(n_concepts=2)
         batch = {
-            'concepts': {'c': torch.randint(0, 2, (4, 2)).float()}
+            'concepts': {'c': _concepts(4)}
         }
         
         with self.assertRaises(KeyError) as context:
@@ -282,6 +286,14 @@ class TestBaseLearnerBatchHandling(unittest.TestCase):
             learner._check_batch(batch)
         self.assertIn("concepts", str(context.exception))
 
+    def test_check_batch_rejects_unannotated_concepts(self):
+        learner = MockLearner(n_concepts=2)
+        batch = {'inputs': {'x': torch.randn(4, 8)},
+                 'concepts': {'c': torch.randint(0, 2, (4, 2)).float()}}
+        with self.assertRaises(TypeError) as context:
+            learner._check_batch(batch)
+        self.assertIn("AnnotatedTensor", str(context.exception))
+
     def test_check_batch_not_dict(self):
         """Test _check_batch with non-dict batch."""
         learner = MockLearner(n_concepts=2)
@@ -295,7 +307,7 @@ class TestBaseLearnerBatchHandling(unittest.TestCase):
         """Test unpack_batch returns (inputs, concepts, transforms)."""
         learner = MockLearner(n_concepts=2)
         x = torch.randn(4, 8)
-        c = torch.randint(0, 2, (4, 2)).float()
+        c = _concepts(4)
         batch = {
             'inputs': {'x': x},
             'concepts': {'c': c}
@@ -313,7 +325,7 @@ class TestBaseLearnerBatchHandling(unittest.TestCase):
         mock_scalers = {'c': 'some_scaler'}
         batch = {
             'inputs': {'x': torch.randn(4, 8)},
-            'concepts': {'c': torch.randint(0, 2, (4, 2)).float()},
+            'concepts': {'c': _concepts(4)},
             'scalers': mock_scalers
         }
 
@@ -454,7 +466,7 @@ class TestBaseLearnerSharedStep(unittest.TestCase):
         )
         self.batch = {
             'inputs': {'x': torch.randn(8, 3)},
-            'concepts': {'c': torch.randint(0, 2, (8, 2)).float()},
+            'concepts': {'c': _concepts(8)},
         }
 
     # -- helpers to capture Lightning self.log / self.log_dict calls ----

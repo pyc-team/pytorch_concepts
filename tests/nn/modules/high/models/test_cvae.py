@@ -19,6 +19,7 @@ machinery, but the concepts are *given* to the decoder rather than predicted fro
   generated sample equal to the decoder's output rather than to it plus noise.
 """
 import pytest
+from torch_concepts.tensor import AnnotatedTensor
 import torch
 import torch.nn as nn
 from torch.distributions import MultivariateNormal
@@ -461,7 +462,8 @@ class TestTrainingAndGeneration:
         c = torch.randint(0, 2, (5, 2)).float()
         x = torch.rand(5, INPUT_SIZE)
         out = model(query=model.default_query(c), input=x)
-        terms = loss_fn.breakdown(out, model.prepare_target({'inputs': {'x': x}, 'concepts': {'c': c}}))
+        c_ann = AnnotatedTensor(c, binary_annotations.to_concept_space(), axis=1)
+        terms = loss_fn.breakdown(out, model.prepare_target({'inputs': {'x': x}, 'concepts': {'c': c_ann}}))
         assert all(torch.isfinite(t) for t in terms.values())
 
         sum(terms.values()).backward()
@@ -482,7 +484,8 @@ class TestTrainingAndGeneration:
         model.log = lambda *a, **kw: None          # no Trainer attached
         model.log_dict = lambda *a, **kw: None
         c = torch.randint(0, 2, (5, 2)).float()
-        batch = {'inputs': {'x': torch.rand(5, INPUT_SIZE)}, 'concepts': {'c': c}}
+        batch = {'inputs': {'x': torch.rand(5, INPUT_SIZE)},
+                 'concepts': {'c': AnnotatedTensor(c, binary_annotations.to_concept_space(), axis=1)}}
 
         for step in ('train', 'val', 'test'):
             assert torch.equal(model.default_query(c, step)["a"], c[:, :1])

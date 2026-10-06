@@ -29,6 +29,7 @@ from torch_concepts.nn.modules.high.models.blackbox import (
 from torch_concepts.nn.modules.high.base.learner import BaseLearner
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
+from torch_concepts.tensor import AnnotatedTensor
 from torch_concepts.nn import MLP
 from torch_concepts.annotations import Annotations
 
@@ -377,15 +378,6 @@ class TestBlackBoxPrepareTarget(unittest.TestCase):
             backbone=DummyLatentEncoder(8, hidden_size=4),
             latent_size=4,
         )
-
-    def test_prepare_target(self):
-        """Test prepare_target returns target unchanged for BlackBox."""
-        x = torch.randn(2, 8)
-        out = self.model(x)
-        target = torch.randint(0, 2, _logits(out, ['c1', 'task']).shape)
-
-        prepared = self.model.prepare_target({'inputs': {}, 'concepts': {'c': target}})['c']
-        self.assertTrue(torch.allclose(prepared, target))
 
     def test_prepare_target_inherited_from_base(self):
         """Test that prepare_target is inherited from BaseModel (not overridden)."""
@@ -1398,7 +1390,7 @@ class TestBlackBoxContinuousConcepts:
         model = BlackBox(input_size=8, annotations=ann)
         out = model(torch.randn(4, 8))
         loss = ConceptLoss(continuous=torch.nn.MSELoss())(
-            out, model.prepare_target({'inputs': {}, 'concepts': {'c': torch.randn(4, 2)}})['c']
+            out, AnnotatedTensor(torch.randn(4, 2), ann.to_concept_space(), axis=-1)
         )
         assert loss > 0
         loss.backward()

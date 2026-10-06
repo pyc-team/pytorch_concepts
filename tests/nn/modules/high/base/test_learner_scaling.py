@@ -31,6 +31,8 @@ from torch_concepts.tensor import AnnotatedTensor
 
 N_SAMPLES = 64
 INPUT_SIZE = 8
+# The continuous labels in the order the `scaler` fixture is fitted on.
+CONTINUOUS = ['c1', 'c2', 'task']
 
 
 @pytest.fixture
@@ -102,7 +104,7 @@ class TestNoScalerIsIdentity:
             query=model.fully_observed_query(batch['concepts']['c']),
             evidence={'input': batch['inputs']['x']},
         )
-        assert model.unscale_output(out, {}) is out
+        assert model.unscale_output(out, {}, CONTINUOUS) is out
 
     def test_loss_and_metric_agree(self, annotations, batch):
         """With MSE on both sides and no scaling, the loss and the summary metric
@@ -128,7 +130,7 @@ class TestScaledSpaceSeparation:
         out = InferenceOutput()
         out.loc = AnnotatedTensor(c_scaled.tensor.clone(), annotations.to_concept_space(), axis=-1)
         model.update_and_log_metrics(
-            model.unscale_output(out, transforms), model.prepare_target({'inputs': {}, 'concepts': {'c': c}})['c'], 'test', N_SAMPLES
+            model.unscale_output(out, transforms, CONTINUOUS), model.prepare_target({'inputs': {}, 'concepts': {'c': c}})['c'], 'test', N_SAMPLES
         )
         mse = float(model.test_metrics.compute()['test/SUMMARY-continuous_mse'])
         assert mse == pytest.approx(0.0, abs=1e-6)
@@ -148,7 +150,7 @@ class TestScaledSpaceSeparation:
             c_scaled.tensor + delta, annotations.to_concept_space(), axis=-1
         )
         model.update_and_log_metrics(
-            model.unscale_output(out, transforms), model.prepare_target({'inputs': {}, 'concepts': {'c': c}})['c'], 'test', N_SAMPLES
+            model.unscale_output(out, transforms, CONTINUOUS), model.prepare_target({'inputs': {}, 'concepts': {'c': c}})['c'], 'test', N_SAMPLES
         )
         mse = float(model.test_metrics.compute()['test/SUMMARY-continuous_mse'])
 
@@ -202,18 +204,31 @@ class TestUnscaleOutput:
         out = InferenceOutput()
         out.loc = AnnotatedTensor(scaled_space_tensor, annotations.to_concept_space(), axis=-1)
 
-        model.unscale_output(out, {'concepts': scaler})
+        model.unscale_output(out, {'concepts': scaler}, CONTINUOUS)
 
         assert torch.equal(scaled_space_tensor, data)  # untouched in place
         assert out.loc.tensor is not scaled_space_tensor  # reassigned, not mutated
         assert not torch.equal(out.loc.tensor, data)  # actually inverse-transformed
+
+    def test_columns_are_matched_by_name_not_position(self, annotations, batch, scaler):
+        """Predictions come in query order, not the scaler's: each column must be
+        un-scaled with its own concept's statistics."""
+        model = build_model(annotations=annotations)
+        c = batch['concepts']['c']
+        scaled = model.maybe_scale_concepts({'c': c}, {'concepts': scaler})['c']
+        order = ['c2', 'task', 'c1']
+        out = InferenceOutput()
+        out.loc = AnnotatedTensor(scaled[order].tensor.clone(),
+                                  annotations.to_concept_space().subset(order), axis=-1)
+        restored = model.unscale_output(out, {'concepts': scaler}, CONTINUOUS)
+        assert torch.allclose(restored.loc[order].tensor, c[order].tensor, atol=1e-3)
 
     def test_scale_off_is_a_noop_even_with_scaler_shipped(self, annotations, batch, scaler):
         model = build_model(annotations=annotations, scale_concepts=False)
         data = torch.randn(N_SAMPLES, 3)
         out = InferenceOutput()
         out.loc = AnnotatedTensor(data.clone(), annotations.to_concept_space(), axis=-1)
-        restored = model.unscale_output(out, {'concepts': scaler})
+        restored = model.unscale_output(out, {'concepts': scaler}, CONTINUOUS)
         assert restored is out
         assert torch.equal(restored.loc.tensor, data)
 
@@ -256,10 +271,6 @@ class TestScaleConcepts:
         scaled = model.maybe_scale_concepts({'c': c}, {'concepts': scaler})['c']
         assert torch.equal(scaled.tensor[:, :2], data[:, :2])
         assert not torch.equal(scaled.tensor[:, 2], data[:, 2])
-
-    def test_none_concepts(self, annotations, scaler):
-        model = build_model(annotations=annotations)
-        assert model.maybe_scale_concepts({'c': None}, {'concepts': scaler})['c'] is None
 
 
 class TestScaleInputs:

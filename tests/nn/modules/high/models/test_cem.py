@@ -9,7 +9,6 @@ Tests cover:
 - Backbone integration
 - Distribution handling
 - Inference modes (deterministic and ancestral sampling)
-- Target preparation (prepare_target)
 - Edge cases and error handling
 
 Migrated to the high-level model API:
@@ -362,30 +361,6 @@ class TestCEMExogenousVariables(unittest.TestCase):
         self.assertEqual(len(emb_vars), 3)  # c1, c2, c3 differ in cardinality -> 3 plates
         self.assertEqual(sum(v.shape[0] for v in emb_vars.values()), 2 + 3 + 1)
         self.assertTrue(all(v.shape[-1] == 16 for v in emb_vars.values()))
-
-
-class TestCEMPrepareTarget(unittest.TestCase):
-    """Test CEM prepare_target."""
-
-    def setUp(self):
-        """Set up test fixtures."""
-        self.ann = Annotations(
-                labels=['c1', 'c2', 'task'],
-                cardinalities=[1, 1, 1],
-            )
-
-        self.model = ConceptEmbeddingModel(
-            input_size=8,
-            annotations=self.ann,
-            task_names=['task']
-        )
-
-    def test_prepare_target(self):
-        """Test prepare_target returns target unchanged for CEM."""
-        target = torch.randint(0, 2, (2, 3)).float()
-
-        prepared = self.model.prepare_target({'inputs': {}, 'concepts': {'c': target}})['c']
-        self.assertTrue(torch.allclose(prepared, target))
 
 
 class TestCEMTraining(unittest.TestCase):

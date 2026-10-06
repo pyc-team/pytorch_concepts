@@ -7,11 +7,11 @@ Tests cover:
 - Training modes (joint, independent)
 - Backbone integration
 - Distribution handling
-- Target preparation (prepare_target)
 - Factory function behavior
 """
 import pytest
 import unittest
+from torch_concepts.tensor import AnnotatedTensor
 import torch
 import torch.nn as nn
 from torch.distributions import Bernoulli, OneHotCategorical, RelaxedBernoulli, RelaxedOneHotCategorical
@@ -166,30 +166,6 @@ class TestCBMForward(unittest.TestCase):
         logits = _logits(out, query)
         self.assertEqual(logits.shape[0], 2)
         self.assertEqual(logits.shape[1], 3 + 2)
-
-
-class TestCBMPrepareTarget(unittest.TestCase):
-    """Test CBM prepare_target."""
-    
-    def setUp(self):
-        """Set up test fixtures."""
-        self.ann = Annotations(
-                labels=['c1', 'c2', 'task'],
-                cardinalities=[1, 1, 1],
-            )
-        
-        self.model = ConceptBottleneckModel(
-            input_size=8,
-            annotations=self.ann,
-            task_names=['task']
-        )
-    
-    def test_prepare_target(self):
-        """Test prepare_target returns target unchanged for CBM."""
-        target = torch.randint(0, 2, (2, 3)).float()
-        
-        prepared = self.model.prepare_target({'inputs': {}, 'concepts': {'c': target}})['c']
-        self.assertTrue(torch.allclose(prepared, target))
 
 
 class TestCBMTraining(unittest.TestCase):
@@ -426,7 +402,8 @@ class TestLearnerIntegration(unittest.TestCase):
             )
         self.batch = {
             'inputs': {'x': torch.randn(4, 8)},
-            'concepts': {'c': torch.randint(0, 2, (4, 3)).float()}
+            'concepts': {'c': AnnotatedTensor(torch.randint(0, 2, (4, 3)).float(),
+                                          self.ann.to_concept_space(), axis=1)}
         }
 
     def _make_model(self, lightning=True, with_loss=True, train_inference=None):

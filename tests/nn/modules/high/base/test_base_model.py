@@ -341,22 +341,6 @@ class TestBaseModelForward:
             assert out.shape[0] == batch_size
 
 
-# Prepare Target Tests
-class TestBaseModelPrepareTarget:
-    """Test prepare_target method."""
-    
-    def test_prepare_target_returns_identity(self, annotations_with_distributions):
-        """Test prepare_target returns target unchanged for base models."""
-        model = ConcreteModel(
-            input_size=10,
-            annotations=annotations_with_distributions
-        )
-        
-        target = torch.randint(0, 2, (4, 3)).float()
-        prepared = model.prepare_target({'inputs': {}, 'concepts': {'c': target}})['c']
-        assert torch.equal(prepared, target)
-
-
 # Properties Tests
 class TestBaseModelProperties:
     """Test model properties and attributes."""
@@ -504,11 +488,6 @@ class TestBaseModelIntegration:
         x = torch.randn(8, 100)
         out = model(x)
         assert out.shape == (8, 32)
-
-        # prepare_target returns identity for base models
-        target = torch.randint(0, 2, (8, 3)).float()
-        prepared = model.prepare_target({'inputs': {}, 'concepts': {'c': target}})['c']
-        assert torch.equal(prepared, target)
     
     def test_minimal_model_pipeline(self, annotations_with_distributions):
         """Test minimal model with no backbone or encoder."""
