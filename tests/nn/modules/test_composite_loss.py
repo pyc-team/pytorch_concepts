@@ -126,6 +126,11 @@ class TestCompositeLoss:
         with pytest.raises(ValueError, match="must not be empty"):
             CompositeLoss(terms=[])
 
+    def test_repeated_names_are_rejected(self):
+        """`breakdown` is keyed by name: a repeat would silently drop a term."""
+        with pytest.raises(ValueError, match="unique"):
+            CompositeLoss(terms=[OutputOnlyTerm(), OutputOnlyTerm()], names=['x', 'x'])
+
     def test_it_is_a_type_aware_loss_so_the_learner_accepts_it(self):
         assert isinstance(CompositeLoss(terms=[OutputOnlyTerm()]), PyCLoss)
 

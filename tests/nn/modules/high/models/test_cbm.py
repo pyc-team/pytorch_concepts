@@ -843,3 +843,17 @@ class TestGraphCBMContinuousConcepts:
         out = model(query=['x', 'y'], input=torch.randn(4, 6))
         out.loc.sum().backward()
         assert any(p.grad is not None for p in model.parameters())
+
+
+class TestGroundTruthByName(unittest.TestCase):
+    def test_teacher_forcing_reads_the_ground_truth_by_name(self):
+        """A batch may order (or hold more) concepts than the model."""
+        ann = Annotations(labels=['a', 'b', 'y'], cardinalities=[1, 1, 1])
+        model = ConceptBottleneckModel(input_size=4, annotations=ann, task_names=['y'])
+        in_order = AnnotatedTensor(torch.tensor([[1., 0., 1.]]), ann.to_concept_space(), axis=-1)
+        shuffled = Annotations(labels=['extra', 'y', 'b', 'a'], cardinalities=[1] * 4)
+        reordered = AnnotatedTensor(torch.tensor([[0., 1., 0., 1.]]), shuffled.to_concept_space(), axis=-1)
+        expected, got = model.fully_observed_query(in_order), model.fully_observed_query(reordered)
+        self.assertEqual(expected.keys(), got.keys())
+        for name in expected:
+            self.assertTrue(torch.equal(expected[name], got[name]), name)
