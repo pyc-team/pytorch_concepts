@@ -829,8 +829,6 @@ class ConceptSubset(PyCLoss):
         CompositeLoss(0.5*concepts + tasks)
     """
 
-    # FIXME: returns zero when names don't match labels. Silent. Should break?
-
     def __init__(self, loss: nn.Module, names=None, exclude=None):
         super().__init__()
         if (names is None) == (exclude is None):
@@ -848,6 +846,12 @@ class ConceptSubset(PyCLoss):
 
     def forward(self, input: InferenceOutput, target, model=None) -> torch.Tensor:
         target = _concepts(target)
+        # A name that is not a target concept (a typo, a plate name) raise here.
+        given = set(self.names if self.names is not None else self.exclude)
+        assert given <= target.annotations.label_to_index.keys(), (
+            f"ConceptSubset: {sorted(given - target.annotations.label_to_index.keys())} "
+            f"are not concepts of the target {list(target.annotations.labels)}.")
+        
         names = self.names
         if names is None:
             names = [n for n in target.annotations.labels if n not in self.exclude]
@@ -860,8 +864,7 @@ class ConceptSubset(PyCLoss):
             reference = next(iter(input.params.values()), None)
             return torch.zeros((), device=None if reference is None else reference.device)
 
-        present = [n for n in names if n in target.annotations.label_to_index]
-        return self.loss(sub, target[present], model)
+        return self.loss(sub, target[names], model)
 
 
 class WeightedConceptLoss(CompositeLoss):

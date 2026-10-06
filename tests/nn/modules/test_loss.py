@@ -14,7 +14,7 @@ import torch
 from torch import nn
 from torch_concepts.nn.modules.loss import (ConceptLoss, WeightedConceptLoss,
                                             DepthWeightedConceptLoss, L1LogitRegularizer,
-                                            MSEReconstructionLoss)
+                                            MSEReconstructionLoss, ConceptSubset)
 from torch_concepts.nn.modules.outputs import InferenceOutput
 from torch_concepts.annotations import Annotations
 from torch_concepts.tensor import AnnotatedTensor
@@ -669,38 +669,40 @@ class TestDepthWeightedConceptLoss(unittest.TestCase):
         self.assertTrue(any('terms.2' in n for n in names))
         self.assertEqual(loss_fn.term_names, ['depth_0', 'depth_1', 'depth_2'])
 
-    def test_missing_concepts_creates_new_depth_zero(self):
-        """When no graph node overlaps with annotations, missing branch creates depth_0."""
-        from torch.distributions import Bernoulli
+    def test_graph_nodes_that_are_not_concepts_are_refused(self):
+        """Graph nodes named differently from the concepts would leave every
+        deeper level empty, all scored silently at depth 0."""
+        graph_xy = ConceptGraph(torch.tensor([[0., 1.], [0., 0.]]), node_names=['X', 'Y'])
+        ann = Annotations(labels=['A', 'B'], cardinalities=[1, 1])
+        loss_fn = DepthWeightedConceptLoss(graph_xy, binary=nn.BCEWithLogitsLoss())
+        target = AnnotatedTensor(torch.randint(0, 2, (4, 2)).float(), ann.to_concept_space(), axis=-1)
+        with self.assertRaisesRegex(AssertionError, "not concepts of the target"):
+            loss_fn(InferenceOutput(logits=AnnotatedTensor(torch.randn(4, 2), ann, axis=-1)), target)
 
-        # Graph nodes X->Y don't appear in the annotations at all
-        adj = torch.tensor([
-            [0., 1.],
-            [0., 0.],
-        ])
-        graph_xy = ConceptGraph(adj, node_names=['X', 'Y'])
 
-        # Annotations only have A, B — neither in the graph
-        axis = Annotations(
-            labels=['A', 'B'],
-            cardinalities=[1, 1],
-        )
-        ann = axis
+class TestConceptSubsetNames(unittest.TestCase):
+    """A name that is not a target concept must fail, not empty the group."""
 
-        loss_fn = DepthWeightedConceptLoss(
-            graph_xy,
-            source_weight=1.0, depth_decay=0.5,
-            binary=nn.BCEWithLogitsLoss()
-        )
-        # Both A, B are missing from graph → assigned to depth 0
-        self.assertIn(0, loss_fn.depths)
-        self.assertEqual(loss_fn.term_names[0], 'depth_0')
-        # Forward should work
-        preds = torch.randn(4, 2)
-        targets = torch.randint(0, 2, (4, 2)).float()
-        target = AnnotatedTensor(targets, ann.to_concept_space(), axis=-1)
-        loss = loss_fn(InferenceOutput(logits=AnnotatedTensor(preds, ann, axis=-1)), target)
-        self.assertEqual(loss.shape, ())
+    def setUp(self):
+        ann = Annotations(labels=['a', 'b', 'task'], cardinalities=[1, 1, 1])
+        self.out = InferenceOutput(logits=AnnotatedTensor(torch.randn(8, 3), ann, axis=-1))
+        self.target = AnnotatedTensor(torch.randint(0, 2, (8, 3)).float(),
+                                      ann.to_concept_space(), axis=-1)
+        self.bce = dict(binary=nn.BCEWithLogitsLoss())
+
+    def test_unknown_name(self):
+        with self.assertRaisesRegex(AssertionError, "Task"):
+            ConceptSubset(ConceptLoss(**self.bce), names=['Task'])(self.out, self.target)
+
+    def test_unknown_exclude(self):
+        with self.assertRaisesRegex(AssertionError, "Task"):
+            ConceptSubset(ConceptLoss(**self.bce), exclude=['Task'])(self.out, self.target)
+
+    def test_task_names_typo_in_weighted_loss(self):
+        loss_fn = WeightedConceptLoss(concept_weight=1., task_weight=10.,
+                                      task_names=['Task'], **self.bce)
+        with self.assertRaisesRegex(AssertionError, "Task"):
+            loss_fn(self.out, self.target)
 
 
 # ======================================================================
