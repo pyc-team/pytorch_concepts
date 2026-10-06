@@ -1282,6 +1282,19 @@ class TestContinuousQuantityResolution:
         assert float(ConceptLoss(continuous=torch.nn.MSELoss(),
                                  continuous_param="value")(out, target)) == pytest.approx(16.0)
 
+    def test_an_unsupervised_latent_does_not_hide_the_concepts(self):
+        """A latent `z` under `loc` must not claim the continuous quantity when
+        the concepts are reported under `value`: they would never be scored."""
+        from torch_concepts.nn.modules.metrics import ConceptMetrics
+        from torchmetrics import MeanSquaredError
+        out, target = self._output("value")
+        z = Annotations(labels=['z'], cardinalities=[1], types=['continuous'])
+        out.params["loc"] = AnnotatedTensor(torch.zeros(4, 1), z, axis=-1)
+        assert float(ConceptLoss(continuous=torch.nn.MSELoss())(out, target)) == pytest.approx(1.0)
+        metrics = ConceptMetrics(annotations=target.annotations, continuous={'mse': MeanSquaredError()})
+        metrics.update(out, target)
+        assert float(metrics.compute()['SUMMARY-continuous_mse']) == pytest.approx(1.0)
+
 
 def _observation_output(quantity, tensor, observed):
     """A one-variable output reporting ``quantity``, and the batch target

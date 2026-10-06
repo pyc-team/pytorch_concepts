@@ -120,6 +120,28 @@ def supervised_subset(tensor, target):
     return tensor[keep] if keep else None
 
 
+#: Quantities a *discrete* concept may be reported under, in fallback order.
+DISCRETE_QUANTITIES = ("logits", "probs")
+
+
+def resolve_quantity(params, configured, candidates, target):
+    """The quantity tensor that loss and metrics score a concept type on.
+
+    ``params[configured]`` if ``configured`` is given, else the first of
+    ``candidates`` holding at least one concept ``target`` supervises; ``None``
+    if none does.
+
+    .. warning::
+        Only one quantity is returned: supervised concepts reported under
+        another candidate (e.g. binary under ``probs``, categorical under
+        ``logits``) are silently not scored.
+    """
+    for quantity in (configured,) if configured else candidates:
+        if supervised_subset(params.get(quantity), target) is not None:
+            return params[quantity]
+    return None
+
+
 # ---------------------------------------------------------------------------
 # InferenceOutput
 # ---------------------------------------------------------------------------

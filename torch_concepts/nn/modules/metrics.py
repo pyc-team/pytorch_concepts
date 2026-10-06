@@ -6,7 +6,8 @@ from torchmetrics import Metric, MetricCollection
 from copy import deepcopy
 
 from ...annotations import Annotations
-from .outputs import CONTINUOUS_QUANTITIES, InferenceOutput, supervised_subset
+from .outputs import (CONTINUOUS_QUANTITIES, DISCRETE_QUANTITIES, InferenceOutput,
+                      resolve_quantity, supervised_subset)
 from .utils import by_type, check_collection
 
 
@@ -348,15 +349,14 @@ class ConceptMetrics(nn.Module):
             out = InferenceOutput()
             out.logits = preds
 
-        discrete = out.logits if out.logits is not None else out.probs
+        # The same quantity ConceptLoss reads (see resolve_quantity): `loc` for a
+        # Normal, `value` for a Delta; logits before probs.
+        discrete = resolve_quantity(out.params, None, DISCRETE_QUANTITIES, target)
+        continuous = resolve_quantity(out.params, None, CONTINUOUS_QUANTITIES, target)
         # torchmetrics guesses logits vs probabilities from the value range, so
         # logits that all fall in [0, 1] would read as probabilities: hand it
         # probabilities always (sigmoid / softmax below).
-        from_logits = out.logits is not None
-        # `loc` for a Normal, `value` for a Delta (a deterministic point estimate) —
-        # mirrors the discrete fallback above; unlike *_param on ConceptLoss, there
-        # is no per-instance config here, so both quantities are always tried.
-        continuous = out.loc if out.loc is not None else out.value
+        from_logits = discrete is out.logits
         any_pred = discrete if discrete is not None else continuous
         if any_pred is None or any_pred.shape[0] == 0:
             return

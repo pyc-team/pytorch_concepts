@@ -8,7 +8,8 @@ import torch.nn.functional as F
 from torch import nn
 
 from .utils import TYPES, by_type, check_collection
-from .outputs import CONTINUOUS_QUANTITIES, InferenceOutput, supervised_subset
+from .outputs import (CONTINUOUS_QUANTITIES, DISCRETE_QUANTITIES, InferenceOutput,
+                      resolve_quantity, supervised_subset)
 from ..functional import concept_orthogonality
 from ...concept_graph import ConceptGraph
 from ...tensor import AnnotatedTensor
@@ -118,29 +119,6 @@ def subset_output(output: InferenceOutput, names: List[str]) -> InferenceOutput:
         if present:
             sub.params[quantity] = tensor[present]
     return sub
-
-
-#: Quantities a *discrete* concept may be reported under, in fallback order. The
-#: same rule :class:`~torch_concepts.nn.ConceptMetrics` applies, so a loss and a
-#: metric on one model read the same quantity without either being told which.
-DISCRETE_QUANTITIES = ("logits", "probs")
-
-
-def _resolve_quantity(params, configured: Optional[str], candidates: Sequence[str]):
-    """The tensor a concept type is scored on, or ``None`` if the output has none.
-
-    A model already declares the quantity it emits (``param_for_discrete_var`` is
-    ``'logits'`` on a CBM, ``'probs'`` on a CBGM), so naming it again in the loss
-    is the one place the two sides can disagree. Default (``configured=None``):
-    take the first candidate the output reports.
-    """
-    if configured is not None:
-        return params.get(configured)
-    for quantity in candidates:
-        tensor = params.get(quantity)
-        if tensor is not None:
-            return tensor
-    return None
 
 
 def _variable_params(
@@ -736,9 +714,9 @@ class ConceptLoss(PyCLoss):
             binary = categorical = input
             continuous, scale = input.continuous(), None
         else:
-            binary = _resolve_quantity(input.params, self.binary_param, DISCRETE_QUANTITIES)
-            categorical = _resolve_quantity(input.params, self.categorical_param, DISCRETE_QUANTITIES)
-            continuous = _resolve_quantity(input.params, self.continuous_param, CONTINUOUS_QUANTITIES)
+            binary = resolve_quantity(input.params, self.binary_param, DISCRETE_QUANTITIES, target)
+            categorical = resolve_quantity(input.params, self.categorical_param, DISCRETE_QUANTITIES, target)
+            continuous = resolve_quantity(input.params, self.continuous_param, CONTINUOUS_QUANTITIES, target)
             scale = input.scale
         # Binary and categorical are sliced by type out of their (shared) discrete
         # quantity; continuous is taken whole. The per-type accessors are memoised
