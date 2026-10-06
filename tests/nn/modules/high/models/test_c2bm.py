@@ -619,7 +619,7 @@ class TestC2BMPrepareTarget:
 
     def test_prepare_target(self):
         target = torch.randint(0, 2, (4, 3)).float()
-        prepared = self.model.prepare_target(target)
+        prepared = self.model.prepare_target({'inputs': {}, 'concepts': {'c': target}})['c']
         assert torch.equal(prepared, target)
 
 

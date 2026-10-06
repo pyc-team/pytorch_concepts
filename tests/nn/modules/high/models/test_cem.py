@@ -13,7 +13,7 @@ Tests cover:
 - Edge cases and error handling
 
 Migrated to the high-level model API:
-- forward takes ``input=`` (not ``x=``) and returns ``ModelOutput`` with
+- forward takes ``input=`` (not ``x=``) and returns ``InferenceOutput`` with
   ``.params`` only (no ``.probs`` / ``.logits``). For each queried concept,
   ``out.logits[name]`` is a ``(B, cardinality)`` tensor (CEM sets
   ``param_for_discrete_var='logits'``).
@@ -384,7 +384,7 @@ class TestCEMPrepareTarget(unittest.TestCase):
         """Test prepare_target returns target unchanged for CEM."""
         target = torch.randint(0, 2, (2, 3)).float()
 
-        prepared = self.model.prepare_target(target)
+        prepared = self.model.prepare_target({'inputs': {}, 'concepts': {'c': target}})['c']
         self.assertTrue(torch.allclose(prepared, target))
 
 

@@ -182,7 +182,7 @@ class TestImageObservation:
         out = model(query=list(model.pgm.variables), input=x)
         # The observation keeps its event shape while the prediction is flat;
         # the loss reconciles the two rather than broadcasting them.
-        loss = MSEReconstructionLoss("input")(out)
+        loss = MSEReconstructionLoss("input")(out, {"x": x})
         expected = F.mse_loss(
             out.value["input"].as_subclass(torch.Tensor),
             x.reshape(6, -1),
@@ -427,18 +427,10 @@ class TestDeltaObservation:
         model = self._model(binary_annotations)
         x = torch.rand(6, INPUT_SIZE)
         out = model(query=list(model.pgm.variables), input=x)
-        loss = MSEReconstructionLoss(variable="input")(out)
+        loss = MSEReconstructionLoss(variable="input")(out, {"x": x})
         expected = (out.value["input"] - x).pow(2).sum(-1).mean()
         assert torch.isfinite(loss)
         assert torch.allclose(loss, expected)
-
-    def test_the_evidence_reaches_the_loss_without_help(self, binary_annotations):
-        """`default_extra` publishes it on every forward — the loss needs no
-        manual `out.extra`."""
-        model = self._model(binary_annotations)
-        x = torch.rand(6, INPUT_SIZE)
-        out = model(query=list(model.pgm.variables), input=x)
-        assert torch.equal(out.extra["evidence"]["input"], x)
 
     def test_a_generated_sample_is_the_decoder_output(self, binary_annotations):
         """The point of the Delta. Under a Normal this draw was `loc + noise`;
@@ -544,8 +536,7 @@ class TestTeacherForcingRate:
         query = model.default_query(torch.ones(8, 1))
         model.zero_grad()
         out = model(query=query, input=x)
-        out.extra = {"evidence": {"input": x}}
-        MSEReconstructionLoss(variable="input")(out).backward()
+        MSEReconstructionLoss(variable="input")(out, {"x": x}).backward()
 
         rows = weight.shape[0] // 2
         return weight.grad[:rows].norm(), weight.grad[rows:].norm()

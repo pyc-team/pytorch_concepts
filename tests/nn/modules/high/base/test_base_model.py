@@ -353,7 +353,7 @@ class TestBaseModelPrepareTarget:
         )
         
         target = torch.randint(0, 2, (4, 3)).float()
-        prepared = model.prepare_target(target)
+        prepared = model.prepare_target({'inputs': {}, 'concepts': {'c': target}})['c']
         assert torch.equal(prepared, target)
 
 
@@ -507,7 +507,7 @@ class TestBaseModelIntegration:
 
         # prepare_target returns identity for base models
         target = torch.randint(0, 2, (8, 3)).float()
-        prepared = model.prepare_target(target)
+        prepared = model.prepare_target({'inputs': {}, 'concepts': {'c': target}})['c']
         assert torch.equal(prepared, target)
     
     def test_minimal_model_pipeline(self, annotations_with_distributions):

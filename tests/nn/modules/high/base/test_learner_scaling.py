@@ -25,7 +25,7 @@ from torch_concepts.nn.modules.high.models.blackbox import BlackBoxTaskOnly
 from torch_concepts.nn.modules.high.models.cbm import ConceptBottleneckModel
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
-from torch_concepts.nn.modules.outputs import ModelOutput
+from torch_concepts.nn.modules.outputs import InferenceOutput
 from torch_concepts.tensor import AnnotatedTensor
 
 
@@ -125,10 +125,10 @@ class TestScaledSpaceSeparation:
         transforms = {'concepts': scaler}
 
         c_scaled = model.maybe_scale_concepts({'c': c}, transforms)['c']
-        out = ModelOutput()
+        out = InferenceOutput()
         out.loc = AnnotatedTensor(c_scaled.tensor.clone(), annotations.to_concept_space(), axis=-1)
         model.update_and_log_metrics(
-            model.unscale_output(out, transforms), model.prepare_target(c), 'test', N_SAMPLES
+            model.unscale_output(out, transforms), model.prepare_target({'inputs': {}, 'concepts': {'c': c}})['c'], 'test', N_SAMPLES
         )
         mse = float(model.test_metrics.compute()['test/SUMMARY-continuous_mse'])
         assert mse == pytest.approx(0.0, abs=1e-6)
@@ -143,12 +143,12 @@ class TestScaledSpaceSeparation:
         delta = 0.5
 
         c_scaled = model.maybe_scale_concepts({'c': c}, transforms)['c']
-        out = ModelOutput()
+        out = InferenceOutput()
         out.loc = AnnotatedTensor(
             c_scaled.tensor + delta, annotations.to_concept_space(), axis=-1
         )
         model.update_and_log_metrics(
-            model.unscale_output(out, transforms), model.prepare_target(c), 'test', N_SAMPLES
+            model.unscale_output(out, transforms), model.prepare_target({'inputs': {}, 'concepts': {'c': c}})['c'], 'test', N_SAMPLES
         )
         mse = float(model.test_metrics.compute()['test/SUMMARY-continuous_mse'])
 
@@ -177,7 +177,7 @@ class TestScaledSpaceSeparation:
         )
         loc = out.loc
         preds = scaler.inverse_transform(loc.tensor)
-        target = model.prepare_target(c).tensor
+        target = model.prepare_target({'inputs': {}, 'concepts': {'c': c}})['c'].tensor
         assert mse == pytest.approx(float(((preds - target) ** 2).mean()), rel=1e-4)
 
     def test_loss_is_in_scaled_units_metric_is_not(self, annotations, batch, scaler):
@@ -199,7 +199,7 @@ class TestUnscaleOutput:
         model = build_model(annotations=annotations)
         data = torch.randn(N_SAMPLES, 3)
         scaled_space_tensor = data.clone()
-        out = ModelOutput()
+        out = InferenceOutput()
         out.loc = AnnotatedTensor(scaled_space_tensor, annotations.to_concept_space(), axis=-1)
 
         model.unscale_output(out, {'concepts': scaler})
@@ -211,7 +211,7 @@ class TestUnscaleOutput:
     def test_scale_off_is_a_noop_even_with_scaler_shipped(self, annotations, batch, scaler):
         model = build_model(annotations=annotations, scale_concepts=False)
         data = torch.randn(N_SAMPLES, 3)
-        out = ModelOutput()
+        out = InferenceOutput()
         out.loc = AnnotatedTensor(data.clone(), annotations.to_concept_space(), axis=-1)
         restored = model.unscale_output(out, {'concepts': scaler})
         assert restored is out

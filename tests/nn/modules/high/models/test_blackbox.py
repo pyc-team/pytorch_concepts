@@ -384,7 +384,7 @@ class TestBlackBoxPrepareTarget(unittest.TestCase):
         out = self.model(x)
         target = torch.randint(0, 2, _logits(out, ['c1', 'task']).shape)
 
-        prepared = self.model.prepare_target(target)
+        prepared = self.model.prepare_target({'inputs': {}, 'concepts': {'c': target}})['c']
         self.assertTrue(torch.allclose(prepared, target))
 
     def test_prepare_target_inherited_from_base(self):
@@ -716,7 +716,7 @@ class TestBlackBoxTaskOnlyPrepareTarget(unittest.TestCase):
         target = torch.tensor([[0., 1., 1.],
                                [1., 0., 0.]])
         
-        prepared = self.model.prepare_target(target)
+        prepared = self.model.prepare_target({'inputs': {}, 'concepts': {'c': target}})['c']
         
         # Target should be sliced to task1 column (concept index 2)
         self.assertEqual(prepared.shape, (2, 1))
@@ -752,7 +752,7 @@ class TestBlackBoxTaskOnlyPrepareTarget(unittest.TestCase):
                                [1., 0., 1.],
                                [0., 1., 0.]])
         
-        prepared = model.prepare_target(target)
+        prepared = model.prepare_target({'inputs': {}, 'concepts': {'c': target}})['c']
         
         # Target sliced to task1 (idx 1) and task2 (idx 2)
         self.assertEqual(prepared.shape, (3, 2))
@@ -1050,7 +1050,7 @@ class TestBlackBoxDeviceConsistency(unittest.TestCase):
         out = model(x)
         target = torch.zeros(2, 2, device=device)
         
-        prepared = model.prepare_target(target)
+        prepared = model.prepare_target({'inputs': {}, 'concepts': {'c': target}})['c']
         
         self.assertEqual(prepared.device.type, device.type)
 
@@ -1159,7 +1159,7 @@ class TestBlackBoxTaskOnlyEdgeCases(unittest.TestCase):
 
         # Full target has 2 concept-level columns (c1, task)
         target = torch.zeros(2, 2)
-        prepared = model.prepare_target(target)
+        prepared = model.prepare_target({'inputs': {}, 'concepts': {'c': target}})['c']
         # Target sliced to task column only
         self.assertEqual(prepared.shape, (2, 1))
 
@@ -1180,7 +1180,7 @@ class TestBlackBoxTaskOnlyEdgeCases(unittest.TestCase):
 
         # When task is the only concept, prepare_target is identity
         target = torch.zeros(2, 1)
-        prepared = model.prepare_target(target)
+        prepared = model.prepare_target({'inputs': {}, 'concepts': {'c': target}})['c']
         self.assertTrue(torch.allclose(prepared, target))
 
     def test_batch_size_one(self):
@@ -1198,7 +1198,7 @@ class TestBlackBoxTaskOnlyEdgeCases(unittest.TestCase):
         
         # Full target has 2 concept-level columns
         target = torch.zeros(1, 2)
-        prepared = model.prepare_target(target)
+        prepared = model.prepare_target({'inputs': {}, 'concepts': {'c': target}})['c']
         self.assertEqual(prepared.shape, (1, 1))
 
 
@@ -1225,7 +1225,7 @@ class TestBlackBoxTraining(unittest.TestCase):
 
         # Forward pass
         out = model(x)
-        prepared = model.prepare_target(target)
+        prepared = model.prepare_target({'inputs': {}, 'concepts': {'c': target}})['c']
         loss = nn.functional.binary_cross_entropy_with_logits(
             _logits(out, ['c1', 'task']),
             prepared
@@ -1280,7 +1280,7 @@ class TestBlackBoxTraining(unittest.TestCase):
         target = torch.zeros(4, 2)
 
         out = model(x)
-        prepared = model.prepare_target(target)
+        prepared = model.prepare_target({'inputs': {}, 'concepts': {'c': target}})['c']
         loss = nn.functional.binary_cross_entropy_with_logits(
             _logits(out, ['task']),
             prepared
@@ -1398,7 +1398,7 @@ class TestBlackBoxContinuousConcepts:
         model = BlackBox(input_size=8, annotations=ann)
         out = model(torch.randn(4, 8))
         loss = ConceptLoss(continuous=torch.nn.MSELoss())(
-            out, model.prepare_target(torch.randn(4, 2))
+            out, model.prepare_target({'inputs': {}, 'concepts': {'c': torch.randn(4, 2)}})['c']
         )
         assert loss > 0
         loss.backward()

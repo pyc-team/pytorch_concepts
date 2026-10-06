@@ -430,7 +430,7 @@ class TestDeltaObservation:
         model = build_model(binary_annotations, plate=False)
         x = torch.rand(5, INPUT_SIZE)
         out = model(query=binary_query(model), input=x)
-        loss = MSEReconstructionLoss(variable="input")(out)
+        loss = MSEReconstructionLoss(variable="input")(out, {"x": x})
         expected = (out.value["input"] - x).pow(2).sum(-1).mean()
         assert torch.isfinite(loss)
         assert torch.allclose(loss, expected)
@@ -439,25 +439,15 @@ class TestDeltaObservation:
         model = build_model(binary_annotations, plate=False)
         x = torch.rand(5, INPUT_SIZE)
         out = model(query=binary_query(model), input=x)
-        mean = MSEReconstructionLoss(variable="input")(out)
-        total = MSEReconstructionLoss(variable="input", reduction="sum")(out)
+        mean = MSEReconstructionLoss(variable="input")(out, {"x": x})
+        total = MSEReconstructionLoss(variable="input", reduction="sum")(out, {"x": x})
         assert torch.allclose(total, mean * 5)
 
 
 class TestTrainingAndGeneration:
-    def test_default_extra_publishes_the_evidence(self, binary_annotations):
-        """`BaseModel.forward` fills `out.extra` from this hook, and it is the only
-        way `MSEReconstructionLoss` ever sees the observed image."""
-        model = build_model(binary_annotations, plate=False)
-        x = torch.rand(5, INPUT_SIZE)
-        out = model(query=binary_query(model), input=x)
-        assert out.extra is not None
-        assert torch.equal(out.extra["evidence"]["input"], x)
-
     def test_a_full_elbo_step_reaches_every_learnable_part(self, binary_annotations):
         """recon + kl + concept: the reconstruction trains the decoder and the shared
-        embedding, the concept term trains the marginal p(c). A missing `default_extra`
-        fails this at the reconstruction term."""
+        embedding, the concept term trains the marginal p(c)."""
         model = build_model(binary_annotations, plate=False)
         loss_fn = CompositeLoss(
             terms=[
@@ -469,8 +459,9 @@ class TestTrainingAndGeneration:
             weights=[1.0, 1.0, 1.0],
         )
         c = torch.randint(0, 2, (5, 2)).float()
-        out = model(query=model.default_query(c), input=torch.rand(5, INPUT_SIZE))
-        terms = loss_fn.breakdown(out, model.prepare_target(c))
+        x = torch.rand(5, INPUT_SIZE)
+        out = model(query=model.default_query(c), input=x)
+        terms = loss_fn.breakdown(out, model.prepare_target({'inputs': {'x': x}, 'concepts': {'c': c}}))
         assert all(torch.isfinite(t) for t in terms.values())
 
         sum(terms.values()).backward()

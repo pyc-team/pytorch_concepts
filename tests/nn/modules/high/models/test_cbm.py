@@ -188,7 +188,7 @@ class TestCBMPrepareTarget(unittest.TestCase):
         """Test prepare_target returns target unchanged for CBM."""
         target = torch.randint(0, 2, (2, 3)).float()
         
-        prepared = self.model.prepare_target(target)
+        prepared = self.model.prepare_target({'inputs': {}, 'concepts': {'c': target}})['c']
         self.assertTrue(torch.allclose(prepared, target))
 
 
