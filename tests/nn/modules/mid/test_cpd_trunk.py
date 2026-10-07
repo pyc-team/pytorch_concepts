@@ -181,7 +181,7 @@ class TestInteractions:
         assert cpds[0].trunk is not cpds[1].trunk
         assert cpds[0].trunk.linear.weight is not cpds[1].trunk.linear.weight
 
-    def test_intervention_swaps_the_head_not_the_trunk(self, parent):
+    def test_intervention_on_the_head_leaves_the_trunk_alone(self, parent):
         c = ConceptVariable("c", distribution=Bernoulli, size=3)
         trunk = CountingTrunk(4, 8)
         cpd = ParametricCPD(
@@ -190,16 +190,9 @@ class TestInteractions:
                 nn.Linear(8, 3), DefaultActivation(c, "probs"))},
         )
 
-        class Pgm:
-            factors = {"c": cpd}
-
-        original = cpd.parametrization["probs"]
         with intervention(
-            Pgm(), DoIntervention(constants=0.0), UniformPolicy(),
-            variable_to_intervene_on="c", parameter_to_intervene_on="probs",
+            cpd.parametrization["probs"], DoIntervention(constants=0.0), UniformPolicy(), [0, 1, 2],
         ):
-            assert cpd.parametrization["probs"] is not original
-            assert cpd.trunk is trunk  # the expensive part is untouched
             out = cpd(parent_values={"x": torch.randn(4, 4)})["probs"]
-            assert torch.allclose(out, torch.zeros(4, 3), atol=1e-5)
-        assert cpd.parametrization["probs"] is original
+        assert torch.allclose(out, torch.zeros(4, 3), atol=1e-5)
+        assert trunk.calls == 1  # the expensive part runs once, untouched

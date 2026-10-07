@@ -857,3 +857,22 @@ class TestGroundTruthByName(unittest.TestCase):
         self.assertEqual(expected.keys(), got.keys())
         for name in expected:
             self.assertTrue(torch.equal(expected[name], got[name]), name)
+
+
+class TestCBMIntervention(unittest.TestCase):
+    def test_intervention_on_a_concept_reaches_the_task(self):
+        from torch_concepts.nn import intervention, DoIntervention, UniformPolicy
+        ann = Annotations(labels=['c1', 'c2', 'c3', 'y'], cardinalities=[1, 1, 1, 1])
+        model = ConceptBottleneckModel(input_size=8, annotations=ann, task_names=['y'])
+        query = ['c1', 'c2', 'c3', 'y']
+        for lead in [(4,), (3, 2), (2, 3, 2)]:
+            with self.subTest(lead=lead):
+                x = torch.randn(*lead, 8)
+                base = model(query=query, input=x)
+                with intervention(model, DoIntervention(10.0), UniformPolicy(), ['c2']):
+                    out = model(query=query, input=x)
+                self.assertEqual(out.logits['c2'].shape[:len(lead)], lead)
+                self.assertTrue(torch.equal(out.logits['c2'], torch.full_like(out.logits['c2'], 10.0)))
+                self.assertTrue(torch.allclose(out.logits[['c1', 'c3']], base.logits[['c1', 'c3']]))
+                self.assertFalse(torch.allclose(out.logits['y'], base.logits['y']))
+                self.assertTrue(torch.allclose(model(query=query, input=x).logits['c2'], base.logits['c2']))

@@ -1,18 +1,17 @@
-"""Tests for InterventionModule, intervene, intervention context manager,
+"""Tests for InterventionModule, the intervention context manager,
 and the GroundTruthIntervention, DoIntervention, DistributionIntervention
 strategies together with UniformPolicy, RandomPolicy, and
 UncertaintyInterventionPolicy.
 """
+import itertools
+
 import pytest
 import torch
 import torch.nn as nn
 import torch.distributions as torch_dist
 
-from torch_concepts.nn.modules.low.intervention.intervention import (
-    InterventionModule,
-    intervene,
-    intervention,
-)
+from torch_concepts.nn import intervention
+from torch_concepts.nn.modules.low.base.intervention import InterventionModule
 from torch_concepts.nn.modules.low.intervention.strategy.ground_truth import (
     GroundTruthIntervention,
 )
@@ -47,7 +46,17 @@ def _make_enc(in_f=4, out_f=3):
     return _Encoder(in_features=in_f, out_features=out_f)
 
 
+class _CountingEncoder(_Encoder):
+    """Encoder that records how many times it ran."""
+    calls = 0
+
+    def forward(self, x):
+        self.calls += 1
+        return super().forward(x)
+
+
 B, F = 4, 3  # default batch size and feature size
+ALL = list(range(F))  # every output of the default encoder
 
 
 # ===========================================================================
@@ -276,35 +285,39 @@ class TestInterventionModuleConstruction:
     def test_basic_construction(self):
         enc = _make_enc()
         gt = torch.ones(B, F)
-        m = InterventionModule(enc, GroundTruthIntervention(gt), UniformPolicy())
+        m = InterventionModule(enc, GroundTruthIntervention(gt), UniformPolicy(), ALL)
         assert isinstance(m, nn.Module)
 
     def test_original_module_stored(self):
         enc = _make_enc()
-        m = InterventionModule(enc, GroundTruthIntervention(torch.ones(B, F)), UniformPolicy())
+        m = InterventionModule(enc, GroundTruthIntervention(torch.ones(B, F)), UniformPolicy(), ALL)
         assert m.original_module is enc
 
     def test_strategy_stored(self):
         enc = _make_enc()
         strat = GroundTruthIntervention(torch.ones(B, F))
-        m = InterventionModule(enc, strat, UniformPolicy())
+        m = InterventionModule(enc, strat, UniformPolicy(), ALL)
         assert m.intervention_strategy is strat
 
     def test_policy_stored(self):
         enc = _make_enc()
         policy = UniformPolicy()
-        m = InterventionModule(enc, GroundTruthIntervention(torch.ones(B, F)), policy)
+        m = InterventionModule(enc, GroundTruthIntervention(torch.ones(B, F)), policy, ALL)
         assert m.intervention_policy is policy
 
     def test_default_quantile(self):
         enc = _make_enc()
-        m = InterventionModule(enc, DoIntervention(0.0), UniformPolicy())
+        m = InterventionModule(enc, DoIntervention(0.0), UniformPolicy(), ALL)
         assert m.quantile == pytest.approx(1.0)
 
     def test_custom_quantile(self):
         enc = _make_enc()
-        m = InterventionModule(enc, DoIntervention(0.0), UniformPolicy(), quantile=0.5)
+        m = InterventionModule(enc, DoIntervention(0.0), UniformPolicy(), ALL, quantile=0.5)
         assert m.quantile == pytest.approx(0.5)
+
+    def test_unknown_argument_raises(self):
+        with pytest.raises(TypeError):
+            InterventionModule(_make_enc(), DoIntervention(0.0), UniformPolicy(), ALL, quantil=0.5)
 
     def test_out_concepts_to_intervene_on_stored(self):
         enc = _make_enc()
@@ -314,47 +327,77 @@ class TestInterventionModuleConstruction:
 
 
 # ===========================================================================
-# 8. intervene() factory function
-# ===========================================================================
-
-class TestInterveneFn:
-    def test_returns_intervention_module(self):
-        enc = _make_enc()
-        m = intervene(enc, DoIntervention(0.0), UniformPolicy())
-        assert isinstance(m, InterventionModule)
-
-    def test_original_module_preserved(self):
-        enc = _make_enc()
-        m = intervene(enc, DoIntervention(0.0), UniformPolicy())
-        assert m.original_module is enc
-
-    def test_custom_quantile(self):
-        enc = _make_enc()
-        m = intervene(enc, DoIntervention(0.0), UniformPolicy(), quantile=0.5)
-        assert m.quantile == pytest.approx(0.5)
-
-
-# ===========================================================================
 # 9. intervention() context manager
 # ===========================================================================
 
 class TestInterventionContextManager:
-    def test_yields_intervention_module(self):
-        enc = _make_enc()
-        with intervention(enc, DoIntervention(0.0), UniformPolicy()) as m:
-            assert isinstance(m, InterventionModule)
-
-    def test_forward_runs_inside_context(self):
+    def test_module_intervened_inside_context(self):
         enc = _make_enc()
         x = torch.randn(B, enc.in_f)
-        with intervention(enc, DoIntervention(0.5), UniformPolicy()) as m:
-            out = m(x)
-        assert out.shape == (B, enc.out_f)
+        with intervention(enc, DoIntervention(0.5), UniformPolicy(), ALL):
+            out = enc(x)
+        assert torch.allclose(out, torch.full((B, F), 0.5))
 
-    def test_context_exits_cleanly(self):
+    def test_selection_by_position(self):
         enc = _make_enc()
-        with intervention(enc, DoIntervention(0.0), UniformPolicy()):
-            pass
+        x = torch.randn(B, enc.in_f)
+        with intervention(enc, DoIntervention(0.5), UniformPolicy(), [1]):
+            out = enc(x)
+        assert torch.allclose(out[:, 1], torch.full((B,), 0.5))
+        assert torch.allclose(out[:, [0, 2]], enc(x)[:, [0, 2]])
+
+    def test_selection_by_name(self):
+        enc = _make_enc()
+        enc.out_concepts = Annotations(labels=['alpha', 'beta', 'gamma'])
+        x = torch.randn(B, enc.in_f)
+        with intervention(enc, DoIntervention(0.5), UniformPolicy(), ['gamma']):
+            out = enc(x)
+        assert torch.allclose(out[:, 2], torch.full((B,), 0.5))
+        assert torch.allclose(out[:, :2], enc(x)[:, :2])
+
+    def test_selection_is_required(self):
+        with pytest.raises(ValueError, match="out_concepts_to_intervene_on"):
+            with intervention(_make_enc(), DoIntervention(0.5), UniformPolicy()):
+                pass
+
+    def test_concept_strategy_runs_the_layer_once(self):
+        enc = _CountingEncoder()
+        with intervention(enc, DoIntervention(0.5), UniformPolicy(), ALL):
+            enc(torch.randn(B, enc.in_f))
+        assert enc.calls == 1
+
+    def test_module_strategy_runs_the_original_and_the_transformed_layer(self):
+        enc = _CountingEncoder()
+        with torch.no_grad():
+            enc.linear.weight.fill_(-1.0)
+            enc.linear.bias.fill_(0.3)
+        with intervention(enc, PositiveWeightsIntervention(), UniformPolicy(), ALL):
+            out = enc(torch.randn(B, enc.in_f))
+        assert enc.calls == 2
+        assert torch.allclose(out, torch.sigmoid(torch.full((B, F), 0.3)))
+
+    def test_accepts_built_intervention_module(self):
+        enc = _make_enc()
+        x = torch.randn(B, enc.in_f)
+        with intervention(InterventionModule(enc, DoIntervention(0.5), UniformPolicy(), ALL)):
+            out = enc(x)
+        assert torch.allclose(out, torch.full((B, F), 0.5))
+
+    @pytest.mark.parametrize("extra", [{"quantile": 0.5}, {"out_concepts_to_intervene_on": [0]}])
+    def test_built_intervention_module_takes_no_other_arguments(self, extra):
+        m = InterventionModule(_make_enc(), DoIntervention(0.5), UniformPolicy(), ALL)
+        with pytest.raises(TypeError, match="no other arguments"):
+            with intervention(m, **extra):
+                pass
+
+    def test_module_restored_on_exit(self):
+        enc = _make_enc()
+        x = torch.randn(B, enc.in_f)
+        before = enc(x)
+        with pytest.raises(RuntimeError):
+            with intervention(enc, DoIntervention(0.5), UniformPolicy(), ALL):
+                raise RuntimeError
+        assert torch.equal(enc(x), before)
 
 
 # ===========================================================================
@@ -365,14 +408,14 @@ class TestInterventionModuleForward:
     def test_output_shape(self):
         enc = _make_enc()
         x = torch.randn(B, enc.in_f)
-        m = intervene(enc, DoIntervention(0.5), UniformPolicy(), quantile=1.0)
+        m = InterventionModule(enc, DoIntervention(0.5), UniformPolicy(), ALL, quantile=1.0)
         out = m(x)
         assert out.shape == (B, F)
 
     def test_full_intervention_ground_truth(self):
         enc = _make_enc()
         gt = torch.full((B, F), 0.7)
-        m = intervene(enc, GroundTruthIntervention(gt), UniformPolicy(), quantile=1.0)
+        m = InterventionModule(enc, GroundTruthIntervention(gt), UniformPolicy(), ALL, quantile=1.0)
         x = torch.randn(B, enc.in_f)
         out = m(x)
         # quantile=1.0 → all concepts replaced → output should equal gt
@@ -380,7 +423,7 @@ class TestInterventionModuleForward:
 
     def test_full_do_intervention(self):
         enc = _make_enc()
-        m = intervene(enc, DoIntervention(0.0), UniformPolicy(), quantile=1.0)
+        m = InterventionModule(enc, DoIntervention(0.0), UniformPolicy(), ALL, quantile=1.0)
         x = torch.randn(B, enc.in_f)
         out = m(x)
         # quantile=1.0 + do(0.0) → all concepts become 0
@@ -389,7 +432,7 @@ class TestInterventionModuleForward:
     def test_no_intervention_at_quantile_zero_single_concept(self):
         enc = _Encoder(in_features=4, out_features=1)
         gt = torch.ones(B, 1)
-        m = intervene(enc, GroundTruthIntervention(gt), UniformPolicy(), quantile=0.0)
+        m = InterventionModule(enc, GroundTruthIntervention(gt), UniformPolicy(), [0], quantile=0.0)
         x = torch.randn(B, 4)
         with torch.no_grad():
             orig = enc(x)
@@ -401,8 +444,8 @@ class TestInterventionModuleForward:
         F2 = 4
         enc = _Encoder(in_features=4, out_features=F2)
         gt = torch.ones(B, F2)
-        m = intervene(enc, GroundTruthIntervention(gt), UniformPolicy(),
-                      out_concepts_to_intervene_on=[0, 1], quantile=1.0)
+        m = InterventionModule(enc, GroundTruthIntervention(gt), UniformPolicy(),
+                               out_concepts_to_intervene_on=[0, 1], quantile=1.0)
         x = torch.randn(B, 4)
         with torch.no_grad():
             orig = enc(x)
@@ -414,7 +457,7 @@ class TestInterventionModuleForward:
 
     def test_random_policy_with_do_intervention(self):
         enc = _make_enc()
-        m = intervene(enc, DoIntervention(0.5), RandomPolicy(scale=1.0), quantile=1.0)
+        m = InterventionModule(enc, DoIntervention(0.5), RandomPolicy(scale=1.0), ALL, quantile=1.0)
         x = torch.randn(B, enc.in_f)
         out = m(x)
         # quantile=1.0 → all concepts replaced by do(0.5)
@@ -422,7 +465,7 @@ class TestInterventionModuleForward:
 
     def test_uncertainty_policy_with_do_intervention(self):
         enc = _make_enc()
-        m = intervene(enc, DoIntervention(1.0), UncertaintyInterventionPolicy(), quantile=1.0)
+        m = InterventionModule(enc, DoIntervention(1.0), UncertaintyInterventionPolicy(), ALL, quantile=1.0)
         x = torch.randn(B, enc.in_f)
         out = m(x)
         # quantile=1.0 → all concepts replaced by do(1.0)
@@ -431,7 +474,7 @@ class TestInterventionModuleForward:
     def test_distribution_intervention_output_shape(self):
         enc = _make_enc()
         d = torch_dist.Bernoulli(torch.tensor(0.5))
-        m = intervene(enc, DistributionIntervention(d), UniformPolicy(), quantile=1.0)
+        m = InterventionModule(enc, DistributionIntervention(d), UniformPolicy(), ALL, quantile=1.0)
         x = torch.randn(B, enc.in_f)
         out = m(x)
         assert out.shape == (B, F)
@@ -444,21 +487,21 @@ class TestInterventionModuleForward:
 class TestGradientFlow:
     def test_gradient_through_intervention_module(self):
         enc = _make_enc()
-        m = intervene(enc, DoIntervention(0.5), UniformPolicy(), quantile=0.5)
+        m = InterventionModule(enc, DoIntervention(0.5), UniformPolicy(), ALL, quantile=0.5)
         x = torch.randn(B, enc.in_f, requires_grad=True)
         m(x).sum().backward()
         assert x.grad is not None
 
     def test_gradient_through_original_module_weights(self):
         enc = _make_enc()
-        m = intervene(enc, DoIntervention(0.5), UniformPolicy(), quantile=0.5)
+        m = InterventionModule(enc, DoIntervention(0.5), UniformPolicy(), ALL, quantile=0.5)
         x = torch.randn(B, enc.in_f)
         m(x).sum().backward()
         assert enc.linear.weight.grad is not None
 
     def test_no_gradient_with_full_do_intervention(self):
         enc = _make_enc()
-        m = intervene(enc, DoIntervention(0.5), UniformPolicy(), quantile=1.0)
+        m = InterventionModule(enc, DoIntervention(0.5), UniformPolicy(), ALL, quantile=1.0)
         x = torch.randn(B, enc.in_f, requires_grad=True)
         out = m(x)
         out.sum().backward()
@@ -469,7 +512,7 @@ class TestGradientFlow:
     def test_gradient_with_ground_truth_partial(self):
         enc = _make_enc()
         gt = torch.zeros(B, F)
-        m = intervene(enc, GroundTruthIntervention(gt), UniformPolicy(), quantile=0.5)
+        m = InterventionModule(enc, GroundTruthIntervention(gt), UniformPolicy(), ALL, quantile=0.5)
         x = torch.randn(B, enc.in_f, requires_grad=True)
         m(x).sum().backward()
         assert x.grad is not None
@@ -480,10 +523,12 @@ class TestGradientFlow:
 # ===========================================================================
 
 class TestSelIdx:
-    def test_none_when_no_selection(self):
+    def test_selection_is_required(self):
         enc = _make_enc()
-        m = InterventionModule(enc, DoIntervention(0.0), UniformPolicy())
-        assert m.sel_idx is None
+        with pytest.raises(TypeError):
+            InterventionModule(enc, DoIntervention(0.0), UniformPolicy())
+        with pytest.raises(ValueError, match="out_concepts_to_intervene_on"):
+            InterventionModule(enc, DoIntervention(0.0), UniformPolicy(), None)
 
     def test_tensor_when_int_indices(self):
         enc = _make_enc()
@@ -502,7 +547,7 @@ class TestExtraModules:
     def test_extra_module_registered(self):
         enc = _make_enc()
         head = nn.Linear(F, 1)
-        m = InterventionModule(enc, DoIntervention(0.0), UniformPolicy(),
+        m = InterventionModule(enc, DoIntervention(0.0), UniformPolicy(), ALL,
                                extra_modules={"task_head": head})
         assert "task_head" in dict(m.named_modules())
 
@@ -562,7 +607,7 @@ class TestPositiveWeightsIntervention:
         with torch.no_grad():
             enc.linear.weight.fill_(-0.5)
         strat = PositiveWeightsIntervention()
-        m = InterventionModule(enc, strat, UniformPolicy(), quantile=1.0)
+        m = InterventionModule(enc, strat, UniformPolicy(), ALL, quantile=1.0)
         x = torch.randn(B, enc.in_f)
         out = m(x)
         # ReLU is applied to every parameter: weights become 0, so the output is
@@ -585,12 +630,18 @@ class TestGradientPolicy:
         from torch_concepts.nn.modules.low.base.intervention import InterventionPolicy
         assert isinstance(p, InterventionPolicy)
 
-    def test_with_gradients_returns_abs(self):
+    def test_with_gradients_returns_negative_abs(self):
         p = GradientPolicy()
         concepts = torch.randn(B, F)
         grads = torch.tensor([[-1.0, 2.0, -3.0]] * B)
         out = p(concepts, concept_grads=grads)
-        assert torch.allclose(out, grads.abs())
+        assert torch.allclose(out, -grads.abs())
+
+    def test_largest_gradient_is_intervened_on_first(self):
+        p = GradientPolicy()
+        grads = torch.tensor([[-1.0, 2.0, -3.0]] * B)
+        mask = p.build_mask(p(torch.randn(B, F), concept_grads=grads), torch.tensor(ALL), quantile=0.0)
+        assert torch.equal(mask, torch.tensor([[1.0, 1.0, 0.0]] * B))
 
     def test_without_gradients_returns_zeros(self):
         p = GradientPolicy()
@@ -604,12 +655,12 @@ class TestGradientPolicy:
         out = p(concepts)
         assert out.shape == (3, 7)
 
-    def test_gradient_scores_are_nonnegative(self):
+    def test_gradient_scores_are_nonpositive(self):
         p = GradientPolicy()
         concepts = torch.randn(B, F)
         grads = torch.randn(B, F)
         out = p(concepts, concept_grads=grads)
-        assert (out >= 0).all()
+        assert (out <= 0).all()
 
 
 # ===========================================================================
@@ -633,6 +684,7 @@ class TestInterventionModuleCoverage:
             enc,
             DoIntervention(0.5),
             UniformPolicy(),
+            ALL,
             build_context=my_build_context,
         )
         x = torch.randn(B, enc.in_f)
@@ -648,7 +700,7 @@ class TestInterventionModuleCoverage:
             pass
 
         with pytest.raises(ValueError):
-            InterventionModule(enc, FakeStrategy(), UniformPolicy())
+            InterventionModule(enc, FakeStrategy(), UniformPolicy(), ALL)
 
     def test_sel_idx_string_type_raises(self):
         """String-based concept selection without Annotations raises ValueError."""
@@ -695,7 +747,7 @@ class TestInterventionModuleCoverage:
                 return torch.sigmoid(self.l(x))
 
         enc = KwargsEncoder()
-        m = InterventionModule(enc, DoIntervention(0.5), UniformPolicy())
+        m = InterventionModule(enc, DoIntervention(0.5), UniformPolicy(), ALL)
         x = torch.randn(B, 4)
         out = m(x)
         assert out.shape == (B, 3)
@@ -713,7 +765,7 @@ class TestInterventionModuleCoverage:
         enc.forward = len  # built-in: inspect.signature raises ValueError
         # Construction must not raise — the except branch (lines 99-100) silently
         # swallows the signature-inspection failure.
-        m = InterventionModule(enc, DoIntervention(0.5), UniformPolicy())
+        m = InterventionModule(enc, DoIntervention(0.5), UniformPolicy(), ALL)
         assert m.original_module is enc
 
     def test_sel_idx_string_with_valid_axis_annotation(self):
@@ -751,7 +803,7 @@ class TestInterventionModuleCoverage:
                 return torch.sigmoid(self.l(x))
 
         enc = _BadSigEncoder()
-        m = InterventionModule(enc, DoIntervention(0.5), UniformPolicy())
+        m = InterventionModule(enc, DoIntervention(0.5), UniformPolicy(), ALL)
         x = torch.randn(B, 4)
         # Calling m(x) without required_extra triggers TypeError inside sig.bind;
         # also, the underlying encoder call will fail — we only care that the
@@ -784,13 +836,13 @@ class TestInterventionModuleCoverageExtra:
         enc = _Unpatchable()
         # range() has no signature inspectable by inspect.signature -> raises ValueError
         enc.forward = range
-        m = InterventionModule(enc, DoIntervention(0.5), UniformPolicy())
+        m = InterventionModule(enc, DoIntervention(0.5), UniformPolicy(), ALL)
         assert m.original_module is enc
 
     def test_build_context_defaults_to_empty_dict(self):
         """InterventionModule.build_context returns {} when no callable is supplied."""
         enc = _make_enc()
-        m = InterventionModule(enc, DoIntervention(0.0), UniformPolicy())
+        m = InterventionModule(enc, DoIntervention(0.0), UniformPolicy(), ALL)
         assert m.build_context({}, enc, torch.randn(B, F)) == {}
 
     def test_build_context_override_in_subclass(self):
@@ -800,7 +852,7 @@ class TestInterventionModuleCoverageExtra:
                 return {"marker": torch.zeros(1)}
 
         enc = _make_enc()
-        m = _Sub(enc, DoIntervention(0.0), UniformPolicy())
+        m = _Sub(enc, DoIntervention(0.0), UniformPolicy(), ALL)
         assert "marker" in m.build_context({}, enc, torch.randn(B, F))
 
 
@@ -834,3 +886,93 @@ class TestBaseInterventionAbstractMethods:
         policy = _ConcretePolicy()
         with pytest.raises(NotImplementedError):
             policy(torch.randn(2, 3))
+
+
+# ===========================================================================
+# 18. Arbitrary leading dimensions: [*lead, F] behaves like the flattened [N, F]
+# ===========================================================================
+
+LEADS = [(), (6,), (3, 2), (2, 3, 2)]
+STRATEGIES = {
+    "do_scalar": lambda lead: DoIntervention(0.5),
+    "do_per_output": lambda lead: DoIntervention(torch.tensor([1., 2., 3.])),
+    "ground_truth": lambda lead: GroundTruthIntervention(torch.arange(F, dtype=torch.float).expand(*lead, F)),
+    "positive_weights": lambda lead: PositiveWeightsIntervention(),
+}
+
+
+def _annotated_enc():
+    enc = _make_enc()
+    enc.out_concepts = Annotations(labels=['alpha', 'beta', 'gamma'])
+    with torch.no_grad():
+        enc.linear.weight[0] = -1.0  # so that PositiveWeightsIntervention changes the output
+    return enc
+
+
+class TestLeadingDims:
+    @pytest.mark.parametrize("lead", LEADS)
+    @pytest.mark.parametrize("strategy", STRATEGIES)
+    @pytest.mark.parametrize("policy", [UniformPolicy, UncertaintyInterventionPolicy])
+    def test_matches_flattened_input(self, lead, strategy, policy):
+        """Module and context manager, for every selection form and quantile."""
+        enc = _annotated_enc()
+        x = torch.randn(*lead, enc.in_f)
+        x_flat = x.reshape(-1, enc.in_f)
+        for sel, q in itertools.product([[0, 2], ['beta'], [], ALL], [1.0, 0.5]):
+            flat = InterventionModule(enc, STRATEGIES[strategy]((len(x_flat),)), policy(), sel, quantile=q)
+            expected = flat(x_flat).reshape(*lead, F)
+            out = InterventionModule(enc, STRATEGIES[strategy](lead), policy(), sel, quantile=q)(x)
+            assert out.shape == (*lead, F)
+            assert torch.allclose(out, expected, atol=1e-6)
+            with intervention(enc, STRATEGIES[strategy](lead), policy(), sel, quantile=q):
+                assert torch.allclose(enc(x), expected, atol=1e-6)
+
+    @pytest.mark.parametrize("idx", [
+        torch.tensor([[[0], [1]], [[2], [0]], [[1], [2]]]),  # [B, T, K]: one set per (b, t)
+        torch.tensor([[[0, 1]], [[1, 2]], [[0, 2]]]),        # [B, 1, K]: shared across T
+        torch.tensor([[[0, 1], [1, 2]]]),                    # [1, T, K]: shared across B
+    ])
+    @pytest.mark.parametrize("as_list", [False, True])
+    def test_per_sample_selection(self, idx, as_list):
+        enc = _make_enc()
+        x = torch.randn(3, 2, enc.in_f)
+        out = InterventionModule(enc, DoIntervention(7.0), UniformPolicy(), idx.tolist() if as_list else idx)(x)
+        picked = torch.zeros(3, 2, F, dtype=torch.bool).scatter(-1, idx.expand(3, 2, -1), True)
+        assert torch.all(out[picked] == 7.0)
+        assert torch.allclose(out[~picked], enc(x)[~picked])
+
+    def test_per_sample_selection_with_wrong_leading_shape_raises(self):
+        enc = _make_enc()
+        m = InterventionModule(enc, DoIntervention(7.0), UniformPolicy(), torch.zeros(5, 1, dtype=torch.long))
+        with pytest.raises(ValueError, match="cannot be broadcast"):
+            m(torch.randn(3, 2, enc.in_f))
+
+    @pytest.mark.parametrize("lead", LEADS[1:])
+    @pytest.mark.parametrize("strategy, policy", [
+        (DoIntervention(9.0), RandomPolicy()),
+        (DistributionIntervention(torch_dist.Normal(9.0, 1e-4)), UniformPolicy()),
+        (DistributionIntervention([torch_dist.Normal(9.0, 1e-4)] * F), UniformPolicy()),
+    ])
+    def test_stochastic_strategies_and_policies(self, lead, strategy, policy):
+        enc = _make_enc()
+        x = torch.randn(*lead, enc.in_f)
+        out = InterventionModule(enc, strategy, policy, [0, 2])(x)
+        assert out.shape == (*lead, F)
+        assert torch.allclose(out[..., [0, 2]], torch.full((*lead, 2), 9.0), atol=1e-2)
+        assert torch.allclose(out[..., 1], enc(x)[..., 1])
+
+    @pytest.mark.parametrize("lead", LEADS[1:])
+    def test_gradient_policy_and_backward(self, lead):
+        enc = _make_enc()
+
+        def build_context(predictions, module, inputs, extra_tensors, extra_modules):
+            pred = predictions.detach().requires_grad_(True)
+            return {"concept_grads": torch.autograd.grad(extra_modules["head"](pred).sum(), pred)[0]}
+
+        m = InterventionModule(enc, DoIntervention(0.0), GradientPolicy(), ALL, quantile=0.5,
+                               build_context=build_context, extra_modules={"head": nn.Linear(F, 1)})
+        x = torch.randn(*lead, enc.in_f, requires_grad=True)
+        out = m(x)
+        assert torch.allclose(out, m(x.reshape(-1, enc.in_f)).reshape(*lead, F))
+        out.sum().backward()
+        assert x.grad.shape == x.shape

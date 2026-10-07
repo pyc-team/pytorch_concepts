@@ -354,13 +354,13 @@ class TestInferenceWithPlate:
 
 
 # ===========================================================================
-# mid.intervention — context manager tests
+# intervention context manager on a PGM
 # ===========================================================================
 import torch
 import torch.nn as nn
 import torch.distributions as dist
 
-from torch_concepts.nn.modules.mid.intervention import intervention
+from torch_concepts.nn.modules.low.base.intervention import intervention
 from torch_concepts.nn.modules.mid.variable import ConceptVariable
 from torch_concepts.nn.modules.mid.factors.cpd import ParametricCPD
 from torch_concepts.nn.modules.mid.graph.probabilistic_model import ProbabilisticModel
@@ -369,6 +369,7 @@ from torch_concepts.nn.modules.low.priors import FixedPrior
 from torch_concepts.distributions import Delta
 from torch_concepts.nn.modules.low.intervention.strategy.ground_truth import GroundTruthIntervention
 from torch_concepts.nn.modules.low.intervention.policy.uniform import UniformPolicy
+from torch_concepts.nn.modules.low.intervention.strategy.do import DoIntervention
 
 
 def _make_test_pgm():
@@ -379,56 +380,79 @@ def _make_test_pgm():
     return BayesianNetwork(variables=[x, c], factors=[cpd_x, cpd_c])
 
 
+def _make_plate_pgm():
+    """x -> g (plate, members m0/m1, one probs head) and x -> h (Normal, loc/scale heads)."""
+    x = ConceptVariable("x", distribution=Delta, size=4)
+    g = ConceptVariable("g", members=["m0", "m1"], distribution=dist.Bernoulli)
+    h = ConceptVariable("h", distribution=dist.Normal, size=2)
+    cpd_x = ParametricCPD(variable=x, parametrization={"value": FixedPrior(torch.zeros(4))})
+    cpd_g = ParametricCPD(variable=g, parametrization={"probs": nn.Sequential(nn.Linear(4, 2), nn.Sigmoid())}, parents=[x])
+    cpd_h = ParametricCPD(variable=h, parametrization={
+        "loc": nn.Linear(4, 2), "scale": nn.Sequential(nn.Linear(4, 2), nn.Softplus())}, parents=[x])
+    return BayesianNetwork(variables=[x, g, h], factors=[cpd_x, cpd_g, cpd_h])
+
+
 class TestMidIntervention:
-    def test_context_manager_restores_original(self):
-        """The context manager restores the original parametrization after exiting."""
+    def test_layer_intervened_in_place_and_restored(self):
+        """The layer stays in place and returns intervened outputs only inside the block."""
         pgm = _make_test_pgm()
-        original_enc = pgm.factors["c"].parametrization["probs"]
-        gt = torch.ones(1, 2)
-        with intervention(
-            pgm,
-            GroundTruthIntervention(gt),
-            UniformPolicy(),
-            variable_to_intervene_on="c",
-            parameter_to_intervene_on="probs",
-        ):
-            # During context: parametrization should be wrapped
-            assert pgm.factors["c"].parametrization["probs"] is not original_enc
-        # After context: restored
-        assert pgm.factors["c"].parametrization["probs"] is original_enc
-
-    def test_context_manager_runs_forward(self):
-        """The wrapped module can be called during the intervention context."""
-        pgm = _make_test_pgm()
-        gt = torch.ones(2, 2)
+        layer = pgm.factors["c"].parametrization["probs"]
         x_in = torch.randn(2, 4)
-        with intervention(
-            pgm,
-            GroundTruthIntervention(gt),
-            UniformPolicy(),
-            variable_to_intervene_on="c",
-            parameter_to_intervene_on="probs",
-        ):
-            result = pgm.factors["c"].parametrization["probs"](x_in)
-        assert result.shape == (2, 2)
+        with intervention(pgm, GroundTruthIntervention(torch.ones(2, 2)), UniformPolicy(), ["c"]):
+            assert pgm.factors["c"].parametrization["probs"] is layer
+            assert torch.equal(layer(x_in), torch.ones(2, 2))
+        assert (layer(x_in) < 1).all()
 
-    def test_members_to_intervene_on_string(self):
-        """String member names are converted to integer indices."""
-        from torch_concepts.nn.modules.mid.variable import ConceptVariable
-        x = ConceptVariable("x", distribution=Delta, size=4)
-        g = ConceptVariable("g", members=["m0", "m1"], distribution=dist.Bernoulli)
-        cpd_x = ParametricCPD(variable=x, parametrization={"value": FixedPrior(torch.zeros(4))})
-        cpd_g = ParametricCPD(variable=g, parametrization={"probs": nn.Sequential(nn.Linear(4, 2), nn.Sigmoid())}, parents=[x])
-        pgm = BayesianNetwork(variables=[x, g], factors=[cpd_x, cpd_g])
+    def test_member_name_selects_its_column(self):
+        pgm = _make_plate_pgm()
+        x_in = torch.randn(3, 4)
+        engine = DeterministicInference(pgm)
+        base = engine.query(["g"], evidence={"x": x_in}).probs["g"]
+        with intervention(pgm, DoIntervention(0.5), UniformPolicy(), ["m1"]):
+            out = engine.query(["g"], evidence={"x": x_in}).probs["g"]
+        assert torch.allclose(out[:, 1], torch.full((3,), 0.5))
+        assert torch.allclose(out[:, 0], base[:, 0])
 
-        gt = torch.ones(2, 2)
-        # No error expected
-        with intervention(
-            pgm,
-            GroundTruthIntervention(gt),
-            UniformPolicy(),
-            variable_to_intervene_on="g",
-            parameter_to_intervene_on="probs",
-            members_to_intervene_on=["m0"],
-        ):
-            pass
+    @pytest.mark.parametrize("lead", [(4,), (3, 2), (2, 2, 2)])
+    def test_leading_dims(self, lead):
+        pgm = _make_plate_pgm()
+        x_in = torch.randn(*lead, 4)
+        engine = DeterministicInference(pgm)
+        base = engine.query(["g"], evidence={"x": x_in}).probs["g"]
+        with intervention(pgm, DoIntervention(0.5), UniformPolicy(), ["m1"]):
+            out = engine.query(["g"], evidence={"x": x_in}).probs["g"]
+        assert out.shape == base.shape == (*lead, 2)
+        assert torch.allclose(out[..., 1], torch.full(lead, 0.5))
+        assert torch.allclose(out[..., 0], base[..., 0])
+
+    def test_variable_name_selects_all_its_members(self):
+        pgm = _make_plate_pgm()
+        layer = pgm.factors["g"].parametrization["probs"]
+        with intervention(pgm, DoIntervention(0.5), UniformPolicy(), ["g"]):
+            out = layer(torch.randn(3, 4))
+        assert torch.allclose(out, torch.full((3, 2), 0.5))
+
+    def test_parameter_selects_the_head(self):
+        pgm = _make_plate_pgm()
+        with pytest.raises(ValueError, match="parameter_to_intervene_on"):
+            with intervention(pgm, DoIntervention(0.0), UniformPolicy(), ["h"]):
+                pass
+        loc = pgm.factors["h"].parametrization["loc"]
+        with intervention(pgm, DoIntervention(0.0), UniformPolicy(), ["h"], parameter_to_intervene_on="loc"):
+            out = loc(torch.randn(3, 4))
+        assert torch.equal(out, torch.zeros(3, 2))
+
+    def test_names_of_different_layers_raise(self):
+        with pytest.raises(ValueError, match="different layers"):
+            with intervention(_make_plate_pgm(), DoIntervention(0.0), UniformPolicy(), ["m0", "h"]):
+                pass
+
+    def test_positions_raise(self):
+        with pytest.raises(TypeError, match="pass the layer itself"):
+            with intervention(_make_plate_pgm(), DoIntervention(0.0), UniformPolicy(), [0]):
+                pass
+
+    def test_unknown_name_raises(self):
+        with pytest.raises(KeyError, match="nope"):
+            with intervention(_make_plate_pgm(), DoIntervention(0.0), UniformPolicy(), ["nope"]):
+                pass

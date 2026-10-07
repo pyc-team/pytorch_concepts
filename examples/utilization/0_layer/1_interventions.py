@@ -162,8 +162,6 @@ def main():
 
     def build_context_combined(original_module_predictions, original_module, original_module_inputs, 
                                extra_tensors, extra_modules):
-        original_module_predictions = original_module(embeddings=original_module_inputs["embeddings"])
-        
         pred = original_module_predictions.detach().requires_grad_(True)
         grads_random = torch.autograd.grad(extra_modules["random_head"](pred).sum(), pred)[0]
 
@@ -178,6 +176,7 @@ def main():
         original_module=model["concept_encoder"],
         intervention_strategy=GroundTruthIntervention(ground_truth=c_train_logits),
         intervention_policy=GradientPolicy(),
+        out_concepts_to_intervene_on=["C1", "C2"],
         build_context=build_context_combined,
         extra_modules={"random_head": random_head},
         quantile=0.5,
@@ -199,8 +198,6 @@ def main():
                 extra_tensors: Dict[str, torch.Tensor] = None,
                 extra_modules: Dict[str, nn.Module] = None,
         ) -> Dict[str, torch.Tensor]:
-            original_module_predictions = original_module(embeddings=original_module_inputs["embeddings"])
-
             pred = original_module_predictions.detach().requires_grad_(True)
             grads_random = torch.autograd.grad(extra_modules["random_head"](pred).sum(), pred)[0]
 
@@ -215,6 +212,7 @@ def main():
         original_module=model["concept_encoder"],
         intervention_strategy=GroundTruthIntervention(ground_truth=c_train_logits),
         intervention_policy=GradientPolicy(),
+        out_concepts_to_intervene_on=["C1", "C2"],
         extra_modules={"random_head": random_head},
         quantile=0.5,
     )
