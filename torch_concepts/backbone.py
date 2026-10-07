@@ -441,7 +441,12 @@ def _load_torchvision_source(name: str, device: torch.device) -> BackboneSpec:
             x = torch.stack([to_tensor(img) for img in x])
         if squeeze_single := x.dim() == 3:  # single image: batch it
             x = x.unsqueeze(0)
-        out = model(processor(x))
+        x = x.to(next(model.parameters()).device)
+        try:
+            x = processor(x)
+        except NotImplementedError:  # no kernel on this device, e.g. antialiased resize on MPS
+            x = processor(x.cpu()).to(x.device)
+        out = model(x)
         return out.squeeze(0) if squeeze_single else out
 
     with torch.no_grad():  # output size via dummy forward pass
