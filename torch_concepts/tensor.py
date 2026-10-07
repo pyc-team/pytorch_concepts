@@ -222,9 +222,10 @@ class AnnotatedTensor:
         ...) is forwarded to the underlying tensor as-is. ``value`` is unwrapped
         first if it is itself an ``AnnotatedTensor``.
 
-        Example:
-            >>> t["cat"] = new_cat_column
-            >>> t[:, 0] = 0  # regular tensor assignment still works
+        Example::
+
+            t["cat"] = new_cat_column
+            t[:, 0] = 0  # regular tensor assignment still works
         """
         if isinstance(value, AnnotatedTensor):
             value = value._data

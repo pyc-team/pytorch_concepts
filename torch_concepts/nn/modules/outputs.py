@@ -72,11 +72,11 @@ class ParamsDict(Dict[str, AnnotatedTensor]):
     what the ``out.probs`` / ``out.logits`` properties read. On top of that,
     ``__getitem__`` also accepts a variable (or plate / plate-member) name and
     returns that variable's parameters as ``{quantity: AnnotatedTensor}``,
-    where each value is a *view* into the corresponding quantity tensor:
+    where each value is a *view* into the corresponding quantity tensor::
 
-    >>> out.params['logits']            # one tensor spanning all variables
-    >>> out.params['c1']                # {'logits': <c1's columns, a view>}
-    >>> out.params['c1']['logits']      # == out.logits['c1']
+        out.params['logits']            # one tensor spanning all variables
+        out.params['c1']                # {'logits': <c1's columns, a view>}
+        out.params['c1']['logits']      # == out.logits['c1']
 
     Quantity keys take priority on the (pathological) collision where a
     variable is named like a parameter — don't call a concept ``logits``.
@@ -195,10 +195,12 @@ class InferenceOutput:
 
     Examples
     --------
-    >>> out = engine.query(query=['c1', 'c2'], evidence={'x': x})
-    >>> out.logits.shape                  # (*leading, width of c1 + c2)
-    >>> out.logits['c1']                  # just c1's columns (a view)
-    >>> out.logits.binary()               # binary concepts' columns (or None)
+    ::
+
+        out = engine.query(query=['c1', 'c2'], evidence={'x': x})
+        out.logits.shape                  # (*leading, width of c1 + c2)
+        out.logits['c1']                  # just c1's columns (a view)
+        out.logits.binary()               # binary concepts' columns (or None)
     """
 
     params: Dict[str, AnnotatedTensor] = field(default_factory=dict)
