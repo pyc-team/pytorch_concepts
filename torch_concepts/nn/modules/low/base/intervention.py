@@ -48,8 +48,9 @@ class ModuleInterventionStrategy(InterventionStrategy):
         super(ModuleInterventionStrategy, self).__init__()
 
     @abstractmethod
-    def transform(self, module: nn.Module, *args, **kwargs) -> nn.Module:
-        """Forward method to be implemented by subclasses."""
+    def transform(self, module: nn.Module, *args, **kwargs):
+        """A callable evaluated like ``module`` under the intervention. If the 'module'
+        is modified in-place, the intervention will leak into every later use of that module."""
         raise NotImplementedError
 
 

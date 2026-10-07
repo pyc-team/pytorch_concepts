@@ -122,7 +122,7 @@ class InterventionModule(nn.Module):
         first = spec[0]
         if isinstance(first, str):
             original_annotations = getattr(self.original_module, "out_concepts", None)
-            if original_annotations is None and not isinstance(original_annotations, Annotations):
+            if not isinstance(original_annotations, Annotations):
                 raise ValueError("To use string-based concept selection, the original module must have an "
                                  "'out_concepts' attribute of type Annotations.")
             indices = original_annotations.get_slice(spec)

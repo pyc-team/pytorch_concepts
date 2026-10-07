@@ -520,28 +520,41 @@ class TestPositiveWeightsIntervention:
         from torch_concepts.nn.modules.low.base.intervention import ModuleInterventionStrategy
         assert isinstance(strat, ModuleInterventionStrategy)
 
-    def test_transform_makes_weights_nonnegative(self):
+    def test_transform_evaluates_with_nonnegative_weights(self):
         enc = _make_enc()
         # Force some negative weights
         with torch.no_grad():
             enc.linear.weight.fill_(-1.0)
+            enc.linear.bias.fill_(0.3)
         strat = PositiveWeightsIntervention()
-        strat.transform(enc)
-        assert (enc.linear.weight >= 0).all()
+        out = strat.transform(enc)(torch.randn(B, enc.in_f))
+        # ReLU zeroes the weights, so only the bias is left
+        assert torch.allclose(out, torch.sigmoid(torch.full((B, F), 0.3)))
 
     def test_transform_preserves_positive_weights(self):
         enc = _make_enc()
         with torch.no_grad():
             enc.linear.weight.fill_(2.0)
+            enc.linear.bias.fill_(0.3)
         strat = PositiveWeightsIntervention()
-        strat.transform(enc)
-        assert torch.allclose(enc.linear.weight, torch.full_like(enc.linear.weight, 2.0))
+        x = torch.randn(B, enc.in_f)
+        assert torch.allclose(strat.transform(enc)(x), enc(x))
 
-    def test_transform_returns_module(self):
+    def test_transform_leaves_module_untouched(self):
         enc = _make_enc()
+        with torch.no_grad():
+            enc.linear.weight.fill_(-1.0)
         strat = PositiveWeightsIntervention()
-        result = strat.transform(enc)
-        assert result is enc
+        strat.transform(enc)(torch.randn(B, enc.in_f))
+        assert torch.equal(enc.linear.weight, torch.full_like(enc.linear.weight, -1.0))
+
+    def test_transform_gradient_reaches_original_parameters(self):
+        enc = _make_enc()
+        with torch.no_grad():
+            enc.linear.weight.fill_(1.0)
+        strat = PositiveWeightsIntervention()
+        strat.transform(enc)(torch.randn(B, enc.in_f)).sum().backward()
+        assert enc.linear.weight.grad is not None
 
     def test_full_intervention_via_intervention_module(self):
         """PositiveWeightsIntervention used as strategy in InterventionModule."""
@@ -552,8 +565,11 @@ class TestPositiveWeightsIntervention:
         m = InterventionModule(enc, strat, UniformPolicy(), quantile=1.0)
         x = torch.randn(B, enc.in_f)
         out = m(x)
-        # After applying ReLU to weights, all weights are 0, output should be bias-only
-        assert out.shape == (B, enc.out_f)
+        # ReLU is applied to every parameter: weights become 0, so the output is
+        # the ReLU-ed bias only
+        assert torch.allclose(out, torch.sigmoid(torch.relu(enc.linear.bias)).expand(B, -1))
+        # and the wrapped encoder keeps its own (negative) weights
+        assert (enc.linear.weight == -0.5).all()
 
 
 # ===========================================================================
@@ -644,6 +660,17 @@ class TestInterventionModuleCoverage:
             out_concepts_to_intervene_on=['concept_a'],
         )
         with pytest.raises(ValueError):
+            _ = m.sel_idx
+
+    def test_sel_idx_string_with_int_out_concepts_raises(self):
+        """`out_concepts` given as a count (not Annotations) must raise the clear
+        ValueError, not an AttributeError that nn.Module reports as a missing
+        `sel_idx` attribute."""
+        enc = _make_enc()
+        enc.out_concepts = 3
+        m = InterventionModule(enc, DoIntervention(0.0), UniformPolicy(),
+                               out_concepts_to_intervene_on=['concept_a'])
+        with pytest.raises(ValueError, match="out_concepts"):
             _ = m.sel_idx
 
     def test_sel_idx_invalid_type_raises(self):
