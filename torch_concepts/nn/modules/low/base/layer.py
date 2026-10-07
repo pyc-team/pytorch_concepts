@@ -42,7 +42,7 @@ class ConceptLayer(ABC, torch.nn.Module):
         ...             out_concepts=out_concepts,
         ...             in_concepts=in_concepts
         ...         )
-        ...         self.linear = torch.nn.Linear(in_concepts, out_concepts)
+        ...         self.linear = torch.nn.Linear(self.in_concepts_shape, self.out_concepts_shape)
         ...
         ...     def forward(self, concepts):
         ...         return torch.sigmoid(self.linear(concepts))
