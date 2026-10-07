@@ -5,13 +5,19 @@ from ...base.intervention import ConceptInterventionStrategy
 
 class DoIntervention(ConceptInterventionStrategy):
     """
-    Intervention that replaces predicted concepts with ground truth values.
-
-    Implements do(C=c_true) operations by mixing predicted and ground truth
-    concept values based on a binary mask.
+    Intervention that sets the intervened outputs to constant values, do(C=c).
 
     Args:
-        ground_truth: Ground truth concept values of shape (batch_size, n_concepts).
+        constants: A scalar, one value per output (shape ``[F]``), or any shape
+            that broadcasts to the layer output ``[..., F]``.
+
+    Example:
+        >>> import torch
+        >>> from torch_concepts.nn import DoIntervention
+        >>>
+        >>> strategy = DoIntervention(torch.tensor([0.0, 1.0]))
+        >>> strategy(torch.randn(3, 2)).tolist()
+        [[0.0, 1.0], [0.0, 1.0], [0.0, 1.0]]
     """
 
     def __init__(self, constants: torch.Tensor | float):

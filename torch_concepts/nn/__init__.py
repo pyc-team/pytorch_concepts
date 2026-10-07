@@ -104,10 +104,8 @@ from .modules.mid.inference.pgmpy.variable_elimination import PgmpyVariableElimi
 # pyro
 from .modules.mid.inference.pyro.variational import VariationalInference
 
-from .modules.mid.intervention import intervention
-
-# Intervention module
-from .modules.low.intervention.intervention import InterventionModule
+# Intervention module and context manager
+from .modules.low.base.intervention import InterventionModule, intervention
 
 # Intervention strategies
 from .modules.low.intervention.strategy.ground_truth import GroundTruthIntervention

@@ -18,15 +18,15 @@ class GradientPolicy(InterventionPolicy):
 
     Example::
 
-        def build_context(module, predictions, *args, **kwargs):
+        def build_context(predictions, module, inputs, extra_tensors, extra_modules):
             with torch.enable_grad():
                 pred = predictions.detach().requires_grad_(True)
-                task_out = module.task_head(pred)
+                task_out = extra_modules["task_head"](pred)
                 grads = torch.autograd.grad(task_out.sum(), pred)[0]
             return {"concept_grads": grads.detach()}
 
         intervention_module = InterventionModule(
-            concept_encoder, strategy, GradientPolicy(),
+            concept_encoder, strategy, GradientPolicy(), [0, 1, 2],
             build_context=build_context,
             extra_modules={"task_head": task_head},
             quantile=0.5,
@@ -54,10 +54,11 @@ class GradientPolicy(InterventionPolicy):
                 :class:`InterventionModule`.
 
         Returns:
-            torch.Tensor: Gradient magnitude scores (``|concept_grads|``), or
-            zeros of the same shape if ``concept_grads`` is not available.
+            torch.Tensor: ``-|concept_grads|``, so that the lowest scores, which
+            are intervened on first, belong to the largest gradients; or zeros
+            of the same shape if ``concept_grads`` is not available.
         """
         if concept_grads is not None:
-            return concept_grads.abs()
+            return -concept_grads.abs()
         return torch.zeros_like(concepts)
 
