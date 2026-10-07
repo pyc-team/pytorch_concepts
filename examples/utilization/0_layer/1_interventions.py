@@ -26,62 +26,63 @@ from torch_concepts.nn import (
     InterventionModule,
 )
 
+# data params
+N_SAMPLES = 1000
+
+# model params
+TASK_LABEL = 'xor'
+LATENT_DIMS = 10
+
+# training params
+N_EPOCHS = 500
+LEARNING_RATE = 0.01
+TASK_LOSS_WEIGHT = 0.5
 
 def main():
-    embedding_dims = 10
-    n_epochs = 500
-    n_samples = 1000
-    concept_reg = 0.5
-
     seed_everything(42)
 
-    dataset = ToyDataset(dataset='xor', n_gen=n_samples)
+    dataset = ToyDataset(dataset='xor', n_gen=N_SAMPLES)
+    
     x_train = dataset.input_data
-    concept_idx = list(dataset.graph.edge_index[0].unique().numpy())
-    task_idx = list(dataset.graph.edge_index[1].unique().numpy())
-    c_train = dataset.concepts[:, concept_idx]
-    y_train = dataset.concepts[:, task_idx]
+    c_train = dataset.concepts[[l for l in dataset.concept_names if l not in TASK_LABEL]]
+    y_train = dataset.concepts[TASK_LABEL]
 
-    # Get dimensions
-    n_features = x_train.shape[1]
-    concept_dims = c_train.shape[1]
-    task_dims = y_train.shape[1]
-
-    embedding_encoder = torch.nn.Sequential(
-        torch.nn.Linear(n_features, embedding_dims),
+    latent_encoder = torch.nn.Sequential(
+        torch.nn.Linear(x_train.shape[1], LATENT_DIMS),
         torch.nn.LeakyReLU(),
     )
-
-    # PyC layers
-    out_concepts = pyc.Annotations(["c1", "c2"])
-    c_encoder = LinearEmbeddingToConcept(in_embeddings=embedding_dims, out_concepts=out_concepts)
-    y_predictor = LinearConceptToConcept(in_concepts=concept_dims, out_concepts=task_dims)
-
-    # these are equivalent to the following torch layers
-    # c_encoder = torch.nn.Linear(embedding_dims, concept_dims)
-    # y_predictor = torch.nn.Linear(concept_dims, task_dims)
-
-    model = ModuleDict({
-        "embedding_encoder": embedding_encoder,
+    # PyC layers. Equivalent to torch.nn.Linear. Annotating the concepts (rather
+    # than passing their count) lets interventions select them by name below.
+    c_encoder = LinearEmbeddingToConcept(
+        in_embeddings=LATENT_DIMS,
+        out_concepts=c_train.annotations
+    )
+    y_predictor = LinearConceptToConcept(
+        in_concepts=c_train.annotations, 
+        out_concepts=y_train.annotations
+    )
+    
+    model = ModuleDict(
+        {"latent_encoder": latent_encoder,
          "concept_encoder": c_encoder,
-         "task_predictor": y_predictor
-    })
+         "task_predictor": y_predictor}
+    )
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE)
     loss_fn = torch.nn.BCEWithLogitsLoss()
     model.train()
-    for epoch in range(n_epochs):
+    for epoch in range(N_EPOCHS):
         optimizer.zero_grad()
 
         # generate concept and task predictions
-        embedding = model["embedding_encoder"](x_train)
-        c_pred = model["concept_encoder"](embeddings=embedding)
+        latent = model["latent_encoder"](x_train)
+        c_pred = model["concept_encoder"](embeddings=latent)
         y_pred = model["task_predictor"](concepts=c_pred)
 
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
         task_loss = loss_fn(y_pred, y_train)
-        loss = concept_loss + concept_reg * task_loss
+        loss = concept_loss + TASK_LOSS_WEIGHT * task_loss
 
         loss.backward()
         optimizer.step()
@@ -89,10 +90,14 @@ def main():
         if epoch % 100 == 0:
             task_accuracy = accuracy_score(y_train, y_pred.detach() > 0.)
             concept_accuracy = accuracy_score(c_train, c_pred.detach() > 0.)
-            print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | "
-                  f"Concept Acc: {concept_accuracy:.2f}")
+            print(f"Epoch {epoch}: Loss {loss.item():.2f} | Task Acc: {task_accuracy:.2f} | Concept Acc: {concept_accuracy:.2f}")
+
 
     # ==================== Raw Intervention Examples ====================
+
+    # The concept encoder outputs logits, so ground-truth interventions must
+    # supply logits too: 0/1 labels become large negative/positive logits.
+    c_train_logits = torch.logit(c_train, eps=1e-6)
 
     # Uniform Policy + Ground Truth Intervention
     print("\n" + "="*60)
@@ -102,16 +107,14 @@ def main():
     print(c_pred[:5])
 
     # Ground Truth Intervention example (intervene on the layer outputs)
-    # FIXME: this replace the layer output with the ground truth values for the specified concepts
-    # regardeless of whether the parametrization is done via 'logits' or 'probs'. 
     concept_encoder_intervened = InterventionModule(
         model["concept_encoder"],
-        GroundTruthIntervention(ground_truth=c_train),
+        GroundTruthIntervention(ground_truth=c_train_logits),
         UniformPolicy(),
-        out_concepts_to_intervene_on=["c1"]
+        out_concepts_to_intervene_on=["C1"]
     )
-    c_pred_intervened = concept_encoder_intervened(embedding)
-    print("\n\n## Ground Truth Intervention Example (intervene on c1):")
+    c_pred_intervened = concept_encoder_intervened(latent)
+    print("\n\n## Ground Truth Intervention Example (intervene on C1):")
     print(c_pred_intervened[:5])
 
     # Module intervention example (intervene on the module parameters instead of the outputs)
@@ -119,10 +122,10 @@ def main():
         model["concept_encoder"],
         PositiveWeightsIntervention(),
         UniformPolicy(),
-        out_concepts_to_intervene_on=["c2"]
+        out_concepts_to_intervene_on=["C2"]
     )
-    c_pred_intervened = concept_encoder_intervened(embedding)
-    print("\n\n## Module Intervention Example (Positive Weights Intervention on c2):")
+    c_pred_intervened = concept_encoder_intervened(latent)
+    print("\n\n## Module Intervention Example (Positive Weights Intervention on C2):")
     print(c_pred_intervened[:5])
 
     # Do Intervention example (set concepts to constant value)
@@ -130,9 +133,9 @@ def main():
         model["concept_encoder"],
         DoIntervention(constants=[-100., 50]),
         UniformPolicy(),
-        out_concepts_to_intervene_on=["c1", "c2"]
+        out_concepts_to_intervene_on=["C1", "C2"]
     )
-    c_pred_intervened = concept_encoder_intervened(embedding)
+    c_pred_intervened = concept_encoder_intervened(latent)
     print("\n\n## Do Intervention Example (set concepts to -100 and 50):")
     print(c_pred_intervened[:5])
 
@@ -144,18 +147,18 @@ def main():
             torch.distributions.Normal(loc=50, scale=1)
         ]),
         UniformPolicy(),
-        out_concepts_to_intervene_on=["c1", "c2"]
+        out_concepts_to_intervene_on=["C1", "C2"]
     )
-    c_pred_intervened = concept_encoder_intervened(embedding)
+    c_pred_intervened = concept_encoder_intervened(latent)
     print("\n\n## Distribution Intervention Example with resampling (set concepts to -100 and 50):")
     print(c_pred_intervened[:5])
 
 
     # Example of using a custom build_context function to combine gradients from both the task predictor and
     # a random head on the concept encoder.
-    c_pred = model["concept_encoder"](embeddings=embedding)  # pre-compute c_pred
+    c_pred = model["concept_encoder"](embeddings=latent)  # pre-compute c_pred
     y_pred = model["task_predictor"](concepts=c_pred)  # pre-compute y_pred
-    random_head = torch.nn.Linear(concept_dims, task_dims)
+    random_head = torch.nn.Linear(c_train.shape[1], y_train.shape[1])
 
     def build_context_combined(original_module_predictions, original_module, original_module_inputs, 
                                extra_tensors, extra_modules):
@@ -173,14 +176,14 @@ def main():
 
     int_module_combined = InterventionModule(
         original_module=model["concept_encoder"],
-        intervention_strategy=GroundTruthIntervention(ground_truth=c_train),
+        intervention_strategy=GroundTruthIntervention(ground_truth=c_train_logits),
         intervention_policy=GradientPolicy(),
         build_context=build_context_combined,
         extra_modules={"random_head": random_head},
         quantile=0.5,
     )
     c_pred_combined = int_module_combined(
-        embeddings=embedding,
+        embeddings=latent,
         extra_tensors={"c_pred": c_pred, "y_pred": y_pred},
     )
     print("\nConcept predictions with combined gradient intervention (first 5):")
@@ -210,13 +213,13 @@ def main():
 
     int_module_combined_subclass = CombinedGradientInterventionModule(
         original_module=model["concept_encoder"],
-        intervention_strategy=GroundTruthIntervention(ground_truth=c_train),
+        intervention_strategy=GroundTruthIntervention(ground_truth=c_train_logits),
         intervention_policy=GradientPolicy(),
         extra_modules={"random_head": random_head},
         quantile=0.5,
     )
     c_pred_combined_subclass = int_module_combined_subclass(
-        embeddings=embedding,
+        embeddings=latent,
         extra_tensors={"c_pred": c_pred, "y_pred": y_pred},
     )
     print("\nConcept predictions with combined gradient intervention (using subclass) (first 5):")

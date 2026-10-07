@@ -26,39 +26,40 @@ from torch_concepts import seed_everything
 from torch_concepts.data import ToyDataset
 from torch_concepts.nn import LinearEmbeddingToConcept, LinearConceptToConcept
 
+# data params
+N_SAMPLES = 1000
+
+# model params
+TASK_LABEL = 'xor'
+LATENT_DIMS = 10
+
+# training params
+N_EPOCHS = 500
+LEARNING_RATE = 0.01
+TASK_LOSS_WEIGHT = 0.5
 
 def main():
-    latent_dims = 10
-    n_epochs = 500
-    n_samples = 1000
-    concept_reg = 0.5
-
     seed_everything(42)
 
-    dataset = ToyDataset(dataset='xor', n_gen=n_samples)
+    dataset = ToyDataset(dataset='xor', n_gen=N_SAMPLES)
+    
     x_train = dataset.input_data
-    concept_idx = list(dataset.graph.edge_index[0].unique().numpy())
-    task_idx = list(dataset.graph.edge_index[1].unique().numpy())
-    c_train = dataset.concepts[:, concept_idx]
-    y_train = dataset.concepts[:, task_idx]
-
-    # Get dimensions
-    n_features = x_train.shape[1]
-    concept_dims = c_train.shape[1]
-    task_dims = y_train.shape[1]
+    c_train = dataset.concepts[[l for l in dataset.concept_names if l not in TASK_LABEL]]
+    y_train = dataset.concepts[TASK_LABEL]
 
     latent_encoder = torch.nn.Sequential(
-        torch.nn.Linear(n_features, latent_dims),
+        torch.nn.Linear(x_train.shape[1], LATENT_DIMS),
         torch.nn.LeakyReLU(),
     )
-
-    # PyC layers
-    c_encoder = LinearEmbeddingToConcept(in_embeddings=latent_dims, out_concepts=concept_dims)
-    y_predictor = LinearConceptToConcept(in_concepts=concept_dims, out_concepts=task_dims)
-
-    # these are equivalent to the following torch layers
-    # c_encoder = torch.nn.Linear(latent_dims, concept_dims)
-    # y_predictor = torch.nn.Linear(concept_dims, task_dims)
+    # PyC layers. Equivalent to torch.nn.Linear
+    c_encoder = LinearEmbeddingToConcept(
+        in_embeddings=LATENT_DIMS, 
+        out_concepts=c_train.shape[1]
+    )
+    y_predictor = LinearConceptToConcept(
+        in_concepts=c_train.shape[1], 
+        out_concepts=y_train.shape[1]
+    )
     
     model = ModuleDict(
         {"latent_encoder": latent_encoder,
@@ -66,10 +67,10 @@ def main():
          "task_predictor": y_predictor}
     )
 
-    optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=LEARNING_RATE)
     loss_fn = torch.nn.BCEWithLogitsLoss()
     model.train()
-    for epoch in range(n_epochs):
+    for epoch in range(N_EPOCHS):
         optimizer.zero_grad()
 
         # generate concept and task predictions
@@ -80,7 +81,7 @@ def main():
         # compute loss
         concept_loss = loss_fn(c_pred, c_train)
         task_loss = loss_fn(y_pred, y_train)
-        loss = concept_loss + concept_reg * task_loss
+        loss = concept_loss + TASK_LOSS_WEIGHT * task_loss
 
         loss.backward()
         optimizer.step()
