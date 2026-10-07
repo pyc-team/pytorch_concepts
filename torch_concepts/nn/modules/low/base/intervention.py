@@ -240,9 +240,9 @@ class InterventionModule(nn.Module):
         if not isinstance(intervention_strategy, InterventionStrategy):
             raise ValueError("Intervention strategy must be an instance of "
                              "ConceptInterventionStrategy or ModuleInterventionStrategy.")
-        if out_concepts_to_intervene_on is None:
-            raise ValueError("out_concepts_to_intervene_on is required: the names (if the module "
-                             "has annotated out_concepts) or positions of the outputs to intervene on.")
+        if out_concepts_to_intervene_on is None or isinstance(out_concepts_to_intervene_on, str):
+            raise ValueError("out_concepts_to_intervene_on is required, as a list: the names (if the "
+                             "module has annotated out_concepts) or positions of the outputs to intervene on.")
         self.original_module = original_module
         self.intervention_strategy = intervention_strategy
         self.intervention_policy = intervention_policy
@@ -309,10 +309,7 @@ class InterventionModule(nn.Module):
             if not isinstance(original_annotations, Annotations):
                 raise ValueError("To use string-based concept selection, the original module must have an "
                                  "'out_concepts' attribute of type Annotations.")
-            indices = original_annotations.get_slice(spec)
-            if isinstance(indices, slice):
-                indices = list(range(indices.start, indices.stop, indices.step or 1))
-            return torch.tensor(indices, dtype=torch.long)
+            return torch.tensor(original_annotations.get_slice(spec), dtype=torch.long)
         elif isinstance(first, int):
             return torch.tensor(spec, dtype=torch.long)
         elif isinstance(first, (list, tuple)):

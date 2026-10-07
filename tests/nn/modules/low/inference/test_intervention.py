@@ -3,6 +3,7 @@ and the GroundTruthIntervention, DoIntervention, DistributionIntervention
 strategies together with UniformPolicy, RandomPolicy, and
 UncertaintyInterventionPolicy.
 """
+import inspect
 import itertools
 
 import pytest
@@ -358,6 +359,13 @@ class TestInterventionContextManager:
     def test_selection_is_required(self):
         with pytest.raises(ValueError, match="out_concepts_to_intervene_on"):
             with intervention(_make_enc(), DoIntervention(0.5), UniformPolicy()):
+                pass
+
+    def test_selection_must_be_a_list(self):
+        enc = _make_enc()
+        enc.out_concepts = Annotations(labels=['alpha', 'beta', 'gamma'])
+        with pytest.raises(ValueError, match="as a list"):
+            with intervention(enc, DoIntervention(0.5), UniformPolicy(), 'beta'):
                 pass
 
     def test_concept_strategy_runs_the_layer_once(self):
@@ -791,25 +799,26 @@ class TestInterventionModuleCoverage:
         sel = m.sel_idx
         assert sel.tolist() == [0, 2]
 
-    def test_forward_bind_raises_falls_back_to_empty_dict(self):
-        """When sig.bind raises TypeError, original_module_inputs falls back to {} (lines 140-141)."""
-        class _BadSigEncoder(nn.Module):
-            """forward requires extra required arg so sig.bind with just x fails."""
-            def __init__(self):
-                super().__init__()
-                self.l = nn.Linear(4, 3)
+    def test_inputs_fall_back_to_empty_dict_when_signature_does_not_bind(self):
+        """A layer whose declared signature does not match the call still runs;
+        build_context then gets no named inputs."""
+        class _MisdeclaredEncoder(_Encoder):
+            def forward(self, *args):
+                return super().forward(*args)
 
-            def forward(self, x, required_extra):
-                return torch.sigmoid(self.l(x))
+        # declares a required argument that callers never pass
+        _MisdeclaredEncoder.forward.__signature__ = inspect.signature(lambda self, x, required_extra: None)
 
-        enc = _BadSigEncoder()
-        m = InterventionModule(enc, DoIntervention(0.5), UniformPolicy(), ALL)
-        x = torch.randn(B, 4)
-        # Calling m(x) without required_extra triggers TypeError inside sig.bind;
-        # also, the underlying encoder call will fail — we only care that the
-        # except branch is reachable, so catch the propagated error from enc.forward.
-        with pytest.raises(TypeError):
-            m(x)
+        seen = []
+
+        def build_context(predictions, module, inputs, extra_tensors, extra_modules):
+            seen.append(inputs)
+            return {}
+
+        m = InterventionModule(_MisdeclaredEncoder(), DoIntervention(0.5), UniformPolicy(), ALL,
+                               build_context=build_context)
+        assert torch.allclose(m(torch.randn(B, 4)), torch.full((B, F), 0.5))
+        assert seen == [{}]
 
 
 # ===========================================================================
