@@ -38,7 +38,7 @@ class GradientPolicy(InterventionPolicy):
 
     def forward(
         self,
-        concepts: torch.Tensor,
+        x: torch.Tensor,
         *args,
         concept_grads: Optional[torch.Tensor] = None,
         **kwargs,
@@ -47,9 +47,9 @@ class GradientPolicy(InterventionPolicy):
         Compute intervention scores based on gradient magnitude.
 
         Args:
-            concepts: Input concepts of shape ``(batch_size, n_concepts)``.
+            x: Layer output of shape ``(batch_size, n_concepts)``.
             concept_grads: Gradient of a downstream output w.r.t. each concept,
-                same shape as ``concepts``. Supplied automatically when a
+                same shape as ``x``. Supplied automatically when a
                 ``build_context`` function is attached to the
                 :class:`InterventionModule`.
 
@@ -60,5 +60,5 @@ class GradientPolicy(InterventionPolicy):
         """
         if concept_grads is not None:
             return -concept_grads.abs()
-        return torch.zeros_like(concepts)
+        return torch.zeros_like(x)
 

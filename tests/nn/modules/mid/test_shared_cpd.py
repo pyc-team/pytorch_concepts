@@ -456,3 +456,20 @@ class TestMidIntervention:
         with pytest.raises(KeyError, match="nope"):
             with intervention(_make_plate_pgm(), DoIntervention(0.0), UniformPolicy(), ["nope"]):
                 pass
+
+    def test_concept_parents(self):
+        """A layer with concept parents is called as ``layer(concepts=...)``; the
+        policy and the strategy must not choke on that keyword."""
+        from torch_concepts.nn import LinearConceptToConcept
+        x = ConceptVariable("x", distribution=Delta, size=4)
+        c = ConceptVariable("c", distribution=dist.Bernoulli, size=2)
+        y = ConceptVariable("y", distribution=dist.Bernoulli)
+        pgm = BayesianNetwork(variables=[x, c, y], factors=[
+            ParametricCPD(variable=x, parametrization={"value": FixedPrior(torch.zeros(4))}),
+            ParametricCPD(variable=c, parametrization={"logits": nn.Linear(4, 2)}, parents=[x]),
+            ParametricCPD(variable=y, parametrization={"logits": LinearConceptToConcept(2, 1)}, parents=[c]),
+        ])
+        engine = DeterministicInference(pgm)
+        with intervention(pgm, DoIntervention(0.0), UniformPolicy(), ["y"]):
+            out = engine.query(["y"], evidence={"x": torch.randn(3, 4)}).logits["y"]
+        assert torch.equal(out, torch.zeros(3, 1))
