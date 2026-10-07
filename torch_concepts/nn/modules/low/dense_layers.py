@@ -565,10 +565,11 @@ class SelectorEmbeddingEncoder(torch.nn.Module):
         """
         memory = self.memory.weight.view(-1, self.memory_size, self.out_features)
         mixing_coeff = self.selector(x)
+        # select over the memory slots, the last axis of [Batch x Task x Memory]
         if sampling:
-            mixing_probs = F.gumbel_softmax(mixing_coeff, dim=1, tau=self.temperature, hard=True)
+            mixing_probs = F.gumbel_softmax(mixing_coeff, dim=-1, tau=self.temperature, hard=True)
         else:
-            mixing_probs = torch.softmax(mixing_coeff / self.temperature, dim=1)
+            mixing_probs = torch.softmax(mixing_coeff / self.temperature, dim=-1)
 
         embeddings = torch.einsum("btm,tme->bte", mixing_probs, memory) # [Batch x Task x Memory] x [Task x Memory x Emb] -> [Batch x Task x Emb]
         return embeddings
