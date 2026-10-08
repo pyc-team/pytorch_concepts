@@ -1,35 +1,35 @@
-"""Environment configuration for the conceptarium project.
+"""Environment configuration shared by PyC, its examples and Conceptarium.
 
-This module sets up project-level configuration including:
-- Project name and W&B entity for logging
+This module sets up configuration including:
 - Cache directory for storing artifacts, embeddings, and checkpoints
 - Data root directory for datasets
 - API keys for external services (HuggingFace, OpenAI)
+- Project name and W&B entity for Conceptarium's logging
 
 Configuration can be customized by setting environment variables:
-- CONCEPTARIUM_CACHE: Override default cache location
+- PYC_CACHE: Override default cache location
 - XDG_CACHE_HOME: Base cache directory (follows XDG Base Directory spec)
 """
 
 from os import environ as env
 from pathlib import Path
 
-# Project name used for logging and caching
-PROJECT_NAME = "conceptarium" 
+# Project name used for Conceptarium's logging
+PROJECT_NAME = "conceptarium"
 
 # W&B entity/username for experiment tracking
 # Set this to your W&B username or team name
 WANDB_ENTITY = "" 
 
-# Cache directory for artifacts, embeddings, and checkpoints
-# Can be overridden with CONCEPTARIUM_CACHE environment variable
-# Default: ~/.cache/conceptarium (Linux/macOS) or %LOCALAPPDATA%/conceptarium (Windows)
+# Cache directory for artifacts, embeddings, checkpoints and datasets, shared
+# with the PyC examples. Can be overridden with the PYC_CACHE environment variable
+# Default: $XDG_CACHE_HOME/pyc, or ~/.cache/pyc
 CACHE = Path(
     env.get(
-        f"{PROJECT_NAME.upper()}_CACHE",
+        "PYC_CACHE",
         Path(
             env.get("XDG_CACHE_HOME", Path("~", ".cache")),
-            PROJECT_NAME,
+            "pyc",
         ),
     )
 ).expanduser()

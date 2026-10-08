@@ -564,7 +564,7 @@ class TestUtilsCoverage(unittest.TestCase):
         self.assertEqual(size, 1)  # only the batch dim skipped; tuple dim skipped too
 
 class TestResolveHfToken(unittest.TestCase):
-    """Test suite for resolve_hf_token (env-var precedence + conceptarium fallback)."""
+    """Test suite for resolve_hf_token (env-var precedence + torch_concepts.env fallback)."""
 
     # Empty strings disable a var (os.environ.get(...) -> "" is falsy).
     _EMPTY = {"HF_TOKEN": "", "HUGGINGFACE_HUB_TOKEN": "", "HUGGINGFACEHUB_TOKEN": ""}
@@ -590,27 +590,11 @@ class TestResolveHfToken(unittest.TestCase):
         with mock.patch.dict(os.environ, env, clear=False):
             self.assertEqual(resolve_hf_token(), "tok3")
 
-    @staticmethod
-    def _fake_conceptarium(token):
-        """Build fake ``conceptarium``/``conceptarium.env`` modules for sys.modules.
-
-        Keeps the test independent of whether the real (non-installed)
-        ``conceptarium`` package is importable — it isn't in CI.
-        """
-        import types
-        pkg = types.ModuleType("conceptarium")
-        pkg.__path__ = []
-        env = types.ModuleType("conceptarium.env")
-        env.HUGGINGFACEHUB_TOKEN = token
-        pkg.env = env
-        return {"conceptarium": pkg, "conceptarium.env": env}
-
-    def test_falls_back_to_conceptarium_env(self):
-        import sys
+    def test_falls_back_to_torch_concepts_env(self):
         from unittest import mock
         from torch_concepts.utils import resolve_hf_token
         # The three vars must be ABSENT (not empty) so setdefault can seed them.
-        with mock.patch.dict(sys.modules, self._fake_conceptarium("cfg_tok")), \
+        with mock.patch("torch_concepts.env.HUGGINGFACEHUB_TOKEN", "cfg_tok"), \
              mock.patch.dict(os.environ, {}, clear=False):
             for key in self._EMPTY:
                 os.environ.pop(key, None)
@@ -619,11 +603,10 @@ class TestResolveHfToken(unittest.TestCase):
             self.assertEqual(os.environ.get("HF_TOKEN"), "cfg_tok")
 
     def test_returns_none_when_nothing_available(self):
-        import sys
         from unittest import mock
         from torch_concepts.utils import resolve_hf_token
-        # conceptarium.env present but with an empty token -> falls through to None.
-        with mock.patch.dict(sys.modules, self._fake_conceptarium("")), \
+        # torch_concepts.env with an empty token -> falls through to None.
+        with mock.patch("torch_concepts.env.HUGGINGFACEHUB_TOKEN", ""), \
              mock.patch.dict(os.environ, self._EMPTY, clear=False):
             self.assertIsNone(resolve_hf_token())
 
