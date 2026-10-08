@@ -12,6 +12,8 @@ off a 2D input, and the task ``xor = C1 XOR C2``. The CBM learns the concepts,
 but not the task: its task head is linear, and XOR is not a linear function of
 the concepts, so the best the head can do is answer 0.5 everywhere.
 ``04_concept_embedding_model.py`` lifts this limit.
+
+Reference: Koh et al., "Concept Bottleneck Models", ICML 2020.
 """
 
 # %%

@@ -146,7 +146,9 @@ Please follow these guidelines when contributing code:
    * - **Type hints**
      - Use type hints where appropriate to improve code clarity.
    * - **Docstrings**
-     - Write clear docstrings for all public functions and classes.
+     - Write clear docstrings for all public functions and classes, in
+       `Google style <https://www.sphinx-doc.org/en/master/usage/extensions/example_google.html>`_
+       (``Args:``, ``Returns:``), as in PyTorch.
    * - **Tests**
      - Write tests for new features and bug fixes.
    * - **Documentation**

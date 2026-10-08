@@ -15,6 +15,8 @@ is a standard forward pass.
 
 As in ``low_level/02_concept_bottleneck_model.py``, the task CPD is linear and
 cannot represent XOR; ``02_concept_embedding_model.py`` lifts this limit.
+
+Reference: Koh et al., "Concept Bottleneck Models", ICML 2020.
 """
 
 # %%

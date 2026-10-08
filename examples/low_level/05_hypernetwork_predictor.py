@@ -12,6 +12,10 @@ be read off, and every prediction uses exactly one of them.
 ``HyperlinearConceptEmbeddingToConcept`` turns the picked slot into the weights
 of a rule. No single linear rule over ``C1`` and ``C2`` computes XOR, but two
 rules, each used on part of the input space, do.
+
+References: Debot et al., "Interpretable Concept-Based Memory Reasoning",
+NeurIPS 2024 (rules selected from a memory); De Felice et al., "Causally
+Reliable Concept Bottleneck Models", NeurIPS 2025 (the hypernetwork predictor).
 """
 
 # %%

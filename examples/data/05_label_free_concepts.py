@@ -21,6 +21,10 @@ concepts.
 Requires an API key for the LLM provider, e.g. ``export GEMINI_API_KEY=...``
 (``OPENAI_API_KEY`` for an ``openai/...`` model). MNIST (~60 MB) and CLIP are
 downloaded on first run.
+
+References: Oikarinen et al., "Label-Free Concept Bottleneck Models", ICLR
+2023; Yang et al., "Language in a Bottle: Language Model Guided Concept
+Bottlenecks for Interpretable Image Classification", CVPR 2023.
 """
 
 # %%

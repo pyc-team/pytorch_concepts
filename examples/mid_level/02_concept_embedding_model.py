@@ -2,9 +2,9 @@
 Concept Embedding Model as a Probabilistic Model
 ================================================
 
-A Concept Embedding Model (CEM) gives every concept an embedding, mixes the
-positive and negative halves of each embedding by the concept probability, and
-predicts the task from the mixed embeddings. As a probabilistic model, the
+A Concept Embedding Model (CEM) gives every concept a positive and a negative
+embedding, mixes them by the concept probability, and predicts the task from
+the mixed embeddings. As a probabilistic model, the
 task CPD has two kinds of parents, the concepts and their embeddings::
 
     input -> latent -> embeddings -> concepts -> xor

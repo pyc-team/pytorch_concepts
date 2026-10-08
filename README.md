@@ -19,8 +19,8 @@
 > Alpha software: PyC is currently under active development.
 > Public APIs may change and be unstable between releases.
 
-<img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pyc.svg" width="20px"> PyC is a library built upon <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pytorch.svg" width="20px" align="center"> PyTorch and <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/lightning.svg" width="20px" align="center"> Pytorch Lightning to easily implement **interpretable and causally transparent deep learning models**.
-The library provides primitives for annotated tensors, interpretable layers, interventions, interpretable probabilsitic graphical models, and APIs for running experiments at scale.
+<img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pyc.svg" width="20px"> PyC is a library built upon <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pytorch.svg" width="20px" align="center"> PyTorch and <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/lightning.svg" width="20px" align="center"> PyTorch Lightning to easily implement **interpretable and causally transparent deep learning models**.
+The library provides primitives for annotated tensors, interpretable layers, interventions, interpretable probabilistic graphical models, and APIs for running experiments at scale.
 
 The name of the library stands for both
 - **PyTorch Concepts**: as concepts are essential building blocks for interpretable deep learning.
@@ -38,13 +38,101 @@ pip install --pre pytorch-concepts[data]
 
 Use `pip install --pre pytorch-concepts` for core-only (no data dependencies), or see [full installation options](https://pytorch-concepts.readthedocs.io/en/latest/guides/installation.html) for conda setup.
 
-After installation, you can import it in your Python scripts as:
+---
+
+# Design Principles
+
+A few basic elements let you name concepts, compute them, train them and act on them. Here is what each one lets you do:
+
+<table>
+<tr>
+<td width="50%" valign="top">
+
+**Annotations** name the concepts, with their type and size.
 
 ```python
 import torch_concepts as pyc
+
+ann = pyc.Annotations(
+    labels=["red", "shape", "size"],
+    types=[
+        "binary",
+        "categorical",
+        "continuous",
+    ],
+    cardinalities=[1, 3, 1],
+)
 ```
 
-Follow our [user guide](https://pytorch-concepts.readthedocs.io/en/latest/guides/using.html) to get started with building interpretable models using <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pyc.svg" width="20px"> PyC!
+</td>
+<td width="50%" valign="top">
+
+**Annotated tensors** bind values to concept names.
+
+```python
+x = torch.randn(8, 5)
+c = pyc.AnnotatedTensor(x, ann)
+
+c["red"]     # slice by concept
+c.binary()   # slice by type
+```
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
+**Concept layers** map embeddings and/or concepts to concepts.
+
+```python
+from torch_concepts.nn import (
+    LinearEmbeddingToConcept,
+)
+
+layer = LinearEmbeddingToConcept(
+    in_embeddings=16,
+    out_concepts=ann,
+)
+emb = torch.randn(8, 16)
+out = layer.annotate(layer(emb))
+```
+
+</td>
+<td valign="top">
+
+**Concept losses** score each concept with the loss of its type.
+
+```python
+from torch import nn
+from torch_concepts.nn import ConceptLoss
+
+loss_fn = ConceptLoss(
+    binary=nn.BCEWithLogitsLoss(),
+    categorical=nn.CrossEntropyLoss(),
+    continuous=nn.MSELoss(),
+)
+loss = loss_fn(out, target)
+```
+
+</td>
+</tr>
+<tr>
+<td colspan="2" valign="top">
+
+**Interventions** edit concepts inside a `with` block: a strategy sets the new values, a policy picks where.
+
+```python
+from torch_concepts.nn import DoIntervention, UniformPolicy, intervention
+
+with intervention(layer, DoIntervention(1.0), UniformPolicy(), ["red"]):
+    out = layer(emb)  # "red" is set to 1.0
+```
+
+</td>
+</tr>
+</table>
+
+The [quickstart](https://pytorch-concepts.readthedocs.io/en/latest/guides/quickstart.html) trains a first model end to end, and the [user guide](https://pytorch-concepts.readthedocs.io/en/latest/guides/using.html) covers the rest of <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pyc.svg" width="20px"> PyC.
 
 ---
 

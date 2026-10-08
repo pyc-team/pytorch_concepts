@@ -136,13 +136,12 @@ Expand each block below for an explanation and an example.
 
     High-level models support two training modes.
 
-    **Manual PyTorch.** Instantiate the model without Lightning and write your own loop. Querying
-    returns logits you can feed to any loss:
+    **Manual PyTorch.** Instantiate the model without Lightning and write your own loop:
 
     .. code-block:: python
 
        import torch
-       from torch_concepts.nn import ConceptBottleneckModel, MLP
+       from torch_concepts.nn import ConceptBottleneckModel, ConceptLoss, MLP
 
        model = ConceptBottleneckModel(
            input_size=n_features,
@@ -151,17 +150,22 @@ Expand each block below for an explanation and an example.
            backbone=MLP(input_size=n_features, hidden_size=128, n_layers=1),
            latent_size=128,
        )
+       loss_fn = ConceptLoss(
+           binary=torch.nn.BCEWithLogitsLoss(),
+           categorical=torch.nn.CrossEntropyLoss(),
+           continuous=torch.nn.MSELoss(),
+       )
 
+       # labels: a (N, 4) tensor, one column per concept
+       c_train = pyc.AnnotatedTensor(labels, annotations.to_concept_space())
        query = ['smoking', 'genotype', 'tar', 'cancer']
        optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
-       loss_fn = torch.nn.BCEWithLogitsLoss()
 
        model.train()
        for epoch in range(500):
            optimizer.zero_grad()
            out = model(input=x_train, query=query)
-           logits = torch.cat([out.params[name]['logits'] for name in query], dim=1)
-           loss = loss_fn(logits, target)
+           loss = loss_fn(out, c_train)
            loss.backward()
            optimizer.step()
 

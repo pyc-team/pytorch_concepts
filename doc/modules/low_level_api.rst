@@ -25,6 +25,30 @@ Annotations & Tensors
 
    Concept
 
+.. currentmodule:: torch_concepts
+
+Backbones
+---------
+
+Pretrained feature extractors that turn raw images or text into embeddings.
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   Backbone
+   ImageBackbone
+   TextBackbone
+
+Utilities
+---------
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   seed_everything
+
 .. currentmodule:: torch_concepts.nn
 
 Encoders

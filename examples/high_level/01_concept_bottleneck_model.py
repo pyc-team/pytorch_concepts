@@ -11,6 +11,8 @@ Data: Color-MNIST, MNIST digits colored red or green. The model predicts two
 concepts, ``digit`` (10 classes) and ``color`` (2 classes), and from them the
 task ``parity`` (1 if the digit is even). MNIST (~60 MB) is downloaded on
 first run.
+
+Reference: Koh et al., "Concept Bottleneck Models", ICML 2020.
 """
 
 # %%

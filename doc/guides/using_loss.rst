@@ -319,5 +319,6 @@ Next Steps
 - Browse the loss classes in the :doc:`API reference </modules/nn.loss>`.
 - :doc:`Contributing a New Loss <contributing_loss>` — adding a term to the library.
 - :doc:`Out-of-the-box Models <using_high_level>` — training with a loss attached.
-- Check out the `example scripts <https://github.com/pyc-team/pytorch_concepts/tree/master/examples/utilization/2_model>`_:
-  ``7`` per-type routing, ``13`` composition and weights, ``15`` a full ELBO.
+- See the examples :doc:`Composing Losses </auto_examples/high_level/06_losses>` (per-type
+  routing, concept groups and custom terms) and
+  :doc:`Concept Bottleneck VAE </auto_examples/high_level/09_concept_bottleneck_vae>` (a full ELBO).

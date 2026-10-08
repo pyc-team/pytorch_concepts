@@ -6,6 +6,10 @@ Concept generation in PyC is built around a simple idea:
 1. **Discover which concepts are useful** for the task.
 2. **Assign those concepts to the samples** in the dataset.
 
+Label-free concept bottleneck models (Oikarinen et al., ICLR 2023)
+and LaBo (Yang et al., CVPR 2023) fall under this category: a language model proposes the concepts, and a
+vision-language model such as CLIP scores every image against them.
+
 .. code-block:: text
 
    ┌────────┐
@@ -199,13 +203,13 @@ Pipeline steps
 
    Shape and concept metadata are preserved.
 
-   ``SigmoidCalibrator(scale=10.0, bias=-2.5)`` applies
-   ``sigmoid(10 * scores - 2.5)``. These example settings transform scores into
-   the range (0, 1); they do not guarantee calibrated probabilities.
+   ``SigmoidCalibrator(scale, bias)`` applies ``sigmoid(scale * scores + bias)``.
+   With ``standardize=True``, each concept's scores are first rescaled to zero mean
+   and unit variance across the samples.
 
    .. code-block:: python
 
-      calibrator = SigmoidCalibrator(scale=10.0, bias=-2.5)
+      calibrator = SigmoidCalibrator(standardize=True)
 
 
 .. dropdown:: 7. Filter calibrated annotations

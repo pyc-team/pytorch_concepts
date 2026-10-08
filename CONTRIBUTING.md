@@ -66,7 +66,7 @@ Please follow these guidelines when contributing code:
 |-----------|-------------|
 | **PEP 8** | Follow [PEP 8](https://pep8.org/) style guidelines for Python code. |
 | **Type hints** | Use type hints where appropriate to improve code clarity. |
-| **Docstrings** | Write clear docstrings for all public functions and classes. |
+| **Docstrings** | Write clear docstrings for all public functions and classes, in [Google style](https://www.sphinx-doc.org/en/master/usage/extensions/example_google.html) (`Args:`, `Returns:`). |
 | **Tests** | Write tests for new features and bug fixes. |
 | **Documentation** | Update documentation to reflect your changes. |
 

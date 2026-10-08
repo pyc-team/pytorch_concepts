@@ -41,9 +41,9 @@ y_train, y_test = y[:800], y[800:]
 # %%
 # Model
 # -----
-# ``MixConceptEmbeddingToConcept`` splits each concept embedding into its
-# positive and negative halves, mixes them with the concept probability, and
-# maps the mixed embeddings to the task.
+# ``MixConceptEmbeddingToConcept`` reads the two halves of each concept's
+# embedding as its positive and negative embeddings, mixes them with the
+# concept probability, and maps the mixed embeddings to the task.
 class ConceptEmbeddingModel(torch.nn.Module):
     def __init__(self, emb_size=8):
         super().__init__()

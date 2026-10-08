@@ -42,7 +42,7 @@ The name of the library stands for both:
 Get Started
 -----------
 
-.. grid:: 1 1 1 1
+.. grid:: 1 1 3 3
     :margin: 3 0 0 0
     :gutter: 2
     :padding: 0
@@ -54,6 +54,22 @@ Get Started
         :class-card: sd-border-primary
 
         Install |pyc_logo| PyC and set up your environment.
+
+    .. grid-item-card::  :octicon:`zap;1em;sd-text-primary` Quickstart
+        :link: guides/quickstart
+        :link-type: doc
+        :shadow: lg
+        :class-card: sd-border-primary
+
+        Train a first concept bottleneck model and intervene on it, in a few minutes.
+
+    .. grid-item-card::  :octicon:`code;1em;sd-text-primary` Examples
+        :link: examples
+        :link-type: doc
+        :shadow: lg
+        :class-card: sd-border-primary
+
+        Short scripts for every feature, from single layers to complete models.
 
 
 User Guide
@@ -288,7 +304,9 @@ Indices and Tables
    :hidden:
 
    guides/installation
+   guides/quickstart
    guides/using
+   examples
    guides/contributing
    guides/license
 
