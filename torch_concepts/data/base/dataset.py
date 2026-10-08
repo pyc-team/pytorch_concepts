@@ -5,6 +5,7 @@ This module provides the ConceptDataset class, which serves as the foundation
 for all concept-based datasets in the torch_concepts package.
 """
 from abc import abstractmethod
+from copy import copy
 import os
 import hashlib
 import json
@@ -171,7 +172,7 @@ class ConceptDataset(Dataset):
         self._graph_native = None
         self._graph_generator = None
         if graph is not None:
-            self.set_graph(graph)  # graph among all concepts
+            self.set_graph(graph)
             self._graph_native = self._graph
 
         self.scalers = {}  # dict of fitted scalers for input and concepts
@@ -489,7 +490,7 @@ class ConceptDataset(Dataset):
         else:
             raise ValueError("Invalid root directory")
         return root
-        
+
     @property
     @abstractmethod
     def raw_filenames(self) -> List[str]:
@@ -657,28 +658,78 @@ class ConceptDataset(Dataset):
         graph_generator,
         cache: bool = True,
         cache_dir: Optional[str] = None,
-        force: bool = False
+        force: bool = False,
+        *,
+        training_indices=None,
     ) -> None:
-        """Precompute a fixed graph, optionally caching it to disk."""
+        """Precompute a static concept graph and store it as ``graph``.
+
+        Calls ``graph_generator`` on a dataset copy containing only the rows
+        selected by ``training_indices``. Afterwards,
+        ``graph`` holds the resulting ConceptGraph and ``graph_generator`` holds
+        the generator. Dataset rows and ``graph_native`` remain unchanged.
+
+        Call ``datamodule.setup("fit")`` followed by
+        ``datamodule.precompute_graph(...)`` to supply the training split.
+        Direct calls to this method require explicit non-empty training indices.
+
+        With ``cache=True`` (default), the graph is saved under ``cache_dir``
+        (by default ``root_dir``) and reused on later calls with matching
+        generator options, concept descriptions, dataset metadata and training indices.
+        ``force=True`` recomputes and updates the cache. The ``ground_truth``
+        method uses the native graph and skips disk caching.
+        Changes to dataset values or generation/refinement code are not detected
+        by the cache; pass ``force=True`` after changing them.
+
+        Parameters
+        ----------
+        graph_generator : GraphGeneratorStatic
+            Static generator configured with a source, method and optional
+            refinements. Learnable generators are not supported.
+        cache : bool, default True
+            Persist the graph to disk and reuse it across calls. Pass False
+            to recompute without reading or writing the disk cache.
+        cache_dir : str, optional
+            Directory for the cache file. Defaults to the dataset's
+            ``root_dir``; set it when the data lives on read-only/shared
+            storage and the cache should go elsewhere (e.g. local scratch).
+        force : bool, default False
+            Recompute even if a matching cache file exists, and replace that
+            file when disk caching is enabled.
+        training_indices : iterable of int, required
+            Non-empty sequence of training row indices. The datamodule passes
+            these automatically after ``setup("fit")``. Indices also identify
+            the training split in the cache.
+
+        Raises
+        ------
+        TypeError
+            If graph_generator is learnable.
+        ValueError
+            If training_indices is missing or empty, graph nodes do not match
+            the dataset concept names and order, or final DAG validation fails.
+            For missing or empty indices, call ``datamodule.setup("fit")``
+            before ``datamodule.precompute_graph(...)``.
+        """
         if getattr(graph_generator, "trainable", False):
-            raise TypeError(
-                "precompute_graph only accepts fixed graph generators; use "
-                "set_graph_generator for a learnable generator."
+            raise TypeError("Graph precomputation accepts only static generators.")
+        training_indices = (
+            list(training_indices) if training_indices is not None else []
+        )
+        if not training_indices:
+            raise ValueError(
+                'Graph precomputation requires non-empty training indices. Call '
+                'datamodule.setup("fit") before datamodule.precompute_graph(...).'
             )
-        if (
-            graph_generator.name == "ground_truth"
-            and self.graph_native is not None
-            and list(self.graph_native.node_names) != list(self.concept_names)
-        ):
-            raise ValueError("Native graph nodes must match the selected concept names and order.")
-        self._graph_generator = graph_generator
+        graph_dataset = copy(self)
+        graph_dataset._subset_rows(training_indices)
+        graph_dataset.graph_training_indices = training_indices
 
         graph = None
         cache_path = None
         cache_key = None
         if cache and graph_generator.name != "ground_truth":
-            graph_generator._resolve_context(self)
-            cache_key = graph_generator._cache_key(self)
+            cache_key = graph_generator._cache_key(graph_dataset)
             cache_dir = cache_dir or self.root_dir
             os.makedirs(cache_dir, exist_ok=True)
             digest = hashlib.sha256(
@@ -686,60 +737,34 @@ class ConceptDataset(Dataset):
             ).hexdigest()
             cache_path = os.path.join(cache_dir, f"graph_{digest}.pt")
             if os.path.exists(cache_path) and not force:
-                payload = torch.load(cache_path, weights_only=True)
-                if payload.get("cache_key") == cache_key:
-                    graph = ConceptGraph(
-                        payload["adjacency"],
-                        node_names=list(self.concept_names),
-                    )
-                    graph_generator._validate_graph(graph)
-                    graph_generator.graph = graph
-                    graph_generator.fitted = True
-                    logger.info(
-                        "Loading a pre-existing graph from %s; "
-                        "set force=True to recompute it.",
-                        cache_path,
-                    )
-                    warnings.warn(
-                        "Loading a pre-existing graph cache for "
-                        f"dataset={type(self).__name__}(name={self.name!r}), "
-                        f"method={graph_generator.name!r}, "
-                        f"source={graph_generator.source!r}, "
-                        f"refinement={cache_key['refinement']!r}. If refinement logic, "
-                        "prompting, descriptions, or other hidden behavior changed "
-                        "without changing this cache identity, pass force=True to "
-                        "recompute it.",
-                        UserWarning,
-                        stacklevel=2,
-                    )
+                graph = ConceptGraph.load(cache_path)
+                graph_generator.graph = graph
+                graph_generator.fitted = True
+                logger.info(
+                    "Loading a pre-existing graph cache from %s for "
+                    "dataset=%s(name=%r), method=%r, source=%r, "
+                    "refinement=%r. If refinement logic, "
+                    "prompting, descriptions, or other hidden behavior changed "
+                    "without changing this cache identity, pass force=True to "
+                    "recompute it.",
+                    cache_path, type(self).__name__, self.name,
+                    graph_generator.name, graph_generator.source,
+                    cache_key['refinement'],
+                )
 
         if graph is None:
-            graph = graph_generator.construct_graph(self)
-            if list(graph.node_names) != list(self.concept_names):
-                graph_generator.invalidate_cache()
-                raise ValueError("Graph nodes must match the selected concept names and order.")
+            graph = graph_generator._construct_graph(graph_dataset)
             if cache_path is not None and cache_key is not None:
                 logger.info("Saving graph to %s", cache_path)
                 torch.save(
                     {
                         "cache_key": cache_key,
                         "adjacency": graph.data.cpu(),
+                        "node_names": list(graph.node_names),
                     },
                     cache_path,
                 )
-        self._graph = graph
-
-    def set_graph_generator(self, graph_generator) -> None:
-        """Register a learnable graph generator without materializing or caching it."""
-        if not getattr(graph_generator, "trainable", False):
-            raise TypeError(
-                "set_graph_generator only accepts learnable graph generators; "
-                "use precompute_graph for a fixed generator."
-            )
-        if list(graph_generator.concept_names) != list(self.concept_names):
-            raise ValueError("Generator concepts must match the selected concept names and order.")
-        self._graph_generator = graph_generator
-        self._graph = None
+        self._graph, self._graph_generator = graph, graph_generator
 
     def _subset_rows(self, indices) -> None:
         """Subset every row-aligned source and rebuild selected supervision."""
@@ -953,7 +978,7 @@ class ConceptDataset(Dataset):
             self._graph = None
             generator = getattr(self, "_graph_generator", None)
             if generator is not None:
-                generator.invalidate_cache()
+                generator._invalidate_cache()
                 self._graph_generator = None
         self._ground_truth_annotations = (
             selected.annotations if selected is not None else None
@@ -1012,8 +1037,7 @@ class ConceptDataset(Dataset):
         return annotations.subset(sorted_labels)
 
     def set_graph(self, graph: pd.DataFrame):
-        """Set the adjacency matrix of the causal graph between concepts 
-        as a pandas DataFrame.
+        """Set the current graph from an adjacency DataFrame.
         
         If a concept subset was selected via ``concept_names_subset``,
         the graph is automatically subsetted to match the current concepts.

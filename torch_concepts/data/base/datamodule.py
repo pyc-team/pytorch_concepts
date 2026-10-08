@@ -448,15 +448,21 @@ class ConceptDataModule(LightningDataModule):
         self, graph_generator, cache: bool = True,
         cache_dir: Optional[str] = None, force: bool = False,
     ) -> None:
-        """Precompute a fixed graph on the underlying dataset."""
+        """Estimate a static graph from training rows and store it on the dataset.
+
+        Call ``setup('fit')`` first to prepare the training split.
+        """
+        if getattr(graph_generator, "trainable", False):
+            raise TypeError("Graph precomputation accepts only static generators.")
+        if self.trainset is None:
+            raise RuntimeError("Call dm.setup('fit') before precompute_graph; a non-empty training split is required.")
+        # Estimate from training indices; save the graph and generator on
+        # self.dataset, which remains accessible through the datamodule.
         self.dataset.precompute_graph(
             graph_generator, cache=cache,
             cache_dir=cache_dir, force=force,
+            training_indices=self.trainset.indices,
         )
-
-    def set_graph_generator(self, graph_generator) -> None:
-        """Register a learnable graph generator without precomputing it."""
-        self.dataset.set_graph_generator(graph_generator)
 
     def setup(self, stage: StageOptions = None) -> None:
         """Prepare the data splits for training, validation, or testing.

@@ -1,3 +1,41 @@
+"""Copy-based edge orientation and cycle removal for ConceptGraph.
+
+Each public refinement returns a new graph with the same node names and
+order. LLM orientation handles reciprocal edges only; cycle removal acts
+on all nonzero edges. These are export/precomputation operations, not
+training objectives. Generator validation runs after all refinements.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Callable
+from functools import partial
+from typing import Optional
+import warnings
+
+import networkx as nx
+import torch
+
+from torch_concepts.concept_graph import ConceptGraph
+from ...utils import _query_pair
+
+
+def _warn_undirected_edges(adjacency: torch.Tensor, operation: str, policy: str) -> None:
+    undirected = (adjacency == -1) & (adjacency.T == -1)
+    undirected.fill_diagonal_(False)
+    if undirected.any():
+        warnings.warn(
+            f"{operation}: the graph appears partially directed: reciprocal "
+            "(-1, -1) entries are interpreted as undirected edges in PC/GES "
+            "encoding. Each such edge will be treated as two opposite directed "
+            f"edges forming a cycle; {policy}. To orient undirected edges first, "
+            "apply an orientation refinement such as refine_llm before this "
+            "operation and check that no undirected edges remain.",
+            UserWarning,
+            stacklevel=3,
+        )
+
+
 def refine_llm(
     llm_backend: Callable[..., str],
     *,
@@ -5,24 +43,48 @@ def refine_llm(
     concept_descriptions: Optional[dict[str, str]] = None,
     repeats: int = 1,
 ) -> Callable[[ConceptGraph], ConceptGraph]:
-    """Return an LLM refinement that orients reciprocal edges.
+    """Build a graph-to-graph LLM refinement for reciprocal nonzero edges.
 
-    Reciprocal edges represent ambiguity, for example both ``A -> B`` and
-    ``B -> A`` are present. Directed and absent pairs are left unchanged by the
-    returned graph-to-graph callable.
+    Parameters
+    ----------
+    llm_backend : callable
+        Configured text backend accepting a prompt and repeats keyword.
+        Authentication and provider error handling belong to the backend.
+    domain : str, default ""
+        Optional domain for pairwise prompts.
+    concept_descriptions : dict[str, str], optional
+        Explicit descriptions keyed by node name. When used by a generator,
+        these join the shared generation/refinement context and override
+        dataset defaults. Conflicting explicit entries raise ValueError.
+    repeats : int, default 1
+        Positive number of completions to aggregate by valid-token vote.
 
-    This refinement does not guarantee acyclicity by itself. If the downstream
-    generator has ``require_dag=True`` and the source may produce cycles,
-    compose it with a cycle-removal refinement such as
-    :func:`remove_weakest_cycles` or :func:`dfs_remove_cycles`.
+    Returns
+    -------
+    callable
+        refinement(graph) clones adjacency and queries only pairs where both
+        directions are nonzero. A->B/B->A replaces the chosen direction with
+        weight 1 and clears the reverse; none clears both. Exhausted invalid
+        answers leave the original reciprocal pair unchanged. Directed and
+        absent pairs are untouched. Node names and order are retained.
+
+    Notes
+    -----
+    Attach this callable to refinement, optionally followed by
+    remove_weakest_cycles or dfs_remove_cycles. LLM orientation alone does not
+    guarantee a DAG. Provider exceptions propagate; invalid-answer retries are
+    handled by the shared query helper. Cache metadata records backend identity,
+    domain, descriptions and repeats without known credential fields.
     """
     if not callable(llm_backend):
         raise TypeError("`llm_backend` must be callable.")
     if not isinstance(repeats, int) or isinstance(repeats, bool) or repeats < 1:
         raise ValueError("repeats must be a positive integer.")
-    descriptions = concept_descriptions or {}
-
-    def refinement(graph: ConceptGraph) -> ConceptGraph:
+    def refinement(
+        graph: ConceptGraph, *, llm_backend: Callable[..., str], domain: str,
+        concept_descriptions: Optional[dict[str, str]] = None, repeats: int,
+    ) -> ConceptGraph:
+        descriptions = concept_descriptions or {}
         concept_names = list(graph.node_names)
         adjacency = graph.data.clone()
         for i in range(len(concept_names)):
@@ -44,114 +106,159 @@ def refine_llm(
                 elif response == "B->A":
                     adjacency[i, j] = 0.0
                     adjacency[j, i] = 1.0
+                elif response == "none":
+                    adjacency[i, j] = adjacency[j, i] = 0
         return ConceptGraph(adjacency, node_names=concept_names)
 
     refinement.__name__ = "refine_llm"
     refinement.__qualname__ = "refine_llm"
-    refinement._refinement_context_descriptions = dict(descriptions)
-    refinement._refinement_cache_keywords = {
-        "llm_backend": llm_backend,
-        "domain": domain,
-        "concept_descriptions": dict(descriptions),
-        "repeats": repeats,
-    }
-    refinement._replace_refinement_context = lambda context: refine_llm(
+    return partial(
+        refinement,
         llm_backend=llm_backend,
         domain=domain,
-        concept_descriptions=context,
+        concept_descriptions=dict(concept_descriptions or {}),
         repeats=repeats,
     )
-    return refinement
+
+
+def _dfs(node, adj_matrix, visited, stack, remove):
+    """Visit parents in index order; optionally remove the first cycle edge."""
+    visited[node] = True
+    stack[node] = True
+    for neighbor in range(len(adj_matrix)):
+        if adj_matrix[neighbor][node] != 0:
+            if not visited[neighbor]:
+                if _dfs(neighbor, adj_matrix, visited, stack, remove):
+                    return True
+            elif stack[neighbor]:
+                if remove:
+                    adj_matrix[neighbor][node] = 0
+                return True
+    stack[node] = False
+    return False
+
+
+def contains_cycle(adj_matrix: torch.Tensor) -> bool:
+    """Detect any directed cycle, including self-loops, without modifying input.
+
+    Every nonzero adjacency entry is an edge. Visit all components, tracking
+    both visited nodes and the active recursion path; only an edge to an active
+    node indicates a cycle. Like the upstream DFS, this uses Python recursion.
+    """
+    visited = [False] * len(adj_matrix)
+    stack = [False] * len(adj_matrix)
+    for node in range(len(adj_matrix)):
+        if not visited[node]:
+            if _dfs(node, adj_matrix, visited, stack, False):
+                return True
+    return False
 
 
 def remove_weakest_cycles(graph: ConceptGraph) -> ConceptGraph:
-    """Project an adjacency to a DAG as in the original CausalCGM.
+    """Remove minimum-absolute-weight cyclic edges until the graph is a DAG.
 
-    Cycles are removed by repeatedly deleting the weakest edge inside a
-    strongly connected component.
+    Parameters
+    ----------
+    graph : ConceptGraph
+        Directed weighted adjacency; every nonzero entry is an edge.
+
+    Returns
+    -------
+    ConceptGraph
+        A detached copy with the same node names/order, device and dtype.
+        All surviving weights are preserved.
+
+    Notes
+    -----
+    At each iteration, find strongly connected components and remove the
+    weakest edge whose endpoints share a component, including self-loops.
+    The choice considers all cyclic components, not a single selected cycle.
+    Ties follow NetworkX edge iteration order. No input graph mutation occurs.
+    Reciprocal (-1, -1) entries trigger a warning: PC/GES undirected edges
+    are treated as opposite directed edges. Apply refine_llm first to orient them.
     """
-    node_names = list(graph.node_names)
     adjacency = graph.data.detach().clone()
-    while True:
-        graph = nx.from_numpy_array(
-            adjacency.cpu().numpy(), create_using=nx.DiGraph
-        )
-        try:
-            list(nx.topological_sort(graph))
-            return ConceptGraph(adjacency, node_names=node_names)
-        except nx.NetworkXUnfeasible:
-            cyclic_edges = set()
-            for component in nx.strongly_connected_components(graph):
-                if len(component) <= 1:
-                    continue
-                for source in component:
-                    for target in graph.successors(source):
-                        if target in component:
-                            cyclic_edges.add((source, target))
-            candidates = adjacency.clone()
-            candidates[candidates == 0] = 100
-            mask = torch.ones_like(candidates, dtype=torch.bool)
-            for edge in cyclic_edges:
-                mask[edge] = False
-            candidates[mask] = 100
-            weakest = torch.unravel_index(
-                candidates.argmin(), candidates.shape
-            )
-            adjacency[weakest] = 0
+    _warn_undirected_edges(
+        adjacency, "remove_weakest_cycles",
+        "directions are removed by minimum absolute weight, with ties resolved "
+        "by NetworkX edge iteration order, without causal orientation",
+    )
+    while contains_cycle(adjacency):
+        network = nx.from_numpy_array(adjacency.cpu().numpy(), create_using=nx.DiGraph)
+        components = {
+            node: index
+            for index, nodes in enumerate(nx.strongly_connected_components(network))
+            for node in nodes
+        }
+        cyclic_edges = [
+            edge for edge in network.edges
+            if components[edge[0]] == components[edge[1]]
+        ]
+        weakest = min(cyclic_edges, key=lambda edge: abs(float(adjacency[edge])))
+        adjacency[weakest] = 0
+    return ConceptGraph(adjacency, node_names=list(graph.node_names))
+
 
 def dfs_remove_cycles(
     graph: ConceptGraph,
     start_node: int | str | None = None,
 ) -> ConceptGraph:
-    """Remove cycles by deleting the DFS back-edge that closes each cycle.
+    """Remove one DFS back-edge at a time, traversing incoming edges.
 
-    This mirrors the lightweight DFS post-processing used by the older graph
-    examples. It is deterministic for a fixed adjacency and start node, but it
-    is a heuristic; :func:`remove_weakest_cycles` is the closer match to the
-    CausalCGM projection rule for weighted learned graphs.
+    Parameters
+    ----------
+    graph : ConceptGraph
+        Directed adjacency with a nonzero entry for every edge.
+    start_node : int or str, optional
+        Index or name of the first node visited. Remaining components are still
+        traversed. By default visit the final node first, then preceding nodes
+        in index order. Parents are visited in increasing node index order.
+
+    Returns
+    -------
+    ConceptGraph
+        Detached DAG copy retaining node names/order, device, dtype and surviving
+        edge weights. Self-loops are removed as back-edges.
+
+    Notes
+    -----
+    Matches the parent-first traversal and restart-after-removal strategy of
+    https://github.com/gdefe/causally-reliable-cbm/blob/main/src/utils.py.
+    Unlike that implementation, all components are visited, all nonzero weights
+    count as edges, and surviving weights are preserved. Each pass removes an
+    edge or finishes, so at most E removals occur. The recursive DFS retains
+    the upstream structure and is subject to Python's recursion depth limit.
+
+    Removal is determined by traversal order, not edge strength. Use
+    remove_weakest_cycles when weights should determine which edges are removed.
+    Reciprocal (-1, -1) entries trigger a warning: PC/GES undirected edges
+    are treated as opposite directed edges. Apply refine_llm first to orient them.
     """
-    node_names = list(graph.node_names)
     adjacency = graph.data.detach().clone()
+    _warn_undirected_edges(
+        adjacency, "dfs_remove_cycles",
+        "back-edge directions are removed according to DFS traversal order, "
+        "without causal orientation",
+    )
     if start_node is None:
-        start_index = len(node_names) - 1
-    elif isinstance(start_node, str):
-        start_index = node_names.index(start_node)
+        start_node = len(adjacency) - 1
     else:
-        start_index = int(start_node)
+        start_node = (
+            graph.node_names.index(start_node)
+            if isinstance(start_node, str) else int(start_node)
+        )
+        if not 0 <= start_node < len(adjacency):
+            raise ValueError("start_node must identify an existing graph node.")
 
-    def dfs(node: int, visited: list[bool], stack: list[bool], remove: bool) -> bool:
-        visited[node] = True
-        stack[node] = True
-        for neighbor in range(len(adjacency)):
-            if adjacency[neighbor][node] == 1:
-                if not visited[neighbor]:
-                    if dfs(neighbor, visited, stack, remove):
-                        return True
-                elif stack[neighbor]:
-                    if remove:
-                        adjacency[neighbor][node] = 0
-                        print(
-                            "The cycle has been broken by removing the edge: "
-                            f"{neighbor} -> {node}"
-                        )
-                    return True
-        stack[node] = False
-        return False
-
-    def contains_cycle() -> bool:
+    while contains_cycle(adjacency):
         visited = [False] * len(adjacency)
         stack = [False] * len(adjacency)
-        for node in range(len(adjacency)):
-            if not visited[node] and dfs(node, visited, stack, False):
-                return True
-        return False
-
-    if contains_cycle():
-        while contains_cycle():
-            visited = [False] * len(adjacency)
-            stack = [False] * len(adjacency)
-            dfs(start_index, visited, stack, True)
-    else:
-        print("there are no cycles in the graph, therefore the graph is left untouched")
-    return ConceptGraph(adjacency.to(dtype=torch.int), node_names=node_names)
-
+        if not _dfs(start_node, adjacency, visited, stack, True):
+            # Upstream would repeat forever if a cycle lies outside this visit.
+            # Continue into the remaining components and remove one cycle edge.
+            for node in range(len(adjacency)):
+                if not visited[node]:
+                    stack = [False] * len(adjacency)
+                    if _dfs(node, adjacency, visited, stack, True):
+                        break
+    return ConceptGraph(adjacency, node_names=list(graph.node_names))

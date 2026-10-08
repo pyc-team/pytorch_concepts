@@ -3,18 +3,18 @@ Example: Using CausallyReliableConceptBottleneckModel
 """
 
 import os
-import re
-import time
 
 from pathlib import Path
+from joblib import parallel_backend
 
 import matplotlib.style as mpl_style
 
 if not hasattr(mpl_style, "core"):
     mpl_style.core = mpl_style
 
-from conceptarium.env import OPENAI_API_KEY
-from torch_concepts.graph_generator import compose_refinements, dfs_remove_cycles, refine_llm
+from dotenv import load_dotenv
+
+from torch_concepts.graphs import GraphGeneratorStatic, dfs_remove_cycles, refine_llm
 from torch_concepts.llm_backends import LiteLLMBackend
 import torch
 from pytorch_lightning import Trainer
@@ -27,7 +27,6 @@ from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
 from torch_concepts.data import BnLearnDataModule
 from torch_concepts.nn.modules.mid.inference.torch.deterministic import DeterministicInference
-from torch_concepts.graph_generator import GraphGeneratorFixed
 
 
 ASIA_LABEL_DESCRIPTIONS = {
@@ -44,42 +43,51 @@ ASIA_LABEL_DESCRIPTIONS = {
 
 def main():
 
+    repo_root = Path(__file__).resolve().parents[3]
+    load_dotenv(repo_root / "torch_concepts" / ".env")
     seed_everything(42)
 
     PLOTS_DIR = Path(__file__).resolve().parents[3] / "outputs" / "causally_reliable" / "plots"
-    LLM_MODEL = "openai/gpt-4o"
-    api_key = OPENAI_API_KEY
-    
+    LLM_MODEL = "groq/openai/gpt-oss-20b"
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        raise RuntimeError("Set GROQ_API_KEY in the environment or .env before running this example.")
+
     # Generate toy data
     print("=" * 60)
     print("Step 1: Generate Asia datamodule")
     print("=" * 60)
-    
-    n_samples = 10000
+
+    n_samples = 2000
     batch_size = 64
+    # BIFReader requests all cores; load in-process to avoid worker crashes.
     datamodule = BnLearnDataModule(seed=42,
-                                   name='asia', 
-                                   root='data/asia_causally_reliable',
-                                   ngen=n_samples,
-                                   batch_size=batch_size,
-                                   label_descriptions=ASIA_LABEL_DESCRIPTIONS)
+                                    name='asia',
+                                    root='data/asia_causally_reliable',
+                                    n_gen=n_samples,
+                                    batch_size=batch_size,
+                                    label_descriptions=ASIA_LABEL_DESCRIPTIONS)
 
     # Setup LLM backend
-    if not api_key:
-        raise RuntimeError("Set OPENAI_API_KEY in .env before running this example.")
     backend = LiteLLMBackend(
         model=LLM_MODEL,
         api_key=api_key,
+        temperature=0,
+        max_tokens=200,
+        retry_on_rate_limit=True,
+        max_rate_limit_wait=120.0,
     )
 
     # precompute graph with GES + LLM
     print("=" * 60)
     print("Step 2: Precompute graph with GES + LLM")
     print("=" * 60)
-    datamodule.precompute_graph(GraphGeneratorFixed(
+    # setup('fit') is required before precompute_graph to use only training data.
+    datamodule.setup('fit')
+    datamodule.precompute_graph(GraphGeneratorStatic(
         name="ges",
         source="Causallearn",
-        refinement=compose_refinements(
+        refinement=[
             refine_llm(
                 llm_backend=backend,
                 domain="medical diagnosis",
@@ -87,9 +95,9 @@ def main():
                 repeats=1,
             ),
             dfs_remove_cycles,
-        ),
+        ],
     ))
-    graph_ges_llm = datamodule.graph
+    graph_ges_llm = datamodule.dataset.graph
     PLOTS_DIR.mkdir(parents=True, exist_ok=True)
     graph_ges_llm.plot(PLOTS_DIR / "ges_llm", title="GES + LLM")
 
@@ -139,7 +147,7 @@ def main():
         optim_class=torch.optim.AdamW,
         optim_kwargs={'lr': 0.01}
     )
-    
+
     print(f"Model created successfully!")
     print(f"Model type: {type(model).__name__}")
     print(f"Encoder output features: {model.latent_size}")
@@ -149,7 +157,7 @@ def main():
     print("Step 4: Training loop with lightning")
     print("=" * 60)
 
-    trainer = Trainer(max_epochs=200)
+    trainer = Trainer(max_epochs=20)
 
     model.train()
     trainer.fit(model, datamodule=datamodule)
@@ -159,10 +167,7 @@ def main():
     print("\n" + "=" * 60)
     print("Step 5: Test the model")
     print("=" * 60)
-    trainer.test(datamodule=datamodule)
+    trainer.test(model=model, datamodule=datamodule)
 
 if __name__ == "__main__":
     main()
-
-
-
