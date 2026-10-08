@@ -50,6 +50,16 @@ A few basic elements let you name concepts, compute them, train them and act on 
 
 **Annotations** name the concepts, with their type and size.
 
+</td>
+<td width="50%" valign="top">
+
+**Annotated tensors** bind values to concept names.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
 ```python
 import torch_concepts as pyc
 
@@ -65,9 +75,7 @@ ann = pyc.Annotations(
 ```
 
 </td>
-<td width="50%" valign="top">
-
-**Annotated tensors** bind values to concept names.
+<td valign="top">
 
 ```python
 x = torch.randn(8, 5)
@@ -84,6 +92,16 @@ c.binary()   # slice by type
 
 **Concept layers** map embeddings and/or concepts to concepts.
 
+</td>
+<td valign="top">
+
+**Concept losses** score each concept with the loss of its type.
+
+</td>
+</tr>
+<tr>
+<td valign="top">
+
 ```python
 from torch_concepts.nn import (
     LinearEmbeddingToConcept,
@@ -99,8 +117,6 @@ out = layer.annotate(layer(emb))
 
 </td>
 <td valign="top">
-
-**Concept losses** score each concept with the loss of its type.
 
 ```python
 from torch import nn
@@ -120,6 +136,11 @@ loss = loss_fn(out, target)
 <td colspan="2" valign="top">
 
 **Interventions** edit concepts inside a `with` block: a strategy sets the new values, a policy picks where.
+
+</td>
+</tr>
+<tr>
+<td colspan="2" valign="top">
 
 ```python
 from torch_concepts.nn import DoIntervention, UniformPolicy, intervention
