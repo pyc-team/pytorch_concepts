@@ -136,8 +136,9 @@ class BlackBox(BaseModel):
         Parameters
         ----------
         x : torch.Tensor, optional
-            Input tensor. When ``None``, the tensor is extracted from
-            ``evidence['input']`` (used by :meth:`BaseLearner.shared_step`).
+            Input tensor, also accepted as ``input=`` like the PGM-based models.
+            When ``None``, the tensor is extracted from ``evidence['input']``
+            (used by :meth:`BaseLearner.shared_step`).
         query : list of str or dict, optional
             Concept names to return. Defaults to all concepts.  When a dict
             is supplied (from ``fully_observed_query``), the keys are used as names.
@@ -154,6 +155,8 @@ class BlackBox(BaseModel):
             continuous ones — the same quantities the PGM-based models report.
         """
         # Resolve the raw input tensor
+        if x is None:
+            x = kwargs.get('input')
         if x is None and isinstance(evidence, dict):
             x = evidence.get('input', None)
 
@@ -269,8 +272,9 @@ class BlackBoxTaskOnly(BaseModel):
         Parameters
         ----------
         x : torch.Tensor, optional
-            Input tensor. When ``None``, the tensor is extracted from
-            ``evidence['input']`` (used by :meth:`BaseLearner.shared_step`).
+            Input tensor, also accepted as ``input=`` like the PGM-based models.
+            When ``None``, the tensor is extracted from ``evidence['input']``
+            (used by :meth:`BaseLearner.shared_step`).
         query : list of str or dict, optional
             Ignored; predictions are always returned for ``task_names``.
         evidence : dict or torch.Tensor, optional
@@ -286,6 +290,8 @@ class BlackBoxTaskOnly(BaseModel):
             ones — the same quantities the PGM-based models report.
         """
         # Resolve the raw input tensor
+        if x is None:
+            x = kwargs.get('input')
         if x is None and isinstance(evidence, dict):
             x = evidence.get('input', None)
 

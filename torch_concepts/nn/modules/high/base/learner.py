@@ -136,12 +136,12 @@ class BaseLearner(pl.LightningModule):
             for coll in metrics.collection.values():
                 self.log_dict(
                     coll, on_step=False, on_epoch=True,
-                    logger=True, prog_bar=False, **kwargs
+                    prog_bar=False, **kwargs
                 )
         else:
             self.log_dict(
                 metrics, on_step=False, on_epoch=True,
-                logger=True, prog_bar=False, **kwargs
+                prog_bar=False, **kwargs
             )
 
     def log_loss(self, name, loss, **kwargs):
@@ -157,7 +157,6 @@ class BaseLearner(pl.LightningModule):
             loss.detach(),
             on_step=False,
             on_epoch=True,
-            logger=True,
             prog_bar=kwargs.pop("prog_bar", True),
             **kwargs
         )

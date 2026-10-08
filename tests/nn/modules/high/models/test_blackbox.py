@@ -313,6 +313,16 @@ class TestBlackBoxForward(unittest.TestCase):
             _logits(out_positional, self.ALL), _logits(out_via_evidence, self.ALL)
         ))
 
+    def test_forward_accepts_input_keyword(self):
+        """Both black boxes are called like the PGM-based models: `model(query=..., input=x)`."""
+        x = torch.randn(2, 8)
+        model = self._make_model().eval()
+        self.assertTrue(torch.allclose(_logits(model(x), self.ALL), _logits(model(query=self.ALL, input=x), self.ALL)))
+        task_only = BlackBoxTaskOnly(input_size=8, annotations=self.ann, task_names=['task'],
+                                     backbone=DummyLatentEncoder(8, hidden_size=4), latent_size=4).eval()
+        self.assertTrue(torch.allclose(_logits(task_only(x), ['task']),
+                                       _logits(task_only(query=['task'], input=x), ['task'])))
+
     def test_fully_observed_query_shapes(self):
         """`fully_observed_query` must return one column per binary/continuous
         concept and a one-hot block per categorical concept, keyed by name."""
