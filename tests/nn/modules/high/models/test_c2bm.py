@@ -9,7 +9,6 @@ Tests cover:
 - Graph structure handling (chain, diamond, multi-output)
 - Training: manual PyTorch loop
 - Gradient flow
-- Target preparation (prepare_target)
 - Edge cases
 """
 import pytest
@@ -604,26 +603,6 @@ class TestC2BMAncestralSamplingInference:
 
 
 # ===========================================================================
-# Target preparation
-# ===========================================================================
-
-class TestC2BMPrepareTarget:
-
-    @pytest.fixture(autouse=True)
-    def _setup(self, chain_graph, binary_chain_ann):
-        self.model = CausallyReliableConceptBottleneckModel(
-            input_size=8,
-            annotations=binary_chain_ann,
-            graph=chain_graph,
-        )
-
-    def test_prepare_target(self):
-        target = torch.randint(0, 2, (4, 3)).float()
-        prepared = self.model.prepare_target(target)
-        assert torch.equal(prepared, target)
-
-
-# ===========================================================================
 # Lightning integration
 # ===========================================================================
 
@@ -737,8 +716,8 @@ class TestC2BMContinuousConcepts:
             input_size=8, annotations=ann, graph=chain_graph,
         )
         out = model(query=['A', 'B', 'C'], input=torch.randn(5, 8))
-        assert list(out.logits.annotation.labels) == ['A']
-        assert list(out.loc.annotation.labels) == ['B', 'C']
+        assert list(out.logits.annotations.labels) == ['A']
+        assert list(out.loc.annotations.labels) == ['B', 'C']
 
     def test_gradients_reach_the_predictor(self, chain_graph):
         ann = self._continuous_ann(['A', 'B', 'C'])

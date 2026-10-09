@@ -1,9 +1,9 @@
 import torch
 
-from ...base.intervention import BaseInterventionPolicy
+from ...base.intervention import InterventionPolicy
 
 
-class UncertaintyInterventionPolicy(BaseInterventionPolicy):
+class UncertaintyInterventionPolicy(InterventionPolicy):
     """
     Uncertainty-based intervention policy using distance from a maximum uncertainty point.
 
@@ -28,7 +28,7 @@ class UncertaintyInterventionPolicy(BaseInterventionPolicy):
 
     def forward(
         self,
-        concepts: torch.Tensor,
+        x: torch.Tensor,
         *args,
         **kwargs
     ) -> torch.Tensor:
@@ -36,11 +36,11 @@ class UncertaintyInterventionPolicy(BaseInterventionPolicy):
         Compute certainty scores as distance from maximum uncertainty point.
 
         Args:
-            concepts: Input concepts of shape (batch_size, n_concepts).
+            x: Layer output of shape (batch_size, n_concepts).
 
         Returns:
             torch.Tensor: Distance from max uncertainty point (certainty scores) of same shape as input.
                 Higher values indicate higher certainty (further from max uncertainty point).
                 Lower values indicate higher uncertainty (closer to max uncertainty point).
         """
-        return (concepts - self.max_uncertainty_point).abs()
+        return (x - self.max_uncertainty_point).abs()

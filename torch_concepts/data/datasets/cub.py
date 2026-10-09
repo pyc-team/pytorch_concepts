@@ -10,7 +10,6 @@ import os
 import logging
 from pathlib import Path
 import tarfile
-from anyio import Path
 import pickle
 import numpy as np
 import pandas as pd

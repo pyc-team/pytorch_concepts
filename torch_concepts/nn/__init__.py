@@ -8,12 +8,14 @@ This module provides neural network components for building concept-based archit
 from torch_concepts.nn.modules.low.base.graph import BaseGraphLearner
 from torch_concepts.nn.modules.high.base.model import BaseModel
 from torch_concepts.nn.modules.low.base.layer import (
-    BaseConceptLayer
+    ConceptLayer,
+    BaseConceptLayer,
 )
 from torch_concepts.nn.modules.low.base.intervention import (
-    BaseConceptInterventionStrategy,
-    BaseModuleInterventionStrategy,
-    BaseInterventionPolicy
+    InterventionStrategy,
+    ConceptInterventionStrategy,
+    ModuleInterventionStrategy,
+    InterventionPolicy,
 )
 
 # LazyConstructor
@@ -64,7 +66,7 @@ from .modules.callbacks import LossWeightWarmup
 from .modules.metrics import ConceptMetrics, compute_cace
 
 # Output containers
-from .modules.outputs import ModelOutput, InferenceOutput
+from .modules.outputs import InferenceOutput
 
 # Models (high-level)
 from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
@@ -83,7 +85,6 @@ from .modules.mid.factors.potential import ParametricPotential
 from .modules.mid.graph.probabilistic_model import ProbabilisticModel
 from .modules.mid.graph.bayesian_network import BayesianNetwork
 from .modules.mid.graph.markov_network import MarkovNetwork
-from .modules.mid.graph.chain_graph import ChainGraph
 from .modules.mid.variable import Variable, ConceptVariable, EmbeddingVariable
 
 # Inference (mid-level)
@@ -91,6 +92,7 @@ from .modules.mid.variable import Variable, ConceptVariable, EmbeddingVariable
 from .modules.mid.inference.base import BaseInference
 from .modules.mid.inference.torch.base import TorchBaseInference
 from .modules.mid.inference.pyro.base import PyroBaseInference
+from .modules.mid.inference.pgmpy.base import PgmpyBaseInference
 # torch
 from .modules.mid.inference.torch.forward import ForwardInference
 from .modules.mid.inference.torch.deterministic import DeterministicInference
@@ -102,14 +104,13 @@ from .modules.mid.inference.torch.importance_sampling.importance_sampling import
 from .modules.mid.inference.torch.importance_sampling.base_proposal import BaseProposal
 from .modules.mid.inference.torch.importance_sampling.mutilated_network import MutilatedNetworkProposal
 from .modules.mid.inference.torch.belief_propagation import BeliefPropagation
+# pgmpy
+from .modules.mid.inference.pgmpy.variable_elimination import PgmpyVariableElimination
 # pyro
 from .modules.mid.inference.pyro.variational import VariationalInference
-from .modules.mid.inference.pyro.importance import PyroImportanceSampling
 
-from .modules.mid.intervention import intervention
-
-# Base intervention
-from .modules.low.intervention.intervention import BaseInterventionModule, InterventionModule
+# Intervention module and context manager
+from .modules.low.base.intervention import InterventionModule, intervention
 
 # Intervention strategies
 from .modules.low.intervention.strategy.ground_truth import GroundTruthIntervention
@@ -126,13 +127,16 @@ from .modules.low.intervention.policy.gradient import GradientPolicy
 
 __all__ = [
     # Base classes
-    "BaseConceptLayer",
+    "ConceptLayer",
     "BaseGraphLearner",
     "BaseModel",
-    "BaseConceptInterventionStrategy",
-    "BaseModuleInterventionStrategy",
-    "BaseInterventionPolicy",
-    "BaseInterventionModule",
+    "InterventionStrategy",
+    "ConceptInterventionStrategy",
+    "ModuleInterventionStrategy",
+    "InterventionPolicy",
+
+    # Alias for the former name
+    "BaseConceptLayer",
 
     # LazyConstructor
     "LazyConstructor",
@@ -198,7 +202,6 @@ __all__ = [
     "compute_cace",
 
     # Output containers
-    "ModelOutput",
     "InferenceOutput",
 
     # Models (high-level)
@@ -218,7 +221,6 @@ __all__ = [
     "ProbabilisticModel",
     "BayesianNetwork",
     "MarkovNetwork",
-    "ChainGraph",
     "Variable",
     "ConceptVariable",
     "EmbeddingVariable",
@@ -236,11 +238,13 @@ __all__ = [
     "BaseProposal",
     "MutilatedNetworkProposal",
     "BeliefPropagation",
+    "PgmpyVariableElimination",
     "PyroBaseInference",
+    "PgmpyBaseInference",
     "VariationalInference",
-    "PyroImportanceSampling",
 
     # Interventions
+    "InterventionModule",
     "GroundTruthIntervention",
     "DoIntervention",
     "DistributionIntervention",

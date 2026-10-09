@@ -449,8 +449,8 @@ class ConceptDataModule(LightningDataModule):
         """Prepare the data splits for training, validation, or testing.
 
         Called by PyTorch Lightning with 'fit', 'validate', 'test', or
-        'predict' stages. Handles splitting and, on the 'fit' stage, fitting
-        any configured scalers on the training split.
+        'predict' stages. Handles splitting and fitting any configured
+        scalers on the training split.
 
         Parameters
         ----------
@@ -470,7 +470,9 @@ class ConceptDataModule(LightningDataModule):
         # ----------------------------------
         # Fit scalers on training data only
         # ----------------------------------
-        if stage in ['fit', None] and self.scalers is not None:
+        # Every stage, not only 'fit': a fresh datamodule passed to `trainer.test`
+        # must ship the same (train-split) scalers the model was trained with.
+        if self.scalers is not None:
             for key, scaler in self.scalers.items():
                 # 'input' names the scaler slot, but the dataset stores it as `input_data`.
                 attr_name = 'input_data' if key == 'input' else key

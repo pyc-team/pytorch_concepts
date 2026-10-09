@@ -8,7 +8,7 @@
 
 
 Interpretable Probabilistic Graphical Models
-==================================
+============================================
 
 The Mid-Level API lets you describe any interpretable deep learning model 
 as a **probabilistic graphical model** (PGM): a set of random variables connected by factors.
@@ -183,6 +183,12 @@ Concept Bottleneck Model ``input → latent → concepts → task`` as a probabi
       point predictions.
     - :class:`~torch_concepts.nn.AncestralSamplingInference` — draws a (reparameterised) sample per
       variable in topological order.
+    - :class:`~torch_concepts.nn.BeliefPropagation` — differentiable sum-product marginals over any
+      factor graph (directed, undirected or mixed). Exact on trees, the standard approximation with
+      loops. This is the engine to *train* an undirected model with.
+    - :class:`~torch_concepts.nn.PgmpyVariableElimination` — **exact** marginals on any factor
+      graph, via pgmpy. Evaluation only: it exports a static table per observation, so it carries
+      no gradients.
     - :class:`~torch_concepts.nn.ForwardInference`, :class:`~torch_concepts.nn.IndependentInference`,
       :class:`~torch_concepts.nn.RejectionSampling`, :class:`~torch_concepts.nn.ImportanceSampling`,
       and the Pyro-backed :class:`~torch_concepts.nn.VariationalInference` provide further
@@ -254,4 +260,4 @@ Next Steps
 - Browse the full :doc:`Mid-Level API reference </modules/mid_level_api>`.
 - Drop down to the :doc:`Semantic primitives and Interventions <using_low_level>` to customise the layers behind each factor.
 - Move up to the :doc:`Out-of-the-box Models <using_high_level>` for the same models, pre-assembled.
-- Check out the mid-level `example scripts <https://github.com/pyc-team/pytorch_concepts/tree/master/examples/utilization/1_pgm>`_.
+- Browse the :doc:`mid-level examples </auto_examples/mid_level/index>`.

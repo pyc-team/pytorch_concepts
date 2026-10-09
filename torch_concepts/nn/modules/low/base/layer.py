@@ -13,7 +13,7 @@ from abc import ABC
 from torch_concepts import Annotations, AnnotatedTensor
 
 
-class BaseConceptLayer(ABC, torch.nn.Module):
+class ConceptLayer(ABC, torch.nn.Module):
     """
     Abstract base class for concept layers.
 
@@ -33,16 +33,16 @@ class BaseConceptLayer(ABC, torch.nn.Module):
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn import BaseConceptLayer
+        >>> from torch_concepts.nn import ConceptLayer
         >>>
         >>> # Create a custom concept layer
-        >>> class MyConceptLayer(BaseConceptLayer):
+        >>> class MyConceptLayer(ConceptLayer):
         ...     def __init__(self, out_concepts, in_concepts):
         ...         super().__init__(
         ...             out_concepts=out_concepts,
         ...             in_concepts=in_concepts
         ...         )
-        ...         self.linear = torch.nn.Linear(in_concepts, out_concepts)
+        ...         self.linear = torch.nn.Linear(self.in_concepts_shape, self.out_concepts_shape)
         ...
         ...     def forward(self, concepts):
         ...         return torch.sigmoid(self.linear(concepts))
@@ -121,3 +121,7 @@ class BaseConceptLayer(ABC, torch.nn.Module):
             NotImplementedError: Must be implemented by subclasses that support pruning.
         """
         raise NotImplementedError(f"Pruning is not yet supported for {self.__class__.__name__}.")
+
+
+# Alias for the former name.
+BaseConceptLayer = ConceptLayer

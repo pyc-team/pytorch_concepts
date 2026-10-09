@@ -8,9 +8,11 @@ import torch.nn.functional as F
 from torch import nn
 
 from .utils import TYPES, by_type, check_collection
-from .outputs import CONTINUOUS_QUANTITIES, ModelOutput, supervised_subset
+from .outputs import (CONTINUOUS_QUANTITIES, DISCRETE_QUANTITIES, InferenceOutput,
+                      resolve_quantity, supervised_subset)
 from ..functional import concept_orthogonality
 from ...concept_graph import ConceptGraph
+from ...tensor import AnnotatedTensor
 
 
 def _get_forward_signature(module: nn.Module):
@@ -97,46 +99,26 @@ def _normalize_loss_terms(terms, weights):
     return [t for t, _ in kept], [w for _, w in kept]
 
 
-def subset_output(output: ModelOutput, names: List[str]) -> ModelOutput:
-    """A :class:`ModelOutput` restricted to the concepts in ``names``.
+def _concepts(target) -> AnnotatedTensor:
+    """The concept ground truth: ``target['c']``, or ``target`` itself when it
+    is a bare :class:`AnnotatedTensor`."""
+    return target if isinstance(target, AnnotatedTensor) else target['c']
 
-    Every quantity tensor and the target are sliced by concept name via their
-    annotations, so the result carries whatever quantities those concepts report
+
+def subset_output(output: InferenceOutput, names: List[str]) -> InferenceOutput:
+    """An :class:`InferenceOutput` restricted to the concepts in ``names``.
+
+    Every quantity tensor is sliced by concept name via its annotations, so the
+    result carries whatever quantities those concepts report
     (``logits``/``probs`` and/or ``loc``/``scale``). Used by the composite losses
     to route a shared output to their sub-losses.
     """
-    sub = ModelOutput(extra=output.extra)
-    if output.target is not None:
-        present = [n for n in names if n in output.target.annotation.label_to_index]
-        sub.target = output.target[present]
+    sub = InferenceOutput()
     for quantity, tensor in output.params.items():
-        present = [n for n in names if n in tensor.annotation.label_to_index]
+        present = [n for n in names if n in tensor.annotations.label_to_index]
         if present:
             sub.params[quantity] = tensor[present]
     return sub
-
-
-#: Quantities a *discrete* concept may be reported under, in fallback order. The
-#: same rule :class:`~torch_concepts.nn.ConceptMetrics` applies, so a loss and a
-#: metric on one model read the same quantity without either being told which.
-DISCRETE_QUANTITIES = ("logits", "probs")
-
-
-def _resolve_quantity(params, configured: Optional[str], candidates: Sequence[str]):
-    """The tensor a concept type is scored on, or ``None`` if the output has none.
-
-    A model already declares the quantity it emits (``param_for_discrete_var`` is
-    ``'logits'`` on a CBM, ``'probs'`` on a CBGM), so naming it again in the loss
-    is the one place the two sides can disagree. Default (``configured=None``):
-    take the first candidate the output reports.
-    """
-    if configured is not None:
-        return params.get(configured)
-    for quantity in candidates:
-        tensor = params.get(quantity)
-        if tensor is not None:
-            return tensor
-    return None
 
 
 def _variable_params(
@@ -144,7 +126,7 @@ def _variable_params(
 ) -> Dict[str, torch.Tensor]:
     """The quantities reported for one variable, as plain tensors.
 
-    ``ModelOutput.params`` is quantity-keyed with every queried variable
+    ``InferenceOutput.params`` is quantity-keyed with every queried variable
     concatenated on the annotated axis; ``params[name]`` is the variable-first
     view of the same tensors (see :class:`ParamsDict`). The annotation is
     dropped here: these go straight into a ``torch.distributions`` constructor.
@@ -153,13 +135,16 @@ def _variable_params(
 
 
 class PyCLoss(nn.Module):
-    """Base for every loss that is scored on a whole :class:`ModelOutput`.
+    """Base for every loss scored on a whole :class:`InferenceOutput`.
 
-    ``forward(output, target=None)`` rather than the usual
-    ``forward(input, target)``: a PyC loss finds what it needs on the output
-    itself — by concept name, by concept type, or by quantity — instead of being
-    handed a pair of tensors. The learner checks for this base class to know it
-    can pass the output straight through.
+    Every subclass implements ``forward(input, target=None, model=None)``:
+
+    - ``input``: the :class:`InferenceOutput` of the queried variables; a loss
+      finds what it needs on it by concept name, concept type, or quantity.
+    - ``target``: a dict of batch tensors, the concept ground truth under
+      ``'c'``. A bare :class:`AnnotatedTensor` stands for the concepts.
+    - ``model``: the module being trained, for terms that need it (e.g. a
+      penalty on its weights).
 
     Individual *terms* (``BCEWithLogitsLoss``, :class:`L1LogitRegularizer`, any
     custom module) are **not** subclasses: they take plain tensors, and
@@ -172,11 +157,8 @@ class CompositeLoss(PyCLoss):
 
     The building block for objectives that are not a single concept term — an
     ELBO, for instance, is a reconstruction term plus a KL term plus whatever
-    supervision and regularisation the model adds. Each term is handed the same
-    :class:`ModelOutput`, so terms stay independent and reusable.
-
-    Every term is called with ``target`` only if its ``forward`` accepts one, so
-    terms with either signature compose freely.
+    supervision and regularisation the model adds. Each term is called with the
+    same ``(input, target, model)``, so terms stay independent and reusable.
 
     Args:
         terms (list of nn.Module): The loss terms to sum. A ``None`` entry is
@@ -244,10 +226,8 @@ class CompositeLoss(PyCLoss):
         self.terms = nn.ModuleList(terms)
         self.weights = list(weights)
         self.term_names = list(names) if names is not None else _unique_names(terms)
-        self._takes_target = [
-            "target" in sig or has_var_kw
-            for sig, has_var_kw in (_get_forward_signature(t) for t in terms)
-        ]
+        if len(set(self.term_names)) != len(self.term_names):
+            raise ValueError(f"CompositeLoss: term names must be unique, got {self.term_names}.")
 
     def __repr__(self) -> str:
         parts = [
@@ -256,7 +236,7 @@ class CompositeLoss(PyCLoss):
         ]
         return f"{self.__class__.__name__}({' + '.join(parts)})"
 
-    def breakdown(self, output: ModelOutput, target=None) -> Dict[str, torch.Tensor]:
+    def breakdown(self, input: InferenceOutput, target: dict=None, model: nn.Module=None) -> Dict[str, torch.Tensor]:
         """Each term's **weighted** contribution, keyed by term name.
 
         :meth:`forward` returns exactly ``sum(breakdown(...).values())``, so the
@@ -265,14 +245,17 @@ class CompositeLoss(PyCLoss):
         enough — an ELBO whose KL has collapsed still looks fine summed.
         """
         return {
-            name: weight * (term(output, target) if takes_target else term(output))
-            for name, term, weight, takes_target in zip(
-                self.term_names, self.terms, self.weights, self._takes_target
-            )
+            name: weight * term(input, target, model)
+            for name, term, weight in zip(self.term_names, self.terms, self.weights)
         }
 
-    def forward(self, output: ModelOutput, target=None) -> torch.Tensor:
-        return sum(self.breakdown(output, target).values())
+    def forward(
+        self, 
+        input: InferenceOutput, 
+        target: dict = None, 
+        model: nn.Module = None
+    ) -> torch.Tensor:
+        return sum(self.breakdown(input, target, model).values())
 
 
 class MSEReconstructionLoss(PyCLoss):
@@ -283,34 +266,29 @@ class MSEReconstructionLoss(PyCLoss):
     NLL's gradients.
 
     Args:
-        variable (str): Observed variable to score against a ground truth evidence. 
-            The evidence is read from ``output.extra['evidence']`` 
-            (published by the learner's ``default_extra``). 
+        variable (str): The reconstructed variable, read from ``input.value``.
+        key (str): Where its observation sits in the ``target`` dict. Default
+            ``'x'``, the batch input.
         reduction (str): ``'mean'`` (default) or ``'sum'`` over the batch.
 
     Example:
         >>> from torch_concepts.nn import MSEReconstructionLoss
         >>> MSEReconstructionLoss('input')
-        MSEReconstructionLoss(variable='input', reduction='mean')
+        MSEReconstructionLoss(variable='input', key='x', reduction='mean')
     """
 
-    def __init__(self, variable: str, reduction: str = "mean"):
+    def __init__(self, variable: str, key: str = "x", reduction: str = "mean"):
         super().__init__()
         self.variable = variable
+        self.key = key
         self.reduction = reduction
 
     def extra_repr(self) -> str:
-        return f"variable={self.variable!r}, reduction={self.reduction!r}"
+        return f"variable={self.variable!r}, key={self.key!r}, reduction={self.reduction!r}"
 
-    def forward(self, output: ModelOutput, target=None) -> torch.Tensor:
-        predicted = _plain(output.params["value"][self.variable])
-        observed = ((output.extra or {}).get("evidence") or {}).get(self.variable)
-        if observed is None:
-            raise ValueError(
-                f"MSEReconstructionLoss: no observed value for {self.variable!r}. "
-                "It must be supplied as evidence — the learner forwards its "
-                "evidence dict to the loss under `output.extra['evidence']`."
-            )
+    def forward(self, input: InferenceOutput, target=None, model=None) -> torch.Tensor:
+        predicted = _plain(input.params["value"][self.variable])
+        observed = _plain(target[self.key])
         # The prediction is flat ``(*leading, size)`` while the observation may
         # still carry its event shape (an image stays ``(B, C, H, W)``).
         observed = observed.reshape(predicted.shape).to(predicted.dtype)
@@ -331,7 +309,7 @@ class KLDivergenceLoss(PyCLoss):
     """``KL(q ‖ p)`` between a variational guide and the model, per latent.
 
     The regularising half of the ELBO (Eq. 1 of the paper). Guide parameters are
-    read from ``output.guide_params``, the prior's from ``output.params``. The
+    read from ``input.guide_params``, the prior's from ``input.params``. The
     per-dimension divergence is averaged over the batch, floored at
     ``free_bits``, then summed over the dimensions — at the default
     ``free_bits=0`` that is exactly Eq. 1, since summing and averaging commute.
@@ -369,11 +347,11 @@ class KLDivergenceLoss(PyCLoss):
     def extra_repr(self) -> str:
         return f"latents={self.latents}, free_bits={self.free_bits}"
 
-    def forward(self, output: ModelOutput, target=None) -> torch.Tensor:
+    def forward(self, input: InferenceOutput, target=None, model=None) -> torch.Tensor:
         total = 0.0
         for name in self.latents:
-            q = _variable_params(output.guide_params, name)
-            p = _variable_params(output.params, name)
+            q = _variable_params(input.guide_params, name)
+            p = _variable_params(input.params, name)
             family = self.distribution or _KL_FAMILIES.get(frozenset(q))
             if family is None:
                 raise ValueError(
@@ -432,8 +410,8 @@ class OrthogonalityLoss(PyCLoss):
         return (f"variable={self.variable!r}, residual={self.residual!r}, "
                 f"n_concepts={self.n_concepts}, reduction={self.reduction!r}")
 
-    def forward(self, output: ModelOutput, target=None) -> torch.Tensor:
-        value = output.params["value"]
+    def forward(self, input: InferenceOutput, target=None, model=None) -> torch.Tensor:
+        value = input.params["value"]
         contexts, residual = value[self.variable], value[self.residual]
         if contexts.shape[-1] != self.n_concepts * residual.shape[-1]:
             raise ValueError(
@@ -669,7 +647,7 @@ class ConceptLoss(PyCLoss):
                 cardinality) or when no term asked for it — building it costs an
                 allocation the size of ``padded_logits`` on every step.
         """
-        cards = list(cat_logits.annotation.cardinalities)
+        cards = list(cat_logits.annotations.cardinalities)
 
         # Unwrap to plain tensors and fold any leading (batch-like) dimensions
         # into one batch axis, so the layout below is always (batch, width).
@@ -706,7 +684,12 @@ class ConceptLoss(PyCLoss):
             cat_mask = col_valid.to(cat_logits_out.device).repeat_interleave(batch, dim=0)
         return cat_logits_out, cat_targets, cat_mask
 
-    def forward(self, output: ModelOutput, target=None) -> torch.Tensor:
+    def forward(
+        self, 
+        input: Union[InferenceOutput, AnnotatedTensor], 
+        target: Union[dict, AnnotatedTensor],
+        model: nn.Module = None
+    ) -> torch.Tensor:
         """Total loss across all concept types.
 
         Each type is read from the quantity the model reports for it (or from the
@@ -714,10 +697,11 @@ class ConceptLoss(PyCLoss):
         variables the target has no truth for are skipped.
 
         Args:
-            output (ModelOutput): The model's output, carrying ``params``,
-                ``target`` and optionally ``extra``.
-            target (AnnotatedTensor, optional): Concept-space ground truth.
-                Defaults to ``output.target``.
+            input (InferenceOutput or AnnotatedTensor): The model's output — or a
+                plain prediction tensor, whose annotation gives each concept's type.
+            target (dict or AnnotatedTensor): Batch tensors with the concept
+                ground truth under ``'c'``, or the concept ground truth alone as an AnnotatedTensor.
+            model (nn.Module, optional): Unused; part of the :class:`PyCLoss` contract.
 
         Returns:
             torch.Tensor: Scalar loss.
@@ -726,63 +710,57 @@ class ConceptLoss(PyCLoss):
             ValueError: If no configured type matched anything in the output — a
                 zero loss with no gradient is never what the caller wanted.
         """
-        extra = dict(output.extra) if output.extra else {}
-        target = target if target is not None else output.target
-
+        target = _concepts(target)
+        if isinstance(input, AnnotatedTensor):
+            # A bare prediction tensor holds the columns of every type.
+            binary = categorical = input
+            continuous, scale = input.continuous(), None
+        else:
+            binary = resolve_quantity(input.params, self.binary_param, DISCRETE_QUANTITIES, target)
+            categorical = resolve_quantity(input.params, self.categorical_param, DISCRETE_QUANTITIES, target)
+            continuous = resolve_quantity(input.params, self.continuous_param, CONTINUOUS_QUANTITIES, target)
+            scale = input.scale
         # Binary and categorical are sliced by type out of their (shared) discrete
         # quantity; continuous is taken whole. The per-type accessors are memoised
         # on the stable annotation, so each resolves at most once and stays warm.
-        discrete = _resolve_quantity(
-            output.params, self.binary_param, DISCRETE_QUANTITIES)
-        binary = supervised_subset(
-            discrete.binary() if discrete is not None else None, target)
-        discrete = _resolve_quantity(
-            output.params, self.categorical_param, DISCRETE_QUANTITIES)
-        categorical = supervised_subset(
-            discrete.categorical() if discrete is not None else None, target)
-        continuous = supervised_subset(
-            _resolve_quantity(
-                output.params, self.continuous_param, CONTINUOUS_QUANTITIES),
-            target,
-        )
+        binary = supervised_subset(None if binary is None else binary.binary(), target)
+        categorical = supervised_subset(None if categorical is None else categorical.categorical(), target)
+        continuous = supervised_subset(continuous, target)
 
         contributions = []
 
         if self.terms_by_type.get('binary') and binary is not None:
             contributions.append(self._compute_type_loss('binary', {
                 'input': _plain(binary),
-                'target': _plain(target[binary.annotation.labels]).float(),
-                **extra
+                'target': _plain(target[binary.annotations.labels]).float(),
             }))
 
         if self.terms_by_type.get('categorical') and categorical is not None:
             cat_logits, cat_targets, cat_mask = self._prepare_categorical(
-                categorical, target[categorical.annotation.labels]
+                categorical, target[categorical.annotations.labels]
             )
-            kwargs = {'input': cat_logits, 'target': cat_targets, **extra}
+            kwargs = {'input': cat_logits, 'target': cat_targets}
             # Offer the key only when padding actually exists, i.e. the concepts
             # have different cardinalities. Otherwise there is nothing to mask and
             # a term that ignores the mask has nothing to be warned about.
-            if len(set(categorical.annotation.cardinalities)) > 1:
+            if len(set(categorical.annotations.cardinalities)) > 1:
                 kwargs['padding_mask'] = cat_mask
             contributions.append(self._compute_type_loss('categorical', kwargs))
 
         if self.terms_by_type.get('continuous') and continuous is not None:
             kwargs = {
                 'input': _plain(continuous),
-                'target': _plain(target[continuous.annotation.labels]),
-                **extra,
+                'target': _plain(target[continuous.annotations.labels]),
             }
-            if output.scale is not None:
-                kwargs['scale'] = _plain(output.scale)
+            if scale is not None:
+                kwargs['scale'] = _plain(scale)
             contributions.append(self._compute_type_loss('continuous', kwargs))
 
         if not contributions:
             raise ValueError(
                 f"ConceptLoss has terms for {sorted(self.terms_by_type)} but "
-                f"scored nothing: the output reports {tuple(output.params)} and the "
-                f"target covers "
-                f"{sorted(set(target.annotation.types)) if target is not None else None}. "
+                f"scored nothing: the target covers "
+                f"{sorted(set(target.annotations.types))}. "
                 "Check that the model reports a quantity for those types (see its "
                 "`param_for_discrete_var`) and that the target covers them."
             )
@@ -798,9 +776,8 @@ class ConceptSubset(PyCLoss):
     ones, without either idea needing its own machinery.
 
     Args:
-        loss (nn.Module): The loss to apply to the subset. Must accept
-            ``(output, target)`` — :class:`ConceptLoss` and :class:`CompositeLoss`
-            both do.
+        loss (PyCLoss): The loss to apply to the subset, e.g. a
+            :class:`ConceptLoss`.
         names (list of str, optional): The concepts in the group.
         exclude (list of str, optional): The concepts *not* in the group; the
             group is everything else the target covers. Use this for an
@@ -847,22 +824,30 @@ class ConceptSubset(PyCLoss):
             return f"names={self.names}"
         return f"exclude={self.exclude}"
 
-    def forward(self, output: ModelOutput, target=None) -> torch.Tensor:
-        target = target if target is not None else output.target
+    def forward(self, input: InferenceOutput, target, model=None) -> torch.Tensor:
+        c = _concepts(target)
+        # A name that is not a target concept (a typo, a plate name) raise here.
+        given = set(self.names if self.names is not None else self.exclude)
+        assert given <= c.annotations.label_to_index.keys(), (
+            f"ConceptSubset: {sorted(given - c.annotations.label_to_index.keys())} "
+            f"are not concepts of the target {list(c.annotations.labels)}.")
+
         names = self.names
         if names is None:
-            names = [n for n in target.annotation.labels if n not in self.exclude]
+            names = [n for n in c.annotations.labels if n not in self.exclude]
 
-        sub = subset_output(output, names)
+        sub = subset_output(input, names)
         if not sub.params:
             # None of this group's concepts is in the output — a depth level the
             # query left out, say. It contributes nothing rather than making the
             # whole objective fail.
-            reference = next(iter(output.params.values()), None)
+            reference = next(iter(input.params.values()), None)
             return torch.zeros((), device=None if reference is None else reference.device)
 
-        present = [n for n in names if n in target.annotation.label_to_index]
-        return self.loss(sub, target[present])
+        # Only the concepts are narrowed: other target entries (e.g. sample
+        # weights from `prepare_target`) still reach the wrapped loss.
+        sub_target = {**target, 'c': c[names]} if isinstance(target, dict) else c[names]
+        return self.loss(sub, sub_target, model)
 
 
 class WeightedConceptLoss(CompositeLoss):

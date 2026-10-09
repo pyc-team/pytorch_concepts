@@ -67,7 +67,7 @@ class TestSharedForward:
         )
         out = cpd(parent_values={"x": torch.randn(6, 4)})
         assert trunk.calls == 1
-        assert out["loc"].shape == (6, 3)
+        assert out["loc"].shape == (6, 1, 3)  # member layout (B, n_members, size)
         assert bool((out["scale"] > 0).all())
 
     def test_without_a_trunk_each_parameter_runs_its_own_head(self, parent, normal_child):
@@ -136,7 +136,7 @@ class TestLazySizing:
                 "scale": LazyConstructor(head_cls),
             },
         )
-        assert cpd(parent_values={"x": torch.randn(5, 4)})["loc"].shape == (5, 3)
+        assert cpd(parent_values={"x": torch.randn(5, 4)})["loc"].shape == (5, 1, 3)
         assert trunk.calls == 1
 
     def test_a_trunk_without_out_features_is_rejected_for_a_lazy_head(
@@ -181,7 +181,7 @@ class TestInteractions:
         assert cpds[0].trunk is not cpds[1].trunk
         assert cpds[0].trunk.linear.weight is not cpds[1].trunk.linear.weight
 
-    def test_intervention_swaps_the_head_not_the_trunk(self, parent):
+    def test_intervention_on_the_head_leaves_the_trunk_alone(self, parent):
         c = ConceptVariable("c", distribution=Bernoulli, size=3)
         trunk = CountingTrunk(4, 8)
         cpd = ParametricCPD(
@@ -190,16 +190,9 @@ class TestInteractions:
                 nn.Linear(8, 3), DefaultActivation(c, "probs"))},
         )
 
-        class Pgm:
-            factors = {"c": cpd}
-
-        original = cpd.parametrization["probs"]
         with intervention(
-            Pgm(), DoIntervention(constants=0.0), UniformPolicy(),
-            variable_to_intervene_on="c", parameter_to_intervene_on="probs",
+            cpd.parametrization["probs"], DoIntervention(constants=0.0), UniformPolicy(), [0, 1, 2],
         ):
-            assert cpd.parametrization["probs"] is not original
-            assert cpd.trunk is trunk  # the expensive part is untouched
             out = cpd(parent_values={"x": torch.randn(4, 4)})["probs"]
-            assert torch.allclose(out, torch.zeros(4, 3), atol=1e-5)
-        assert cpd.parametrization["probs"] is original
+        assert torch.allclose(out, torch.zeros(4, 3), atol=1e-5)
+        assert trunk.calls == 1  # the expensive part runs once, untouched

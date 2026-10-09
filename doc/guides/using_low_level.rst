@@ -73,7 +73,7 @@ Expand each block below for an explanation and an example of how to use it.
 
        tensor = pyc.AnnotatedTensor(
            data=torch.randn(10, 6),   # (batch_size, sum(cardinalities))
-           annotation=annotations,
+           annotations=annotations,
        )
 
        smoking     = tensor["smoking"]              # slice by concept name
@@ -203,10 +203,10 @@ Expand each block below for an explanation and an example of how to use it.
 
     - A **strategy** decides *how* to intervene. Two kinds are supported:
 
-      - **Concept strategies** (``BaseConceptInterventionStrategy``): override the layer's
+      - **Concept strategies** (``ConceptInterventionStrategy``): override the layer's
         *output* concept values — e.g. ``DoIntervention`` (set to a constant) or
         ``GroundTruthIntervention`` (set to ground-truth labels).
-      - **Mechanism strategies** (``BaseModuleInterventionStrategy``): modify the layer's
+      - **Mechanism strategies** (``ModuleInterventionStrategy``): modify the layer's
         *weights and connections* — e.g. ``PositiveWeightsIntervention`` (force positive
         weights, making the layer monotonic).
 
@@ -220,7 +220,7 @@ Expand each block below for an explanation and an example of how to use it.
        intervened = InterventionModule(
            original_module=encoder,
            intervention_strategy=DoIntervention(constants=1.0),
-           intervention_policy=UniformPolicy(out_concepts=5),
+           intervention_policy=UniformPolicy(),
            out_concepts_to_intervene_on=[0, 2],   # target concepts 0 and 2
        )
        concepts = intervened(embeddings=x)   # same interface as encoder
@@ -252,4 +252,4 @@ Next Steps
 
 - Browse the full :doc:`Low-Level API reference </modules/low_level_api>`.
 - Move up to compose layers into :doc:`Interpretable Probabilistic Models <using_mid_level>`.
-- Check out the low-level `example scripts <https://github.com/pyc-team/pytorch_concepts/tree/master/examples/utilization/0_layer>`_.
+- Browse the :doc:`low-level examples </auto_examples/low_level/index>`.

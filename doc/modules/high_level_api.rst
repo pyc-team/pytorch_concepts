@@ -52,7 +52,6 @@ Outputs
    :toctree: generated
    :nosignatures:
 
-   ModelOutput
    InferenceOutput
 
 Base Classes

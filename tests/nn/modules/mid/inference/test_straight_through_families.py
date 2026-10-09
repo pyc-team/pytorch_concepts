@@ -128,7 +128,7 @@ class TestSampleFrom:
         assert torch.equal(first, second)
 
         d = ConceptVariable("d", distribution=Delta, size=3)
-        value = torch.randn(4, 3)
+        value = d.to_member(torch.randn(4, 3), "value")  # member layout, as a CPD reports it
         assert torch.equal(
             sample_from(d, {"value": value}, temperature=torch.tensor(1.0)), value
         )

@@ -9,15 +9,14 @@ models, and hub/config helpers.
 import os
 import warnings
 
-try:
-    import conceptarium.env
-except ImportError:
-    if not os.environ.get("HF_TOKEN") and not os.environ.get("HUGGINGFACE_HUB_TOKEN"):
-        warnings.warn(
-            "conceptarium.env not found and HF_TOKEN is not set. "
-            "Hub downloads will be unauthenticated.",
-            stacklevel=2,
-        )
+from torch_concepts.utils import resolve_hf_token
+
+if not resolve_hf_token():
+    warnings.warn(
+        "HF_TOKEN is not set (see torch_concepts/env.py). "
+        "Hub downloads will be unauthenticated.",
+        stacklevel=2,
+    )
 
 # Default to eager mode for Steerling to avoid Triton/Inductor failures on
 # some CUDA driver stacks. Override with:

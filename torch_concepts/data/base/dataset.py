@@ -123,7 +123,7 @@ class ConceptDataset(Dataset):
         self.use_as_gt = False
         self.generated_gt_name: Optional[str] = None
         self.generated_concepts: Dict[str, AnnotatedTensor] = {}
-        self._ground_truth_annotation: Optional[Annotations] = None
+        self._ground_truth_annotations: Optional[Annotations] = None
         self._ground_truth_source: Optional[str] = None
 
         self.input_data: Tensor = parse_tensor(input_data, 'input', self.precision)
@@ -132,17 +132,17 @@ class ConceptDataset(Dataset):
         )
 
         # sanity check
-        axis_annotation = annotations
+        axis_annotations = annotations
 
-        if axis_annotation is not None and axis_annotation.cardinalities is not None:
-            concept_names_with_cardinality = [name for name, card in zip(axis_annotation.labels, axis_annotation.cardinalities) if card is not None]
-            concept_names_without_cardinality = [name for name in axis_annotation.labels if name not in concept_names_with_cardinality]
+        if axis_annotations is not None and axis_annotations.cardinalities is not None:
+            concept_names_with_cardinality = [name for name, card in zip(axis_annotations.labels, axis_annotations.cardinalities) if card is not None]
+            concept_names_without_cardinality = [name for name in axis_annotations.labels if name not in concept_names_with_cardinality]
             if concept_names_without_cardinality:
                 raise ValueError(f"Cardinalities list provided but missing cardinality for concepts: {concept_names_without_cardinality}")
 
         # set concept annotations
         self._annotations = annotations
-        self._all_concept_annotation: Optional[Annotations] = None
+        self._all_concept_annotations: Optional[Annotations] = None
         if annotations is None:
             if concept_names_subset is not None:
                 raise ValueError(
@@ -189,7 +189,7 @@ class ConceptDataset(Dataset):
                     "AnnotatedTensor; use its attached annotation."
                 )
             self._validate_native_concepts(concepts)
-            annotations = concepts.annotation
+            annotations = concepts.annotations
             values = concepts.tensor
         elif isinstance(concepts, (Tensor, np.ndarray, pd.DataFrame)):
             if concepts.ndim != 2:
@@ -219,13 +219,13 @@ class ConceptDataset(Dataset):
             )
 
         values = parse_tensor(values, 'concepts', self.precision)
-        concept_annotation = annotations.to_concept_space()
-        if values.shape[1] != concept_annotation.size:
+        concept_annotations = annotations.to_concept_space()
+        if values.shape[1] != concept_annotations.size:
             raise ValueError(
                 "Native concepts must have one column per concept; "
-                f"got {values.shape[1]} columns for {concept_annotation.size} concepts."
+                f"got {values.shape[1]} columns for {concept_annotations.size} concepts."
             )
-        native_values = AnnotatedTensor(values, concept_annotation, axis=1)
+        native_values = AnnotatedTensor(values, concept_annotations, axis=1)
         self._validate_native_concepts(native_values)
         return native_values, annotations
 
@@ -243,7 +243,7 @@ class ConceptDataset(Dataset):
                 f"Concepts has {concepts.shape[0]} samples but "
                 f"input_data has {self.n_samples}."
             )
-        if concepts.shape[1] != len(concepts.annotation.labels):
+        if concepts.shape[1] != len(concepts.annotations.labels):
             raise ValueError(
                 "Native concepts must have one column per concept; "
                 "categorical values must be class indices, not per-state scores."
@@ -311,7 +311,7 @@ class ConceptDataset(Dataset):
         original scale). Used as the DataLoader ``collate_fn`` by
         :class:`ConceptDataModule`.
         """
-        def collate_optional(values, annotation, name):
+        def collate_optional(values, annotations, name):
             if all(value is None for value in values):
                 return None
             if any(value is None for value in values):
@@ -319,8 +319,8 @@ class ConceptDataset(Dataset):
                     f"Cannot collate {name}: only some samples contain values."
                 )
             collated = default_collate(values)
-            if annotation is not None:
-                collated = AnnotatedTensor(collated, annotation, axis=1)
+            if annotations is not None:
+                collated = AnnotatedTensor(collated, annotations, axis=1)
             return collated
 
         generated_keys = tuple(self.generated_concepts)
@@ -340,13 +340,13 @@ class ConceptDataset(Dataset):
             "concepts": {
                 "c": collate_optional(
                     [concepts["c"] for concepts in concept_samples],
-                    self._ground_truth_annotation,
+                    self._ground_truth_annotations,
                     "selected concepts",
                 ),
                 "native": collate_optional(
                     [concepts["native"] for concepts in concept_samples],
                     (
-                        self.native_concepts.annotation
+                        self.native_concepts.annotations
                         if self.native_concepts is not None
                         else None
                     ),
@@ -355,7 +355,7 @@ class ConceptDataset(Dataset):
                 "generated": {
                     name: collate_optional(
                         [concepts["generated"][name] for concepts in concept_samples],
-                        self.generated_concepts[name].annotation,
+                        self.generated_concepts[name].annotations,
                         f"generated concepts {name!r}",
                     )
                     for name in generated_keys
@@ -409,18 +409,18 @@ class ConceptDataset(Dataset):
         """
         if self.concepts is None:
             return []
-        return self.concepts.annotation.labels
+        return self.concepts.annotations.labels
 
     @property
     def annotations(self) -> Optional[Annotations]:
         """The concept schema: a categorical concept keeps its cardinality, so a
         model can size its variables. Native ground truth returns the declared
         schema, a generated one the annotation its pipeline produced.
-        ``concepts.annotation`` describes the stored tensor instead — one column
+        ``concepts.annotations`` describes the stored tensor instead — one column
         per concept when native, whatever the pipeline shipped when generated."""
         if self._ground_truth_source == "native" and self._annotations is not None:
             return self._annotations
-        return self.concepts.annotation if self.concepts is not None else None
+        return self.concepts.annotations if self.concepts is not None else None
 
     @property
     def shape(self) -> tuple:
@@ -667,7 +667,7 @@ class ConceptDataset(Dataset):
         def subset_concepts(values: AnnotatedTensor) -> AnnotatedTensor:
             return AnnotatedTensor(
                 values.tensor[row_indices],
-                values.annotation,
+                values.annotations,
                 axis=1,
             )
 
@@ -793,7 +793,7 @@ class ConceptDataset(Dataset):
             normalized[name] = (
                 values
                 if values.axis == 1
-                else AnnotatedTensor(values.tensor, values.annotation, axis=1)
+                else AnnotatedTensor(values.tensor, values.annotations, axis=1)
             )
 
         selects_generated = bool(normalized) and (
@@ -843,8 +843,8 @@ class ConceptDataset(Dataset):
             selected = None
             self._ground_truth_source = None
         self.concepts = selected
-        self._ground_truth_annotation = (
-            selected.annotation if selected is not None else None
+        self._ground_truth_annotations = (
+            selected.annotations if selected is not None else None
         )
 
     def _resolve_generated_gt_name(self) -> str:
@@ -880,7 +880,7 @@ class ConceptDataset(Dataset):
             concept_names_subset: List of strings naming the subset of concepts to use.
                                     If :obj:`None`, will use all concepts.
         """
-        self._all_concept_annotation = annotations
+        self._all_concept_annotations = annotations
         if concept_names_subset is not None:
             self._annotations = annotations.subset(concept_names_subset)
 
@@ -951,7 +951,7 @@ class ConceptDataset(Dataset):
             )
 
         selected_labels = list(self._annotations.labels)
-        missing = [label for label in selected_labels if label not in concepts.annotation.labels]
+        missing = [label for label in selected_labels if label not in concepts.annotations.labels]
         if missing:
             raise ValueError(f"Native concepts are missing required labels: {missing}.")
         concepts = concepts[selected_labels]

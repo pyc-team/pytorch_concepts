@@ -21,7 +21,7 @@ without you wiring anything up by hand.
 
 A loss is built from four pieces:
 
-- **ModelOutput** — the single object every term is scored on.
+- **loss(input, target, model)** — the one call every term answers.
 - :class:`~torch_concepts.nn.ConceptLoss` — Loss for concept supervision.
   Permit to specify one objective per concept **type** (binary, categorical, continuous).
 - :class:`~torch_concepts.nn.ConceptSubset` — restricts a loss to a **named
@@ -35,24 +35,33 @@ Expand each block below for an explanation and an example.
 .. dropdown:: What a loss receives
     :icon: package
 
-    A forward pass returns a :class:`~torch_concepts.nn.ModelOutput`. Every loss
-    term — built-in or your own — reads what it needs from it:
+    Every loss term — built-in or your own — is called as
+    ``loss(input, target=None, model=None)``:
 
     ::
 
-        model(query=..., evidence=...)  →  ModelOutput
+        input = InferenceOutput  ←  model(query=..., evidence=...)
           ├── params         predicted distribution parameters {'logits'|'probs': ..., ...}; sliced by quantity or by variable name
           ├── guide_params   same, for a variational guide's latents
           ├── samples        per-variable realisations; sliced by variable name
-          ├── probabilities  P(query | evidence); one value per query, not sliceable
-          ├── target         concept-space ground truth; sliced by variable name
-          └── extra          anything else a term needs; sliced by key   ←  ``default_extra``
+          └── probabilities  P(query | evidence); one value per query, not sliceable
+        target = dict of batch tensors: the concept ground truth under 'c', the inputs under their batch keys ('x')
+        model = the module being trained
 
-    The first four fields are filled by the inference engine. ``extra`` is where the model
-    publishes everything else a term might need — the raw input, an intermediate embedding,
-    a per-sample weight — by overriding ``default_extra``.
+    A term reads whichever of the three it needs: a latent or an embedding is a
+    queried variable of ``input``, the observed image is ``target['x']``, a
+    penalty on weights reads ``model``. Under |pl_logo| Lightning the learner
+    passes all three, building ``target`` with the model's ``prepare_target(batch)``
+    — override it to organize the target for your model. In a manual loop pass
+    what your terms use. A bare
+    :class:`~torch_concepts.AnnotatedTensor` as ``target`` stands for the
+    concepts, so ``loss_fn(out, c)`` is enough for concept supervision.
 
-    Each loss term can then read whichever fields of the ModelOutput it needs.
+    A model that answers in several ``query`` calls merges the results into the
+    one ``input`` a loss takes with
+    :meth:`~torch_concepts.nn.InferenceOutput.union_with`; the same variable
+    queried twice is told apart first with
+    :meth:`~torch_concepts.nn.InferenceOutput.rename_variable`.
 
 
 .. dropdown:: ConceptLoss
@@ -103,8 +112,9 @@ Expand each block below for an explanation and an example.
 
     **A term declares what it wants.** ``ConceptLoss`` reads each term's
     ``forward`` signature once, at construction, and passes exactly the
-    arguments it names — so two terms on the same type can want different
-    things from the very same call:
+    arguments it names out of ``input``, ``target``, ``padding_mask``
+    (categorical) and ``scale`` (continuous) — so two terms on the same type can
+    want different things from the very same call:
 
     .. code-block:: python
 
@@ -117,6 +127,10 @@ Expand each block below for an explanation and an example.
        )
        # BCEWithLogitsLoss receives (input, target); PenalizeLarge receives
        # only (input) — both come from the same ConceptLoss.forward() call.
+
+    **Two tensors.** ``ConceptLoss`` alone also takes a bare prediction tensor:
+    ``loss_fn(preds, c)``, each concept's type read from the annotation of
+    ``preds``.
 
 
 .. dropdown:: ConceptSubset
@@ -162,8 +176,8 @@ Expand each block below for an explanation and an example.
 
        class GlobalLogitL1(PyCLoss):
            """L1 over *every* reported logit at once."""
-           def forward(self, output, target=None):
-               return 0.01 * output.logits.tensor.abs().mean()
+           def forward(self, input, target=None, model=None):
+               return 0.01 * input.logits.tensor.abs().mean()
 
        loss_fn = CompositeLoss(
            terms=[ConceptLoss(binary=torch.nn.BCEWithLogitsLoss(),
@@ -224,93 +238,6 @@ Expand each block below for an explanation and an example.
        one number to read.
 
 
-.. dropdown:: ``default_extra`` — publishing anything else a loss term needs
-    :icon: plug
-
-    ``params``, ``guide_params`` and ``target`` cover what the PGM computes.
-    Everything else a loss might want — the raw evidence, an intermediate
-    embedding, a mask, a per-sample weight — goes through one model hook:
-
-    .. code-block:: python
-
-       class MyModel(ConceptBottleneckModel):
-           def default_extra(self, evidence, query=None):
-               return {"evidence": evidence}      # or None for nothing
-
-    The returned dict lands **verbatim** on ``out.extra`` on every forward pass —
-    it is the model's ``forward`` that calls it, so this works identically in a
-    manual |pytorch_logo| PyTorch loop and under |pl_logo| Lightning. It is
-    called with the ``evidence`` dict and the ``query`` of that pass, so the
-    extras can depend on both.
-
-    There are two ways a term reads it, and which one applies depends on where
-    the term sits:
-
-    .. list-table::
-       :widths: 34 66
-       :header-rows: 1
-
-       * - Term
-         - How it gets the extra
-       * - inside a ``ConceptLoss`` per-type list
-         - ``extra`` is spread as keyword arguments, so **the dict key is the
-           argument name**. Declare it in ``forward`` and it arrives.
-       * - a ``PyCLoss`` in a ``CompositeLoss``
-         - reads ``output.extra[...]`` itself — e.g.
-           :class:`~torch_concepts.nn.MSEReconstructionLoss` looks up
-           ``output.extra['evidence'][variable]``.
-
-    **Example for case 1 — access extra in a ConceptLoss term.** The key
-    ``'embeddings'`` and the argument ``embeddings`` are the same name; that is
-    the whole coupling:
-
-    .. code-block:: python
-
-       from torch_concepts.nn import ConceptBottleneckModel, ConceptLoss
-
-       class CBMWithEmbeddings(ConceptBottleneckModel):
-           def default_extra(self, evidence, query=None):
-               # Runs on every forward pass, so keep it cheap — or cache it.
-               return {'embeddings': self.backbone(evidence['input'])}
-
-       class EmbeddingReg(torch.nn.Module):
-           # `input` is the binary slice; `embeddings` comes from extra, by name.
-           def forward(self, input, embeddings):
-               return 0.01 * embeddings.pow(2).mean()
-
-       loss_fn = ConceptLoss(
-           binary=[torch.nn.BCEWithLogitsLoss(), EmbeddingReg()],
-           binary_weights=[1.0, 0.5],
-       )
-
-    **Example for case 2 — access extra in any other loss term.** A
-    reconstruction term reads the evidence straight off the output — no
-    per-type routing, and no ``CompositeLoss`` needed to show the mechanism:
-
-    .. code-block:: python
-
-       from torch_concepts.nn import ConceptBottleneckModel, PyCLoss
-
-       class CBMWithEvidence(ConceptBottleneckModel):
-           def default_extra(self, evidence, query=None):
-               return {"evidence": evidence}
-
-       class ReconstructionTerm(PyCLoss):
-           # Reads `output.extra['evidence']` itself — no per-type routing.
-           def forward(self, output, target=None):
-               observed = output.extra['evidence']['input']
-               predicted = output.params['value']['input']
-               return (predicted - observed).pow(2).mean()
-
-    Two things to keep in mind:
-
-    - Extras are offered to **every** type's terms, so a term that declares
-      ``embeddings`` receives it whether it is scoring binary or categorical
-      concepts.
-    - Avoid the reserved names ``input``, ``target``, ``scale`` and
-      ``padding_mask``: extras are merged last and would shadow them.
-
-
 .. dropdown:: Reading and debugging the objective
     :icon: bug
 
@@ -322,7 +249,7 @@ Expand each block below for an explanation and an example.
 
     .. code-block:: python
 
-       for name, value in loss_fn.breakdown(out, c).items():
+       for name, value in loss_fn.breakdown(out, {'x': x, 'c': c}).items():
            print(f"{name:24s} {value.item():.4f}")
        # MSEReconstructionLoss    412.8317
        # KLDivergenceLoss          18.4402
@@ -345,16 +272,16 @@ Expand each block below for an explanation and an example.
          - The output carries no quantity for any configured type. Check the
            model's ``param_for_discrete_var``, and that the target covers those
            concepts.
-       * - ``TypeError: forward() missing ... 'embeddings'``
-         - A term declares a name that nothing published. Return it from
-           ``default_extra`` — the key and the argument name must match.
+       * - ``KeyError: 'x'``
+         - A term reads a batch entry the ``target`` dict does not carry — in a
+           manual loop, pass ``{'x': x, 'c': c}`` rather than ``c`` alone.
 
 
 .. dropdown:: Putting it together: an ELBO
     :icon: rocket
 
     A concept bottleneck VAE's objective is four independent terms, each reading
-    a different part of the same output — reconstruction from ``extra['evidence']``,
+    a different part of the same call — reconstruction against ``target['x']``,
     the KL from ``guide_params``, supervision from the concept slice, and an
     orthogonality penalty from two ``Delta`` variables:
 
@@ -382,13 +309,6 @@ Expand each block below for an explanation and an example.
        trainer = Trainer(max_epochs=100)
        trainer.fit(model, datamodule=datamodule)
 
-    The model supplies the missing piece by publishing its evidence:
-
-    .. code-block:: python
-
-       def default_extra(self, evidence, query=None):
-           return {"evidence": evidence}
-
     Each term is logged separately as ``train_recon``, ``train_kl``, … so a
     collapsing KL is visible from the first epochs.
 
@@ -399,6 +319,6 @@ Next Steps
 - Browse the loss classes in the :doc:`API reference </modules/nn.loss>`.
 - :doc:`Contributing a New Loss <contributing_loss>` — adding a term to the library.
 - :doc:`Out-of-the-box Models <using_high_level>` — training with a loss attached.
-- Check out the `example scripts <https://github.com/pyc-team/pytorch_concepts/tree/master/examples/utilization/2_model>`_:
-  ``7`` per-type routing, ``13`` composition and weights, ``14`` kwarg routing
-  and ``default_extra``, ``15`` a full ELBO.
+- See the examples :doc:`Composing Losses </auto_examples/high_level/06_losses>` (per-type
+  routing, concept groups and custom terms) and
+  :doc:`Concept Bottleneck VAE </auto_examples/high_level/09_concept_bottleneck_vae>` (a full ELBO).

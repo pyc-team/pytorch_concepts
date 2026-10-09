@@ -169,7 +169,8 @@ class Annotations:
     #: Caches that carry ``groups`` into derived annotations, dropped whenever
     #: ``groups`` is reassigned. Everything else derives from the write-once
     #: structural fields, so only these need invalidating.
-    _GROUP_DERIVED_CACHES = ('_subset_cache', '_slice_cache', '_concept_space_view')
+    _GROUP_DERIVED_CACHES = ('_subset_cache', '_slice_cache', '_concept_space_view', '_union_cache',
+                             '_rename_cache')
 
     def __setattr__(self, key, value):
         # ``groups`` is the one field that may change after construction, so it is
@@ -635,10 +636,10 @@ class Annotations:
         return labels
 
     def resolve(self, keys, cache_key=None) -> Tuple[Union[slice, List[int]], "Annotations"]:
-        """Resolve concept/plate names to ``(selector, sub_annotation)``, memoised.
+        """Resolve concept/plate names to ``(selector, sub_annotations)``, memoised.
 
         ``selector`` is a ``slice`` for a contiguous column run (indexing it returns
-        a tensor view) or a ``List[int]`` otherwise; ``sub_annotation`` is the
+        a tensor view) or a ``List[int]`` otherwise; ``sub_annotations`` is the
         matching :meth:`subset`. This is the hot entry point for label-based tensor
         slicing — results are cached on the annotation, so repeating a lookup is
         O(1). Pass ``cache_key`` (e.g. a concept-type string) to key the cache by a
@@ -787,7 +788,15 @@ class Annotations:
         return result
 
     def rename(self, mapping) -> "Annotations":
-        """New annotations with labels renamed; `mapping` is a dict or a callable."""
+        """New annotations with labels renamed; `mapping` is a dict or a callable.
+
+        Memoised for a dict: renaming the same way again returns the same object,
+        so caches keyed on it (e.g. :meth:`union_with`'s) stay warm and bounded.
+        """
+        key = tuple(mapping.items()) if isinstance(mapping, dict) else None
+        cache = self.__dict__.setdefault('_rename_cache', {})
+        if key in cache:
+            return cache[key]
         fn = mapping.get if isinstance(mapping, dict) else mapping
         result = Annotations(
             labels=[fn(l) or l for l in self.labels],
@@ -795,6 +804,10 @@ class Annotations:
             types=list(self.types),
             concept_space=self.concept_space,
         )
+        result._carry_groups({fn(owner) or owner: [fn(m) or m for m in members]
+                              for owner, members in self.label_groups.items()})
+        if key is not None:
+            cache[key] = result
         return result
 
 
@@ -832,6 +845,14 @@ class Annotations:
         return result
 
     def union_with(self, other: "Annotations") -> "Annotations":
+        # Memoised per `other`: an engine reuses one annotation per query, so the
+        # merge of successive queries is rebuilt once, not every forward, and the
+        # caches downstream (slicing, per-type views) stay warm on the result.
+        # ponytail: keeps `other` alive and misses a group registered on it later.
+        cache = self.__dict__.setdefault('_union_cache', {})
+        hit = cache.get(id(other))
+        if hit is not None and hit[0] is other:
+            return hit[1]
         left = list(self.labels)
         right_only = [l for l in other.labels if l not in set(left)]
         labels = left + right_only
@@ -856,4 +877,5 @@ class Annotations:
         # Left wins on a clash.
         result._carry_groups(other.groups)
         result._carry_groups(self.groups)
+        cache[id(other)] = (other, result)
         return result

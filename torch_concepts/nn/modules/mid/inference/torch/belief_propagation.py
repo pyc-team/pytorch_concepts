@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 from typing import Dict, List, Optional, Tuple, Union
 
 import torch
@@ -10,7 +9,7 @@ import torch
 from ...graph.probabilistic_model import ProbabilisticModel
 from ...variable import Variable
 from ....outputs import InferenceOutput
-from ..utils import enumerable_cardinality, reshape_value_to_event
+from ..utils import enumerable_cardinality, factor_table, unpack_plates
 from .base import TorchBaseInference
 
 
@@ -104,16 +103,6 @@ class BeliefPropagation(TorchBaseInference):
         )
 
     # ------------------------------------------------------------------ utils
-    def _dtype(self) -> torch.dtype:
-        try:
-            return next(self.pgm.parameters()).dtype
-        except StopIteration:
-            return torch.get_default_dtype()
-
-    def _format_evidence(self, variable: Variable, value: torch.Tensor) -> torch.Tensor:
-        """Cast to the model dtype and reshape to ``(*leading, *variable.shape)``."""
-        return reshape_value_to_event(variable, value.to(self._dtype()))
-
     @staticmethod
     def _norm(v: torch.Tensor) -> torch.Tensor:
         """normalize by subtracting the log-partition of the state axis."""
@@ -139,128 +128,6 @@ class BeliefPropagation(TorchBaseInference):
         block[a] = msg.shape[-1]
         return msg.reshape(*msg.shape[:-1], *block)
 
-    @staticmethod
-    def _scope_entries(factor) -> List[Tuple[Variable, List[str]]]:
-        """Each scope entry paired with the member names it covers.
-
-        The unit of inference is a plate **member**, not a plate: a whole-plate
-        scope entry covers all of its members, a member handle covers just
-        itself, and an ordinary variable covers itself (its ``members`` is
-        ``[name]``, so it is a degenerate plate and needs no special case).
-        """
-        return [
-            (s, list(s.members) if s is s.plate else [s.name])
-            for s in factor.scope
-        ]
-
-    def _free_members(self, factor, node_index: Dict[str, int]) -> List[str]:
-        """The factor's scope members that are free, in scope order, deduped."""
-        free: List[str] = []
-        for _, names in self._scope_entries(factor):
-            free.extend(m for m in names if m in node_index and m not in free)
-        return free
-
-    def _encode_states(
-        self,
-        v: Variable,
-        states: torch.Tensor,
-        leading: torch.Size,
-        dtype: torch.dtype,
-    ) -> torch.Tensor:
-        """Value tensor for a whole *grid* of discrete states of ``v``.
-
-        ``states`` is a ``(grid,)`` vector of state indices; the result is
-        ``(grid, *leading, width)`` — scalar ``{0., 1.}`` for a binary variable,
-        one-hot otherwise — broadcast (as a view) over the leading dimensions.
-        Batching the grid into a leading axis is what lets a factor's whole
-        table come out of a *single* ``log_potential`` call instead of one call
-        per cell.
-        """
-        card = enumerable_cardinality(v)
-        if card == 2 and v.size == 1:
-            width = 1
-            flat = states.to(dtype).unsqueeze(-1)
-        else:
-            width = v.size
-            flat = torch.nn.functional.one_hot(states, v.size).to(dtype)
-        grid = int(states.shape[0])
-        return flat.reshape(grid, *([1] * len(leading)), width).expand(
-            grid, *leading, width
-        )
-
-    def _factor_table(
-        self,
-        factor,
-        free_members: List[str],
-        handles: Dict[str, Variable],
-        member_blocks: Dict[str, torch.Tensor],
-        leading: torch.Size,
-        dtype: torch.dtype,
-        device: torch.device,
-    ) -> Optional[torch.Tensor]:
-        """Log-potential table over ``free_members`` (axis order preserved).
-
-        The free grid is enumerated into a **leading** axis and scored in one
-        ``factor.log_potential`` call — uniform for CPDs and energy-based
-        potentials alike, since both accept any number of leading dimensions.
-        Observed members read their value from ``member_blocks`` and are baked
-        in (factor reduction), which is also how *continuous* evidence enters.
-        Returns ``None`` when the factor has no free member: it is then a
-        constant w.r.t. the active variables and contributes nothing.
-
-        Because the enumeration is per **member**, a scope entry naming a whole
-        plate has to be handed back the plate's full-width value: its members'
-        blocks — enumerated or observed, in member order — are concatenated on
-        the event axis before scoring. A member handle in the scope is keyed by
-        its own name, which ``ParametricFactor.resolve_value`` looks up first,
-        so no reassembly is needed there.
-
-        The result is shaped ``(*leading, *free_cards)`` — the state axes are
-        appended after however many leading dimensions the query carries.
-
-        NOTE: folding the grid into the batch is transparent to any module that
-        acts **per element**, including ``nn.Dropout`` — its mask has the shape
-        of its input, so every cell of the table still gets an independent mask,
-        exactly as when the cells were scored one call at a time. What *does*
-        change is a module that couples across the batch (``BatchNorm`` in
-        training mode, or anything reducing over the batch axis): its statistics
-        are now taken over ``grid * leading`` rows rather than ``leading``. Such
-        a module makes ``log_potential`` batch-dependent, which is outside the
-        factor contract to begin with.
-        """
-        free_cards = [enumerable_cardinality(handles[m]) for m in free_members]
-        if not free_cards:
-            return None
-        grid = math.prod(free_cards)
-
-        # ``cartesian_prod`` enumerates in C order (last slot varies fastest),
-        # which is what makes the final reshape map axis ``a`` to slot ``a``.
-        states = torch.cartesian_prod(
-            *[torch.arange(c, device=device) for c in free_cards]
-        ).reshape(grid, len(free_cards))
-        blocks: Dict[str, torch.Tensor] = {
-            m: self._encode_states(handles[m], states[:, a], leading, dtype)
-            for a, m in enumerate(free_members)
-        }
-
-        def block(name: str) -> torch.Tensor:
-            """This member's ``(grid, *leading, width)`` value: enumerated or observed."""
-            if name in blocks:
-                return blocks[name]
-            observed = member_blocks[name]
-            return observed.unsqueeze(0).expand(grid, *observed.shape)
-
-        assignment: Dict[Variable, torch.Tensor] = {}
-        for entry, names in self._scope_entries(factor):
-            parts = [block(m) for m in names]
-            assignment[entry] = (
-                parts[0] if len(parts) == 1 else torch.cat(parts, dim=-1)
-            )
-
-        logp = factor.log_potential(assignment).reshape(grid, *leading)
-        # (grid, *leading) -> (*leading, grid) -> (*leading, *free_cards)
-        return torch.movedim(logp, 0, -1).reshape(*leading, *free_cards)
-
     # ------------------------------------------------------------------ query
     def query(
         self,
@@ -278,42 +145,27 @@ class BeliefPropagation(TorchBaseInference):
         dtype = self._dtype()
         device = tensors[0].device if tensors else torch.device("cpu")
 
-        # Evidence is flattened to one block per observed **member**, so a whole
-        # variable, a whole plate and a subset of a plate's members are all the
-        # same thing downstream: some members have a value, the rest are free.
-        whole_ev, member_ev = self._split_evidence(evidence)
-        member_blocks: Dict[str, torch.Tensor] = {}
-        for name, value in whole_ev.items():
-            var = self.pgm.variables[name]
-            observed = self._format_evidence(var, value)
-            for m in var.members:
-                member_blocks[m] = var.select_value(observed, m)
-        for owner_name, members in member_ev.items():
-            owner = self.pgm.variables[owner_name]
-            for m, value in members.items():
-                member_blocks[m] = reshape_value_to_event(
-                    owner.member(m), value.to(dtype)
-                )
+        # BP has no use for plates: it runs on a model where every member is its
+        # own variable, so every factor scope entry is a single variable and the
+        # enumeration is per member. Local, never a submodule — see unpack_plates.
+        model = unpack_plates(self.pgm)
+        member_blocks = self.member_evidence(evidence, dtype)
 
-        # Active = free members of a variable that participates in some factor.
-        # Model order, so the node axis is deterministic across queries. An
-        # ordinary variable is a one-member plate, so it needs no special case.
+        # Active = free variables that participate in some factor. Model order,
+        # so the node axis is deterministic across queries.
         nodes: List[Variable] = [
-            v.member(m) if v.is_plate else v
-            for v in self.pgm.variables.values()
-            if self.pgm.factor_names_of(v.name)
-            for m in v.members
-            if m not in member_blocks
+            v for v in model.variables.values()
+            if model.factor_names_of(v.name) and v.name not in member_blocks
         ]
         if not nodes:
             return InferenceOutput(params=self._assemble_params({}, query_names))
-        # Enumerability precondition (raises a clear error for continuous free
-        # vars). Asking a *member* is also what fixes a plate: a member of a
-        # Bernoulli plate is one bit (2 states), not a size-k bit vector.
+        # Enumerability precondition: raises a clear error for a continuous free
+        # variable. One unpacked member of a Bernoulli plate is one bit (2
+        # states), which is exactly what makes this well defined.
         cards = [enumerable_cardinality(n) for n in nodes]
 
         bias, vid, pad, buckets = self._compile(
-            nodes, cards, member_blocks, leading, dtype, device
+            model, nodes, cards, member_blocks, leading, dtype, device
         )
 
         # ══ R. READOUT ═════════════════════════════════════════════════════
@@ -330,40 +182,14 @@ class BeliefPropagation(TorchBaseInference):
         }
         return InferenceOutput(
             params=self._assemble_params(
-                self._regroup(marginals, member_blocks), query_names
+                self.regroup_members(marginals, member_blocks), query_names
             )
         )
-
-    def _regroup(
-        self,
-        marginals: Dict[str, torch.Tensor],
-        member_blocks: Dict[str, torch.Tensor],
-    ) -> Dict[str, Dict[str, torch.Tensor]]:
-        """Per-member marginals -> the per-*variable* dict ``_assemble_params`` wants.
-
-        A variable's members are concatenated back into one ``(*leading, size)``
-        tensor in member order. On a partially observed plate the observed
-        members contribute their evidence, which is exactly their posterior:
-        conditioning makes ``P(x_m | e)`` a point mass at the observed value.
-        A variable with no free member at all emits nothing, mirroring the rule
-        that a fully-observed queried variable reports no parameters.
-        """
-        computed: Dict[str, Dict[str, torch.Tensor]] = {}
-        for var in self.pgm.variables.values():
-            if not any(m in marginals for m in var.members):
-                continue
-            parts = [
-                marginals[m] if m in marginals else member_blocks[m]
-                for m in var.members
-            ]
-            computed[var.name] = {
-                "probs": parts[0] if len(parts) == 1 else torch.cat(parts, dim=-1)
-            }
-        return computed
 
     # ---------------------------------------------------------------- compile
     def _compile(
         self,
+        model: "ProbabilisticModel",
         nodes: List[Variable],
         cards: List[int],
         member_blocks: Dict[str, torch.Tensor],
@@ -392,9 +218,13 @@ class BeliefPropagation(TorchBaseInference):
         edge_var: List[int] = []
         raw: Dict[Tuple[int, ...], Tuple[List[torch.Tensor], List[List[int]]]] = {}
 
-        for f in self.pgm.factors.values():
-            free_vars = self._free_members(f, vindex)
-            table = self._factor_table(
+        for f in model.factors.values():
+            # Free scope entries in scope order; ``fromkeys`` dedupes a
+            # variable named twice (e.g. a plate and one of its members).
+            free_vars = list(dict.fromkeys(
+                v.name for v in f.scope if v.name in vindex
+            ))
+            table = factor_table(
                 f, free_vars, handles, member_blocks, leading, dtype, device
             )
             if table is None:

@@ -343,7 +343,11 @@ class VariationalInference(PyroBaseInference):
         # engine's contract the *latents* are precisely the variables absent from
         # ``query``, and their model-side parameters are what a KL term needs.
         out = InferenceOutput(
-            params=self._assemble_params(model_params, []),
-            guide_params=self._assemble_params(guide_params, []),
+            params=self._assemble_params(
+                self._flatten_multidim_events(model_params), []
+            ),
+            guide_params=self._assemble_params(
+                self._flatten_multidim_events(guide_params), []
+            ),
         )
         return self._restore_output_leading(out, leading)
