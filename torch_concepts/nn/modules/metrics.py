@@ -6,7 +6,8 @@ from torchmetrics import Metric, MetricCollection
 from copy import deepcopy
 
 from ...annotations import Annotations
-from .outputs import CONTINUOUS_QUANTITIES, ModelOutput, supervised_subset
+from .outputs import (CONTINUOUS_QUANTITIES, DISCRETE_QUANTITIES, InferenceOutput,
+                      resolve_quantity, supervised_subset)
 from .utils import by_type, check_collection
 
 
@@ -289,8 +290,11 @@ class ConceptMetrics(nn.Module):
             if tensor is not None and name in tensor.annotations.label_to_index:
                 # Hand torchmetrics a plain tensor; the annotation is no longer
                 # needed and would make each internal torch.* op pay the
-                # __torch_function__ cost.
-                return tensor[name].tensor
+                # __torch_function__ cost. Discrete ones as probabilities (see update).
+                pred = tensor[name].tensor
+                if quantity == 'logits':
+                    pred = pred.sigmoid() if concept_type == 'binary' else pred.softmax(-1)
+                return pred
         raise KeyError(
             f"ConceptMetrics: no {' or '.join(quantities)} reported for {concept_type} "
             f"concept {name!r}; the output carries {tuple(out.params)}."
@@ -325,34 +329,34 @@ class ConceptMetrics(nn.Module):
         cat_target = cat_target.T.reshape(-1).long()
         return cat_pred, cat_target
 
-    def update(self, preds, target: torch.Tensor = None):
+    def update(self, preds, target: torch.Tensor):
         """Update metrics by routing predictions to the correct type collection.
 
         Summary metrics receive aggregated data for all concepts of a type.
         Per-concept metrics receive individual concept data.
 
         Args:
-            preds: A ``ModelOutput`` or a single :class:`AnnotatedTensor` of
+            preds: A ``InferenceOutput`` or a single :class:`AnnotatedTensor` of
                 discrete predictions.
-            target: Annotated concept-space ground truth. Defaults to
-                ``preds.target`` when *preds* is a ``ModelOutput``; required
-                otherwise.
+            target: Annotated concept-space ground truth.
         """
-        # A ModelOutput carries one AnnotatedTensor per quantity (logits/probs for
+        # A InferenceOutput carries one AnnotatedTensor per quantity (logits/probs for
         # discrete concepts, loc/scale for continuous); each type is scored on the
         # quantity that represents it. A bare tensor is taken as the discrete params.
-        if isinstance(preds, ModelOutput):
+        if isinstance(preds, InferenceOutput):
             out = preds
-            target = target if target is not None else out.target
         else:
-            out = ModelOutput()
+            out = InferenceOutput()
             out.logits = preds
 
-        discrete = out.logits if out.logits is not None else out.probs
-        # `loc` for a Normal, `value` for a Delta (a deterministic point estimate) —
-        # mirrors the discrete fallback above; unlike *_param on ConceptLoss, there
-        # is no per-instance config here, so both quantities are always tried.
-        continuous = out.loc if out.loc is not None else out.value
+        # The same quantity ConceptLoss reads (see resolve_quantity): `loc` for a
+        # Normal, `value` for a Delta; logits before probs.
+        discrete = resolve_quantity(out.params, None, DISCRETE_QUANTITIES, target)
+        continuous = resolve_quantity(out.params, None, CONTINUOUS_QUANTITIES, target)
+        # torchmetrics guesses logits vs probabilities from the value range, so
+        # logits that all fall in [0, 1] would read as probabilities: hand it
+        # probabilities always (sigmoid / softmax below).
+        from_logits = discrete is out.logits
         any_pred = discrete if discrete is not None else continuous
         if any_pred is None or any_pred.shape[0] == 0:
             return
@@ -373,10 +377,13 @@ class ConceptMetrics(nn.Module):
             # torchmetrics makes each internal torch.* op re-enter the
             # __torch_function__ unwrap hook (the dominant per-update cost).
             if binary is not None and len(self.binary):
-                self.binary.update(binary.tensor, target[binary.annotations.labels].tensor.float())
+                pred = binary.tensor.sigmoid() if from_logits else binary.tensor
+                self.binary.update(pred, target[binary.annotations.labels].tensor.float())
             if categorical is not None and len(self.categorical):
                 cat_pred, cat_target = self._prepare_categorical(
                     categorical, target[categorical.annotations.labels])
+                # The -inf padding becomes probability 0 either way.
+                cat_pred = cat_pred.softmax(-1) if from_logits else cat_pred.clamp_min(0)
                 self.categorical.update(cat_pred, cat_target)
             if continuous is not None and len(self.continuous):
                 self.continuous.update(

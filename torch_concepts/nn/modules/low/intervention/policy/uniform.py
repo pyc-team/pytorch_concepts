@@ -18,7 +18,7 @@ class UniformPolicy(InterventionPolicy):
 
     def forward(
         self,
-        concepts: torch.Tensor,
+        x: torch.Tensor,
         *args,
         **kwargs
     ) -> torch.Tensor:
@@ -26,9 +26,9 @@ class UniformPolicy(InterventionPolicy):
         Generate uniform (zero) intervention scores.
 
         Args:
-            concepts: Input concepts of shape (batch_size, n_concepts).
+            x: Layer output of shape (batch_size, n_concepts).
 
         Returns:
             torch.Tensor: Zeros tensor of same shape as input.
         """
-        return torch.zeros_like(concepts)
+        return torch.zeros_like(x)

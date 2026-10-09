@@ -46,13 +46,13 @@ def ensure_list(value: Any) -> List:
 
 
 def resolve_hf_token() -> Optional[str]:
-    """Resolve an HF token from env vars or conceptarium.env fallback.
+    """Resolve an HF token from env vars or torch_concepts.env fallback.
 
     Priority order:
     1. HF_TOKEN
     2. HUGGINGFACE_HUB_TOKEN
     3. HUGGINGFACEHUB_TOKEN
-    4. conceptarium.env.HUGGINGFACEHUB_TOKEN (if importable)
+    4. torch_concepts.env.HUGGINGFACEHUB_TOKEN
     """
     token = (
         os.environ.get("HF_TOKEN")
@@ -63,7 +63,7 @@ def resolve_hf_token() -> Optional[str]:
         return token
 
     try:
-        from conceptarium.env import HUGGINGFACEHUB_TOKEN as config_token
+        from torch_concepts.env import HUGGINGFACEHUB_TOKEN as config_token
     except Exception:
         config_token = None
 

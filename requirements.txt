@@ -1,7 +1,8 @@
 scikit-learn
 scipy
-torch
-pytorch-minimize
+numpy
+torch>=2.6
+torchmetrics
 pgmpy
 pandas
 pytorch-lightning
@@ -9,3 +10,4 @@ networkx
 sympy
 sympytorch
 pyro-ppl
+tqdm

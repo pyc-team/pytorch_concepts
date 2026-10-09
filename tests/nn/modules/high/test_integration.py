@@ -69,9 +69,8 @@ class TestHighLevelIntegration(unittest.TestCase):
             torch.randint(0, 4, (8, 1)),   # task: 4-class
         ], dim=1).float()
 
-        # Attach target and compute ConceptLoss
-        out.target = AnnotatedTensor(target, self.ann.to_concept_space())
-        loss_value = loss_fn(out)
+        target = AnnotatedTensor(target, self.ann.to_concept_space())
+        loss_value = loss_fn(out, target)
 
         self.assertIsInstance(loss_value, torch.Tensor)
         self.assertEqual(loss_value.shape, ())
@@ -105,8 +104,8 @@ class TestHighLevelIntegration(unittest.TestCase):
             torch.randint(0, 4, (8, 1)),
         ], dim=1).float()
 
-        out.target = AnnotatedTensor(target, self.ann.to_concept_space())
-        metrics.update(out)
+        target = AnnotatedTensor(target, self.ann.to_concept_space())
+        metrics.update(out, target)
 
         results = metrics.compute()
         self.assertIsInstance(results, dict)
@@ -147,12 +146,12 @@ class TestHighLevelIntegration(unittest.TestCase):
 
             optimizer.zero_grad()
             out = model(query=query, input=x)
-            out.target = AnnotatedTensor(target, self.ann.to_concept_space())
-            loss_value = loss_fn(out)
+            target = AnnotatedTensor(target, self.ann.to_concept_space())
+            loss_value = loss_fn(out, target)
             loss_value.backward()
             optimizer.step()
 
-            metrics.update(out)
+            metrics.update(out, target)
 
         results = metrics.compute()
         self.assertIsInstance(results, dict)

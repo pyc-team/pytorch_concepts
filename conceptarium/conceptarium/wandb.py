@@ -9,7 +9,7 @@ from omegaconf import OmegaConf
 from pytorch_lightning import LightningDataModule, LightningModule
 from torch import cuda
 
-from env import CACHE, PROJECT_NAME, WANDB_ENTITY
+from torch_concepts.env import CACHE, PROJECT_NAME, WANDB_ENTITY
 from hydra.utils import instantiate
 from wandb.apis.public import Run
 

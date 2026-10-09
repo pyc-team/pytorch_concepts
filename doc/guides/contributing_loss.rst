@@ -55,7 +55,7 @@ about getting a term into the library.
                   return self.scale * entropy[mask].mean()
               return torch.zeros((), device=input.device)
 
-   Check it against a ``ModelOutput`` built by hand — predictions live in
+   Check it against predictions and a target built by hand — predictions live in
    logit-space (one column per class), the target in concept-space (one column
    per concept), and both carry annotations so they can be aligned by name:
 
@@ -65,7 +65,6 @@ about getting a term into the library.
       import torch_concepts as pyc
       from torch_concepts.nn import ConceptLoss
       from torch_concepts.nn.modules.loss import EntropyRegularizer  # before export
-      from torch_concepts.nn.modules.outputs import ModelOutput
       from torch_concepts.tensor import AnnotatedTensor
 
       ann = pyc.Annotations(
@@ -79,12 +78,9 @@ about getting a term into the library.
           categorical=torch.nn.CrossEntropyLoss(),
       )
 
-      out = ModelOutput(
-          logits=AnnotatedTensor(torch.randn(8, 5), ann),                 # 1 + 3 + 1
-          target=AnnotatedTensor(torch.randint(0, 2, (8, 3)).float(),
-                                 ann.to_concept_space()),
-      )
-      print(loss_fn(out))   # scalar tensor
+      preds = AnnotatedTensor(torch.randn(8, 5), ann)                     # 1 + 3 + 1
+      target = AnnotatedTensor(torch.randint(0, 2, (8, 3)).float(), ann.to_concept_space())
+      print(loss_fn(preds, target))   # scalar tensor
 
 
 .. dropdown:: Registering

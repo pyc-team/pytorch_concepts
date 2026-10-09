@@ -69,9 +69,11 @@ class LinearConceptToConcept(BaseConceptLayer):
             in_concepts=in_concepts,
             out_concepts=out_concepts,
         )
+        # To init the linear, we use the resolved widths
+        # as in/out_concepts may be counts or Annotations.
         self.predictor = torch.nn.Linear(
-            in_concepts,
-            out_concepts,
+            self.in_concepts_shape,
+            self.out_concepts_shape,
             *args,
             **kwargs,
         )

@@ -30,6 +30,9 @@ def _bare_dataset(root, filename="x.png"):
     ds.embs_precomputed = False
     ds.input_data = [filename]
     ds.concepts = torch.zeros(1, 2)
+    ds.native_concepts = None
+    ds.generated_concepts = {}
+    ds.image_size = None
     return ds
 
 

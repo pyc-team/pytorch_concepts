@@ -462,6 +462,29 @@ img.inline-logo.tsl {
     opacity: 0.8;
 }
 
+/* Examples gallery: the examples are not run, so every thumbnail would be the
+   same placeholder image. Show the titles as text cards instead. */
+.sphx-glr-thumbcontainer img {
+    display: none;
+}
+
+.sphx-glr-thumbcontainer {
+    justify-content: center;
+    min-height: 5em;
+}
+
+/* No hover preview: it is sized for an image and gets cut off on text cards. */
+.sphx-glr-thumbcontainer[tooltip]:hover::before,
+.sphx-glr-thumbcontainer[tooltip]:hover::after {
+    display: none;
+}
+
+/* No "Go to the end to download" note on top of each example: the download
+   buttons at the end are enough. */
+.sphx-glr-download-link-note {
+    display: none;
+}
+
 /* Other */
 
 #furo-sidebar-ad-placement {

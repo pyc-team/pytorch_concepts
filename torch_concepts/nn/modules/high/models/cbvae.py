@@ -222,12 +222,12 @@ class ConceptBottleneckVAE(DirectedGraphModel):
     # Training hooks
     # ------------------------------------------------------------------
 
-    def default_query(self, c, step='train'):
+    def prepare_query(self, batch, step='train'):
         """Always query **every** variables. During train, observe concepts.
         During validation and test, do not observe any variables.
 
         Widens the base concept-only query
-        (:meth:`~torch_concepts.nn.modules.high.base.model.BaseModel.default_query`):
+        (:meth:`~torch_concepts.nn.modules.high.base.model.BaseModel.prepare_query`):
         :class:`~torch_concepts.nn.VariationalInference` requires all variables
         in the query — observed ones with values, latents absent or ``None`` —
         and the generative loss terms need the ones it would otherwise leave out:
@@ -236,13 +236,8 @@ class ConceptBottleneckVAE(DirectedGraphModel):
         """
         return {
             **{name: None for name in self.pgm.variables},
-            **super().default_query(c, step),
+            **super().prepare_query(batch, step),
         }
-
-    def default_extra(self, evidence, query=None):
-        """Publish the evidence so :class:`~torch_concepts.nn.MSEReconstructionLoss`
-        can score the observed variable (e.g. ``input``) against it."""
-        return {"evidence": evidence}
 
     # ------------------------------------------------------------------
     # Model assembly

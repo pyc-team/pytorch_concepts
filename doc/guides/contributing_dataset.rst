@@ -203,29 +203,21 @@ unless the on-disk files are missing.
               cardinalities   = [1, 3, 1, 1]
               types           = ["binary", "categorical", "continuous", "binary"]
 
-              # states: human-readable labels for each state of each concept
-              # (None for continuous concepts)
+              # states: one label per column, i.e. the class names of a
+              # categorical concept, and a single label for a binary or
+              # continuous one
               states = [
-                  ["non-smoker", "smoker"],             # smoker
+                  ["smoker"],                           # smoker (binary)
                   ["wild-type", "het", "hom"],          # genotype
-                  None,                                  # tar (continuous)
-                  ["no cancer", "cancer"],              # cancer
+                  ["tar"],                              # tar (continuous)
+                  ["cancer"],                           # cancer (binary)
               ]
-
-              # per-concept metadata (optional free-form dict)
-              metadata = {
-                  "smoker":   {"source": "self-report"},
-                  "genotype": {"source": "WGS"},
-                  "tar":      {"unit": "mg/cigarette"},
-                  "cancer":   {"icd10": "C34"},
-              }
 
               annotations = Annotations(
                   labels=concept_names,
                   cardinalities=cardinalities,
                   types=types,
                   states=states,
-                  metadata=metadata,
               )
 
               # --- causal graph -------------------------------------------------

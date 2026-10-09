@@ -168,4 +168,8 @@ class BnLearnDataset(ConceptDataset):
 
     def load(self):
         embeddings, concepts, annotations, graph = self.load_raw()
+        # bnlearn numbers states by their order in the network, so the first state
+        # of a binary node ('yes', 'True') is 0; a binary concept reads 1 as that state.
+        binary = [n for n, t in zip(annotations.labels, annotations.types) if t == 'binary']
+        concepts[binary] = 1 - concepts[binary]
         return embeddings, concepts, annotations, graph
