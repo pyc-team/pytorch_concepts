@@ -245,7 +245,7 @@ If you found this library useful for your research article, blog post, or produc
 .. code-block:: bibtex
 
    @software{pycteam2025concept,
-       author = {Barbiero, Pietro and De Felice, Giovanni and Espinosa Zarlenga, Mateo and Ciravegna, Gabriele and Dominici, Gabriele and De Santis, Francesco and Casanova, Arianna and Debot, David and Giannini, Francesco and Diligenti, Michelangelo and Marra, Giuseppe},
+       author = {De Felice, Giovanni and Barbiero, Pietro and De Santis, Francesco and Gabrielli, Edoardo and Casanova Flores, Arianna and Ciravegna, Gabriele and Debot, David and Espinosa Zarlenga, Mateo and Jamnik, Mateja and Marra, Giuseppe},
        license = {Apache 2.0},
        month = {3},
        title = {{PyTorch Concepts}},
@@ -255,7 +255,7 @@ If you found this library useful for your research article, blog post, or produc
 
 {% endraw %}
 
-Reference authors: `Pietro Barbiero <http://www.pietrobarbiero.eu/>`_, `Giovanni De Felice <https://gdefe.github.io/>`_, and `Mateo Espinosa Zarlenga <https://hairyballtheorem.com/>`_.
+Reference authors: `Giovanni De Felice <https://gdefe.github.io/>`_, `Pietro Barbiero <http://www.pietrobarbiero.eu/>`_, and `Mateo Espinosa Zarlenga <https://hairyballtheorem.com/>`_.
 
 
 Funding
