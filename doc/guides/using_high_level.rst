@@ -49,10 +49,10 @@ Expand each block below for an explanation and an example.
     - :class:`~torch_concepts.nn.BlackBox` — non-interpretable baseline for comparison.
 
     All models take an ``input_size``, ``annotations``, and model-specific parameters.
-    A forward pass returns a :class:`~torch_concepts.nn.ModelOutput` — a structured object
-    whose ``params`` dict maps each queried variable name to its distribution parameters
-    (e.g. ``{'logits': ...}`` for binary/categorical, ``{'loc': ..., 'scale': ...}`` for
-    Normal). A ``query`` list controls which variables are computed.
+    A forward pass returns an :class:`~torch_concepts.nn.InferenceOutput` whose ``params``
+    are keyed by quantity — ``out.logits`` for binary/categorical, ``out.loc``/``out.scale``
+    for Normal — each sliceable by variable name (``out.logits['c1']``). A ``query`` list
+    controls which variables are computed.
 
     .. code-block:: python
 
@@ -136,13 +136,12 @@ Expand each block below for an explanation and an example.
 
     High-level models support two training modes.
 
-    **Manual PyTorch.** Instantiate the model without Lightning and write your own loop. Querying
-    returns logits you can feed to any loss:
+    **Manual PyTorch.** Instantiate the model without Lightning and write your own loop:
 
     .. code-block:: python
 
        import torch
-       from torch_concepts.nn import ConceptBottleneckModel, MLP
+       from torch_concepts.nn import ConceptBottleneckModel, ConceptLoss, MLP
 
        model = ConceptBottleneckModel(
            input_size=n_features,
@@ -151,17 +150,22 @@ Expand each block below for an explanation and an example.
            backbone=MLP(input_size=n_features, hidden_size=128, n_layers=1),
            latent_size=128,
        )
+       loss_fn = ConceptLoss(
+           binary=torch.nn.BCEWithLogitsLoss(),
+           categorical=torch.nn.CrossEntropyLoss(),
+           continuous=torch.nn.MSELoss(),
+       )
 
+       # labels: a (N, 4) tensor, one column per concept
+       c_train = pyc.AnnotatedTensor(labels, annotations.to_concept_space())
        query = ['smoking', 'genotype', 'tar', 'cancer']
        optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
-       loss_fn = torch.nn.BCEWithLogitsLoss()
 
        model.train()
        for epoch in range(500):
            optimizer.zero_grad()
            out = model(input=x_train, query=query)
-           logits = torch.cat([out.params[name]['logits'] for name in query], dim=1)
-           loss = loss_fn(logits, target)
+           loss = loss_fn(out, c_train)
            loss.backward()
            optimizer.step()
 
@@ -192,8 +196,8 @@ Expand each block below for an explanation and an example.
     The step builds the query for you: training observes the concepts (so that certain 
     inference strategies can do teacher-forcing, e.g., IndependentInference), while
     validation and test leave them latent so evaluation measures the model unaided.
-    Override ``default_query`` (or ``default_evidence``), both of which take the split as
-    ``step``, to change what a split observes.
+    Override ``prepare_query`` (or ``prepare_evidence``), both of which take the full batch
+    and the split as ``step``, to change what a split observes.
 
 
 .. dropdown:: Putting It Together: Concept Bottleneck Model

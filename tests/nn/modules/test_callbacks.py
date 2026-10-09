@@ -49,3 +49,16 @@ def test_zero_epochs_leaves_the_configured_weight_alone():
     loss = _elbo()
     LossWeightWarmup(term=1, epochs=0).on_train_epoch_start(_Trainer(), _Module(loss))
     assert loss.weights == [1.0, 4.0]
+
+
+def test_evaluation_uses_the_configured_weight():
+    """`val_loss` must not shrink with the warm-up, or monitoring it favours
+    the early epochs; training resumes with the scheduled weight."""
+    loss = _elbo()
+    module, trainer = _Module(loss), _Trainer()
+    warmup = LossWeightWarmup(term="KLDivergenceLoss", epochs=4)
+    warmup.on_train_epoch_start(trainer, module)   # epoch 0: scheduled weight 0
+    warmup.on_validation_epoch_start(trainer, module)
+    assert loss.weights[1] == 4.0
+    warmup.on_validation_epoch_end(trainer, module)
+    assert loss.weights[1] == 0.0

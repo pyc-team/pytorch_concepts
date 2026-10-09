@@ -4,10 +4,11 @@ Data
 Datasets and Lightning data modules for concept-based learning. The docstrings of each class
 below document their parameters and behaviour.
 
-Base Dataset
+Base Classes
 ------------
 
-See :doc:`concept generation </guides/using_generation>` for attaching generated
+See :doc:`Datasets </guides/using_data>` for how to use them, and
+:doc:`concept generation </guides/using_generation>` for attaching generated
 supervision to a dataset.
 
 .. currentmodule:: torch_concepts.data.base
@@ -18,6 +19,12 @@ supervision to a dataset.
    :nosignatures:
 
    ConceptDataset
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   ConceptDataModule
 
 .. currentmodule:: torch_concepts.data
 
@@ -61,3 +68,29 @@ Data Modules
    AWA2DataModule
    CUBDataModule
    HAM10000DataModule
+
+Environment
+-----------
+
+.. module:: torch_concepts.env
+
+Settings shared by the library, its examples and Conceptarium, read from environment
+variables when the module is imported.
+
+.. py:data:: CACHE
+
+   Cache folder for datasets, embeddings and checkpoints: ``$PYC_CACHE`` if set, otherwise
+   ``$XDG_CACHE_HOME/pyc``, otherwise ``~/.cache/pyc``. It is created on import.
+
+.. py:data:: DATA_ROOT
+
+   Folder where the examples store datasets; the same as :data:`CACHE`.
+
+.. py:data:: HUGGINGFACEHUB_TOKEN
+
+   Hugging Face token, read from ``HF_TOKEN``, ``HUGGINGFACE_HUB_TOKEN`` or
+   ``HUGGINGFACEHUB_TOKEN``. Needed for gated models and datasets.
+
+.. py:data:: OPENAI_API_KEY
+
+   OpenAI API key, read from ``OPENAI_API_KEY``, for OpenAI models in concept generation.

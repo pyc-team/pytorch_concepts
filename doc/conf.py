@@ -49,13 +49,13 @@ extensions = [
     'sphinx_copybutton',
     'myst_nb',
     'hoverxref.extension',
+    'sphinx_gallery.gen_gallery',
 ]
 
 autosummary_generate = True
 autosummary_imported_members = True
 
 source_suffix = '.rst'
-master_doc = 'index'
 
 templates_path = ['_templates']
 
@@ -67,7 +67,8 @@ rst_context = {'pyc': pyc}
 add_module_names = False
 # autodoc_inherit_docstrings = False
 
-# exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
+# The gallery's notebooks are downloads, not pages.
+exclude_patterns = ['_build', 'auto_examples/**/*.ipynb']
 
 napoleon_custom_sections = [("Shape", "params_style"),
                             ("Shapes", "params_style")]
@@ -102,13 +103,13 @@ intersphinx_mapping = {
 # -- Theme options -----------------------------------------------------------
 #
 
-html_title = "Torch Concepts"
+html_title = "PyC"
 html_theme = 'furo'
 language = "en"
 
 html_baseurl = ''
 html_static_path = ['_static']
-html_logo = '_static/img/logos/pyc.png'
+# The sidebar logo comes from _templates/sidebar/brand.html.
 html_favicon = '_static/img/logos/pyc.svg'
 
 html_css_files = [
@@ -122,7 +123,6 @@ html_js_files = [
 html_theme_options = {
     "sidebar_hide_name": True,
     "navigation_with_keys": True,
-    "collapse_navigation": False,
     "top_of_page_button": "edit",
     "light_css_variables": {
         "color-brand-primary": "#20b0d6",
@@ -159,11 +159,26 @@ myst_dmath_allow_space = True
 myst_dmath_double_inline = True
 nb_code_prompt_hide = 'Hide code cell outputs'
 
+# -- Examples gallery ---------------------------------------------------------
+#
+# Renders the scripts in examples/ as pages, without running them: they
+# download datasets, and some need an LLM or a GPU.
+
+_example_folders = ['low_level', 'mid_level', 'high_level', 'data']
+sphinx_gallery_conf = {
+    'examples_dirs': [f'../examples/{folder}' for folder in _example_folders],
+    'gallery_dirs': [f'auto_examples/{folder}' for folder in _example_folders],
+    'plot_gallery': False,
+    'within_subsection_order': 'FileNameSortKey',  # 01_, 02_, ... as in examples/
+    'download_all_examples': False,
+    'write_computation_times': False,
+}
+
 # -- OpenGraph options -------------------------------------------------------
 #
 
-ogp_site_url = "https://github.com/pyc-team/pytorch_concepts"
-ogp_image = ogp_site_url + "_static/img/logos/pyc.png"
+ogp_site_url = "https://pytorch-concepts.readthedocs.io/en/latest/"
+ogp_image = "_static/img/pyc_logo.png"
 
 # -- Hoverxref options -------------------------------------------------------
 #

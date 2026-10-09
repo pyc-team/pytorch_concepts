@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 class IndependentInference(DeterministicInference):
-    """Independent (sequential) training inference.
+    """Independent training inference.
 
     A convenience subclass of :class:`DeterministicInference` that pins
     ``p_int=1.0``, so ground-truth concepts are always propagated to downstream

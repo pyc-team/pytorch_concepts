@@ -412,26 +412,11 @@ class ToyDAGDataset(ConceptDataset):
         logger.info("Training autoencoder for embedding extraction...")
         embeddings = extract_embs_from_autoencoder(df, self.autoencoder_kwargs)
         
-        # Create concepts tensor (exclude latent variables)
-        # Keep original encoding format (one-hot for categorical, single value for binary)
+        # Create concepts tensor (exclude latent variables): one column per concept,
+        # holding its state index (binary and categorical alike)
         non_latent_vars = [v for v in self.variables if v not in self.latent_variables]
-        concept_data = []
-        column_names = []
-        
-        for var in non_latent_vars:
-            if self.cardinalities[var] == 2:
-                # Binary: use single value (argmax)
-                concept_data.append(data[var].argmax(dim=1).float().unsqueeze(1))
-                column_names.append(var)
-            else:
-                # Categorical: use one-hot with multiple columns
-                concept_data.append(data[var])
-                # Add column names for each dimension: var_0, var_1, ..., var_K-1
-                for i in range(self.cardinalities[var]):
-                    column_names.append(f"{var}_{i}")
-        
-        concepts_tensor = torch.cat(concept_data, dim=1)
-        concepts = pd.DataFrame(concepts_tensor.numpy(), columns=column_names)
+        concepts_tensor = torch.cat([data[var].argmax(dim=1).float().unsqueeze(1) for var in non_latent_vars], dim=1)
+        concepts = pd.DataFrame(concepts_tensor.numpy(), columns=non_latent_vars)
         
         # Create concept annotations
         concept_names = non_latent_vars
@@ -478,19 +463,9 @@ class ToyDAGDataset(ConceptDataset):
         graph = pd.read_hdf(self.processed_paths[3], "graph")
         
         # Ensure proper column names (for backward compatibility with cached files)
-        # Reconstruct expected column names based on variables and cardinalities
         non_latent_vars = [v for v in self.variables if v not in self.latent_variables]
-        expected_columns = []
-        for var in non_latent_vars:
-            if self.cardinalities[var] == 2:
-                expected_columns.append(var)
-            else:
-                for i in range(self.cardinalities[var]):
-                    expected_columns.append(f"{var}_{i}")
-        
-        # Set column names if not already set
-        if list(concepts.columns) != expected_columns:
-            concepts.columns = expected_columns
+        if list(concepts.columns) != non_latent_vars:
+            concepts.columns = non_latent_vars
         
         return embeddings, concepts, annotations, graph
     

@@ -203,7 +203,7 @@ def concat_datasets(*datasets):
     # re-permuting stored data.
     merged.set_concepts(AnnotatedTensor(
         torch.cat([d.concepts.tensor for d in datasets]),
-        reference.concepts.annotation,
+        reference.concepts.annotations,
         axis=1,
     ))
     return merged

@@ -20,7 +20,7 @@ class ThresholdAnnotationFilter(FilterAnnotator):
     ...     filtered.tensor,
     ...     torch.tensor([[0.0, 0.8], [0.6, 0.0]]),
     ... )
-    >>> filtered.annotation.labels
+    >>> filtered.annotations.labels
     ['color', 'shape']
     """
 

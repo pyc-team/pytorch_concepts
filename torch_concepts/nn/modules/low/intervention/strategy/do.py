@@ -1,17 +1,23 @@
 import torch
 
-from ...base.intervention import BaseConceptInterventionStrategy
+from ...base.intervention import ConceptInterventionStrategy
 
 
-class DoIntervention(BaseConceptInterventionStrategy):
+class DoIntervention(ConceptInterventionStrategy):
     """
-    Intervention that replaces predicted concepts with ground truth values.
-
-    Implements do(C=c_true) operations by mixing predicted and ground truth
-    concept values based on a binary mask.
+    Intervention that sets the intervened outputs to constant values, do(C=c).
 
     Args:
-        ground_truth: Ground truth concept values of shape (batch_size, n_concepts).
+        constants: A scalar, one value per output (shape ``[F]``), or any shape
+            that broadcasts to the layer output ``[..., F]``.
+
+    Example:
+        >>> import torch
+        >>> from torch_concepts.nn import DoIntervention
+        >>>
+        >>> strategy = DoIntervention(torch.tensor([0.0, 1.0]))
+        >>> strategy(torch.randn(3, 2)).tolist()
+        [[0.0, 1.0], [0.0, 1.0], [0.0, 1.0]]
     """
 
     def __init__(self, constants: torch.Tensor | float):
@@ -20,22 +26,15 @@ class DoIntervention(BaseConceptInterventionStrategy):
         self.register_buffer("constants", const)
 
     def forward(self, x, *args, **kwargs):
-        B, F = x.shape
         v = self.constants
-
-        if v.dim() == 0:  # scalar
-            v = v.view(1, 1).expand(B, F)
-        elif v.dim() == 1:  # [F]
-            assert v.numel() == F, f"constants [F] must have F={F}, got {v.numel()}"
-            v = v.unsqueeze(0).expand(B, F)
-        elif v.dim() == 2:
-            b, f = v.shape
-            assert f == F, f"constants second dim must be F={F}, got {f}"
-            if b == 1:
-                v = v.expand(B, F)  # [1, F] -> [B, F]
-            else:
-                assert b == B, f"constants first dim must be B={B} or 1, got {b}"
-        else:
-            raise ValueError("constants must be scalar, [F], [1, F], or [B, F]")
+        try:
+            v = torch.broadcast_to(v, x.shape)
+        except RuntimeError as e:
+            raise ValueError(
+                f"constants of shape {tuple(self.constants.shape)} cannot be "
+                f"broadcast to concept tensor shape {tuple(x.shape)} "
+                f"(expects scalar, [F], or any shape broadcastable against "
+                f"[..., F])"
+            ) from e
 
         return v.to(dtype=x.dtype, device=x.device)

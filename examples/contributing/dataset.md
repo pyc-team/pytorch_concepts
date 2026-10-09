@@ -267,7 +267,7 @@ The DataModule handles data splitting, transformations, and integration with PyT
 Your datamodule should extend `ConceptDataModule` from `torch_concepts.data.base.datamodule`.
 
 ```python
-from env import DATA_ROOT
+from torch_concepts.env import DATA_ROOT
 from torch_concepts.data import YourDataset
 from torch_concepts.data.base.datamodule import ConceptDataModule
 

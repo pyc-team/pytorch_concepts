@@ -1,10 +1,10 @@
 import torch
 from typing import Optional
 
-from ...base.intervention import BaseInterventionPolicy
+from ...base.intervention import InterventionPolicy
 
 
-class GradientPolicy(BaseInterventionPolicy):
+class GradientPolicy(InterventionPolicy):
     """
     Gradient-based intervention policy.
 
@@ -18,15 +18,15 @@ class GradientPolicy(BaseInterventionPolicy):
 
     Example::
 
-        def build_context(module, predictions, *args, **kwargs):
+        def build_context(predictions, module, inputs, extra_tensors, extra_modules):
             with torch.enable_grad():
                 pred = predictions.detach().requires_grad_(True)
-                task_out = module.task_head(pred)
+                task_out = extra_modules["task_head"](pred)
                 grads = torch.autograd.grad(task_out.sum(), pred)[0]
             return {"concept_grads": grads.detach()}
 
         intervention_module = InterventionModule(
-            concept_encoder, strategy, GradientPolicy(),
+            concept_encoder, strategy, GradientPolicy(), [0, 1, 2],
             build_context=build_context,
             extra_modules={"task_head": task_head},
             quantile=0.5,
@@ -38,7 +38,7 @@ class GradientPolicy(BaseInterventionPolicy):
 
     def forward(
         self,
-        concepts: torch.Tensor,
+        x: torch.Tensor,
         *args,
         concept_grads: Optional[torch.Tensor] = None,
         **kwargs,
@@ -47,17 +47,18 @@ class GradientPolicy(BaseInterventionPolicy):
         Compute intervention scores based on gradient magnitude.
 
         Args:
-            concepts: Input concepts of shape ``(batch_size, n_concepts)``.
+            x: Layer output of shape ``(batch_size, n_concepts)``.
             concept_grads: Gradient of a downstream output w.r.t. each concept,
-                same shape as ``concepts``. Supplied automatically when a
+                same shape as ``x``. Supplied automatically when a
                 ``build_context`` function is attached to the
                 :class:`InterventionModule`.
 
         Returns:
-            torch.Tensor: Gradient magnitude scores (``|concept_grads|``), or
-            zeros of the same shape if ``concept_grads`` is not available.
+            torch.Tensor: ``-|concept_grads|``, so that the lowest scores, which
+            are intervened on first, belong to the largest gradients; or zeros
+            of the same shape if ``concept_grads`` is not available.
         """
         if concept_grads is not None:
-            return concept_grads.abs()
-        return torch.zeros_like(concepts)
+            return -concept_grads.abs()
+        return torch.zeros_like(x)
 

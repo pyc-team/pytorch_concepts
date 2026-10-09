@@ -1,9 +1,9 @@
 import torch
 
-from ...base.intervention import BaseInterventionPolicy
+from ...base.intervention import InterventionPolicy
 
 
-class RandomPolicy(BaseInterventionPolicy):
+class RandomPolicy(InterventionPolicy):
     """
     Random intervention policy that generates random values for concept selection.
 
@@ -26,7 +26,7 @@ class RandomPolicy(BaseInterventionPolicy):
 
     def forward(
         self,
-        concepts: torch.Tensor,
+        x: torch.Tensor,
         *args,
         **kwargs
     ) -> torch.Tensor:
@@ -34,9 +34,9 @@ class RandomPolicy(BaseInterventionPolicy):
         Generate random intervention scores.
 
         Args:
-            concepts: Input concepts of shape (batch_size, n_concepts).
+            x: Layer output of shape (batch_size, n_concepts).
 
         Returns:
             torch.Tensor: Random scores of same shape as input, scaled by self.scale.
         """
-        return torch.rand_like(concepts).abs() * self.scale
+        return torch.rand_like(x).abs() * self.scale

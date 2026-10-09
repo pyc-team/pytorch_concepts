@@ -218,7 +218,7 @@ class TestAnnotateMethod:
         ann = Annotations(labels=['a', 'b', 'c'])
         result = layer.annotate(x, out_concepts=ann)
         assert isinstance(result, AnnotatedTensor)
-        assert result.annotation.labels == ['a', 'b', 'c']
+        assert result.annotations.labels == ['a', 'b', 'c']
 
     def test_annotate_uses_stored_out_concepts(self):
         """annotate(x) uses self.out_concepts when it is an Annotations."""

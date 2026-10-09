@@ -349,6 +349,30 @@ class TestBackboneForwardTorchvision:
         embeddings = backbone(dummy_tensor_batch)
         assert embeddings.shape[1] == 1024
 
+    def test_preprocessing_without_device_kernel_runs_on_cpu(self, dummy_tensor_batch, monkeypatch):
+        """A preprocessing op the device has no kernel for is run on CPU instead."""
+        backbone = ImageBackbone('resnet18', device='cpu')
+        forward, calls = backbone.processor.forward, []
+
+        def no_kernel_on_first_call(x):
+            calls.append(x)
+            if len(calls) == 1:
+                raise NotImplementedError("no kernel for this op on this device")
+            return forward(x)
+
+        monkeypatch.setattr(backbone.processor, "forward", no_kernel_on_first_call)
+        embeddings = backbone(dummy_tensor_batch)
+        assert len(calls) == 2
+        assert embeddings.shape == (2, 512)
+
+    @pytest.mark.skipif(not torch.backends.mps.is_available(), reason="needs MPS")
+    def test_runs_on_mps(self, dummy_tensor_batch):
+        """CPU and MPS inputs both work on MPS, where the antialiased resize has no kernel."""
+        expected = ImageBackbone('resnet18', device='cpu')(dummy_tensor_batch)
+        backbone = ImageBackbone('resnet18', device='mps')
+        for x in (dummy_tensor_batch, dummy_tensor_batch.to('mps')):
+            assert torch.allclose(backbone(x).cpu(), expected, atol=1e-4)
+
 
 # =============================================================================
 # Test Backbone Representation

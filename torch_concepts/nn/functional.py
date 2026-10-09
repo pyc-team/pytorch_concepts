@@ -753,9 +753,9 @@ def tcav_score(
                     f"column index, or a head that annotates its output "
                     f"columns."
                 )
-            annotation = outputs.annotation
+            annotations = outputs.annotations
             if isinstance(target, str):
-                columns = annotation.get_slice(target)
+                columns = annotations.get_slice(target)
                 if columns.stop - columns.start > 1:
                     raise ValueError(
                         f"target {target!r} is categorical and spans columns "
@@ -766,8 +766,8 @@ def tcav_score(
                 target = columns.start
             else:  # (concept, state): one state logit of a categorical
                 concept, state = target
-                target = (annotation.get_slice(concept).start
-                          + annotation.get_state_index(concept, state))
+                target = (annotations.get_slice(concept).start
+                          + annotations.get_state_index(concept, state))
         if isinstance(outputs, AnnotatedTensor):
             outputs = outputs.tensor
         if outputs.dim() > 1:

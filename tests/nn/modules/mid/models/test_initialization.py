@@ -164,7 +164,7 @@ class TestLazyConstructorCPD:
         B = 5
         out = cpd(parent_values={"x": torch.randn(B, 8)})
         assert "probs" in out
-        assert out["probs"].shape == (B, 3)
+        assert out["probs"].shape == (B, 1, 3)  # member layout (B, n_members, size)
 
 
 # ===========================================================================

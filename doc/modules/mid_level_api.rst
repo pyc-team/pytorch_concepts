@@ -58,7 +58,6 @@ Probabilistic Models
    ProbabilisticModel
    BayesianNetwork
    MarkovNetwork
-   ChainGraph
 
 Inference
 ---------
@@ -73,10 +72,10 @@ Inference
    AncestralSamplingInference
    MAPForwardInference
    BeliefPropagation
+   PgmpyVariableElimination
    RejectionSampling
    ImportanceSampling
    VariationalInference
-   PyroImportanceSampling
    BaseProposal
    MutilatedNetworkProposal
 
@@ -90,3 +89,4 @@ Base Classes
    BaseInference
    TorchBaseInference
    PyroBaseInference
+   PgmpyBaseInference

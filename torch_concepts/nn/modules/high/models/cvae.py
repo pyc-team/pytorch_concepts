@@ -191,7 +191,8 @@ class ConditionalVAE(DirectedGraphModel):
     ... )  # doctest: +SKIP
     >>> # Concepts are evidence, so the query supplies them.
     >>> c = torch.tensor([[3, 1]])
-    >>> out = model(query=model.default_query(c), input=torch.rand(1, 784))  # doctest: +SKIP
+    >>> query = model.prepare_query({'concepts': {'c': c}})  # doctest: +SKIP
+    >>> out = model(query=query, input=torch.rand(1, 784))  # doctest: +SKIP
 
     See Also
     --------
@@ -301,11 +302,11 @@ class ConditionalVAE(DirectedGraphModel):
     # ------------------------------------------------------------------
     # Training hooks
     # ------------------------------------------------------------------
-    def default_query(self, c, step='train'):
+    def prepare_query(self, batch, step='train'):
         """Query **every** variable, always observing the concepts.
 
         Evaluation does **not** withhold them the way the base query
-        (:meth:`~torch_concepts.nn.modules.high.base.model.BaseModel.default_query`)
+        (:meth:`~torch_concepts.nn.modules.high.base.model.BaseModel.prepare_query`)
         and the CBGM do: here the concepts are the *condition*, an input rather
         than something the model infers, and the guide ``q(z | input, c)`` reads
         them as parents — withholding them leaves that CPD without a value. For
@@ -318,13 +319,8 @@ class ConditionalVAE(DirectedGraphModel):
         """
         return {
             **{name: None for name in self.pgm.variables},
-            **self.fully_observed_query(c),
+            **self.fully_observed_query(batch['concepts']['c']),
         }
-
-    def default_extra(self, evidence, query=None):
-        """Publish the evidence so :class:`~torch_concepts.nn.MSEReconstructionLoss`
-        can score the observed variable (e.g. ``input``) against it."""
-        return {"evidence": evidence}
 
     # ------------------------------------------------------------------
     # Model assembly

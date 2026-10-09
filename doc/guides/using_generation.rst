@@ -6,6 +6,10 @@ Concept generation in PyC is built around a simple idea:
 1. **Discover which concepts are useful** for the task.
 2. **Assign those concepts to the samples** in the dataset.
 
+Label-free concept bottleneck models (Oikarinen et al., ICLR 2023)
+and LaBo (Yang et al., CVPR 2023) fall under this category: a language model proposes the concepts, and a
+vision-language model such as CLIP scores every image against them.
+
 .. code-block:: text
 
    ┌────────┐
@@ -199,13 +203,13 @@ Pipeline steps
 
    Shape and concept metadata are preserved.
 
-   ``SigmoidCalibrator(scale=10.0, bias=-2.5)`` applies
-   ``sigmoid(10 * scores - 2.5)``. These example settings transform scores into
-   the range (0, 1); they do not guarantee calibrated probabilities.
+   ``SigmoidCalibrator(scale, bias)`` applies ``sigmoid(scale * scores + bias)``.
+   With ``standardize=True``, each concept's scores are first rescaled to zero mean
+   and unit variance across the samples.
 
    .. code-block:: python
 
-      calibrator = SigmoidCalibrator(scale=10.0, bias=-2.5)
+      calibrator = SigmoidCalibrator(standardize=True)
 
 
 .. dropdown:: 7. Filter calibrated annotations
@@ -245,7 +249,7 @@ Pipeline steps
           values = list(outputs.values())
           return AnnotatedTensor(
               torch.stack([value.tensor for value in values]).mean(dim=0),
-              values[0].annotation,
+              values[0].annotations,
               axis=1,
           )
 
@@ -331,7 +335,7 @@ Complete example
       outputs = pipeline(dataset, class_names=class_names)
       print(list(outputs))
       # ['CLIPAnnotator', 'CLIPAnnotator_1', 'aggregated']
-      print(outputs["aggregated"].annotation.labels)
+      print(outputs["aggregated"].annotations.labels)
 
    ``class_names`` gives the LLM task context, not the desired concept names.
    This string prompt reads no samples. To supply samples, use a callable prompt;

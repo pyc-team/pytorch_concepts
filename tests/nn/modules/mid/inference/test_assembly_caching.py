@@ -46,7 +46,7 @@ def _engine():
 
 
 def _labels(out):
-    return {q: list(t.annotation.labels) for q, t in out.params.items()}
+    return {q: list(t.annotations.labels) for q, t in out.params.items()}
 
 
 # ---------------------------------------------------------------- reuse ----
@@ -78,7 +78,7 @@ def test_annotation_is_reused_across_identical_queries():
     a = eng.query(query=["concepts"], evidence={"x": x})
     b = eng.query(query=["concepts"], evidence={"x": torch.randn(2, 4)})
     # Same signature -> the very same Annotations instance backs both outputs.
-    assert a.params["probs"].annotation is b.params["probs"].annotation
+    assert a.params["probs"].annotations is b.params["probs"].annotations
 
 
 # ----------------------------------------------------------- correctness ----
@@ -101,7 +101,7 @@ def test_labels_are_stable_across_repeated_and_interleaved_queries():
             out = eng.query(query=names, evidence={"x": x})
             assert _labels(out) == expected, names
             for tensor in out.params.values():
-                assert tensor.shape[-1] == sum(tensor.annotation.cardinalities)
+                assert tensor.shape[-1] == sum(tensor.annotations.cardinalities)
 
 
 def test_member_then_plate_keeps_its_own_label_order():
@@ -159,7 +159,7 @@ def test_member_subset_columns_match_the_whole_plate():
     x = torch.randn(4, 4)
     whole = eng.query(query=["concepts"], evidence={"x": x}).params["probs"]
     subset = eng.query(query=["c3", "c1"], evidence={"x": x}).params["probs"]
-    assert list(subset.annotation.labels) == ["c3", "c1"]
+    assert list(subset.annotations.labels) == ["c3", "c1"]
     assert torch.allclose(subset["c1"].tensor, whole["c1"].tensor)
     assert torch.allclose(subset["c3"].tensor, whole["c3"].tensor)
 
@@ -168,13 +168,15 @@ def test_samples_assembly_is_cached_consistently():
     """_assemble_samples shares the cached chunks with _assemble_params but
     keys its annotation separately, so both must stay correct."""
     eng = _engine()
-    per_variable = {"concepts": torch.rand(3, 3), "y": torch.randn(3, 2)}
+    # Realisations arrive in member layout (B, n_members, member_size), as the
+    # engines cache them.
+    per_variable = {"concepts": torch.rand(3, 3, 1), "y": torch.randn(3, 1, 2)}
     for _ in range(2):
         samples = eng._assemble_samples(per_variable, ["concepts", "y"])
-        assert list(samples.annotation.labels) == ["c1", "c2", "c3", "y"]
+        assert list(samples.annotations.labels) == ["c1", "c2", "c3", "y"]
         assert samples.shape == (3, 5)
         subset = eng._assemble_samples(per_variable, ["c2"])
-        assert list(subset.annotation.labels) == ["c2"]
+        assert list(subset.annotations.labels) == ["c2"]
         assert subset.shape == (3, 1)
 
 
@@ -183,7 +185,7 @@ def test_types_and_groups_survive_the_cache():
     x = torch.randn(2, 4)
     for _ in range(2):
         out = eng.query(query=["concepts", "y"], evidence={"x": x})
-        probs, loc = out.params["probs"].annotation, out.params["loc"].annotation
+        probs, loc = out.params["probs"].annotations, out.params["loc"].annotations
         assert probs.types == ["binary", "binary", "binary"]
         assert loc.types == ["continuous"]
         assert probs.label_groups["concepts"] == ["c1", "c2", "c3"]

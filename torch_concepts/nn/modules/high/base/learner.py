@@ -23,8 +23,8 @@ from pytorch_lightning.utilities.types import Optimizer, LRScheduler
 
 from .....tensor import AnnotatedTensor
 from ...metrics import ConceptMetrics
-from ...loss import PyCLoss, CompositeLoss
-from ...outputs import CONTINUOUS_QUANTITIES, ModelOutput, ParamsDict
+from ...loss import CompositeLoss
+from ...outputs import CONTINUOUS_QUANTITIES, InferenceOutput
 
 
 class BaseLearner(pl.LightningModule):
@@ -60,10 +60,8 @@ class BaseLearner(pl.LightningModule):
     ):
         super(BaseLearner, self).__init__(**kwargs)
 
-        # loss function. Only a PyCLoss (e.g. ConceptLoss), which consumes
-        # the whole ModelOutput, is supported.
+        # A PyCLoss (e.g. ConceptLoss), called as loss(out, target, model).
         self.loss = loss
-        self._loss_takes_model_output = isinstance(loss, PyCLoss)
 
         # optimizer and scheduler
         self.optim_class = optim_class
@@ -99,11 +97,11 @@ class BaseLearner(pl.LightningModule):
         self.val_metrics = metrics.clone(prefix="val")
         self.test_metrics = metrics.clone(prefix="test") 
 
-    def update_and_log_metrics(self, out: ModelOutput, target, step: str, batch_size: int):
+    def update_and_log_metrics(self, out: InferenceOutput, target, step: str, batch_size: int):
         """Update metrics and log them.
 
         Args:
-            out (ModelOutput): Model output containing the predictions.
+            out (InferenceOutput): Model output containing the predictions.
             target: Concept-space ground truth.
             step (str): Which split to update ('train', 'val', or 'test').
             batch_size (int): Batch size for metric logging.
@@ -115,11 +113,11 @@ class BaseLearner(pl.LightningModule):
         if collection is not None:
             self.log_metrics(collection, batch_size=batch_size)
 
-    def update_metrics(self, out: ModelOutput, target, step: str):
+    def update_metrics(self, out: InferenceOutput, target, step: str):
         """Update metrics with model output and target.
 
         Args:
-            out (ModelOutput): Model output containing the predictions.
+            out (InferenceOutput): Model output containing the predictions.
             target: Concept-space ground truth.
             step (str): Which split to update ('train', 'val', or 'test').
         """
@@ -138,12 +136,12 @@ class BaseLearner(pl.LightningModule):
             for coll in metrics.collection.values():
                 self.log_dict(
                     coll, on_step=False, on_epoch=True,
-                    logger=True, prog_bar=False, **kwargs
+                    prog_bar=False, **kwargs
                 )
         else:
             self.log_dict(
                 metrics, on_step=False, on_epoch=True,
-                logger=True, prog_bar=False, **kwargs
+                prog_bar=False, **kwargs
             )
 
     def log_loss(self, name, loss, **kwargs):
@@ -159,7 +157,6 @@ class BaseLearner(pl.LightningModule):
             loss.detach(),
             on_step=False,
             on_epoch=True,
-            logger=True,
             prog_bar=kwargs.pop("prog_bar", True),
             **kwargs
         )
@@ -171,6 +168,8 @@ class BaseLearner(pl.LightningModule):
             batch (dict): Batch dictionary from dataloader.
         Raises:
             KeyError: If required keys 'inputs' or 'concepts' are missing from batch
+            TypeError: If ``batch['concepts']['c']`` is not an
+                :class:`AnnotatedTensor` (the dataset's collate always builds one).
         """
         # Validate batch structure
         if not isinstance(batch, dict):
@@ -197,6 +196,11 @@ class BaseLearner(pl.LightningModule):
             raise KeyError(
                 "Batch concepts are missing the learner-facing 'c' entry. "
                 f"Found keys: {list(batch['concepts'].keys())}."
+            )
+        if not isinstance(batch['concepts']['c'], AnnotatedTensor):
+            raise TypeError(
+                "Expected batch['concepts']['c'] to be an AnnotatedTensor in concept "
+                f"space layout, got {type(batch['concepts']['c']).__name__}."
             )
 
     def unpack_batch(self, batch):
@@ -245,15 +249,15 @@ class BaseLearner(pl.LightningModule):
         """
         c = concepts['c']
         scaler = transforms.get('concepts') if self.scale_concepts else None
-        if scaler is not None and c is not None:
-            labels = c.annotation.labels_by_type.get('continuous')
+        if scaler is not None:
+            labels = c.annotations.labels_by_type.get('continuous')
             if labels:
-                scaled = AnnotatedTensor(c.tensor.clone(), c.annotation, c.axis)
+                scaled = AnnotatedTensor(c.tensor.clone(), c.annotations, c.axis)
                 scaled[labels] = scaler.transform(c[labels].tensor)
                 c = scaled
         return {'c': c}
 
-    def unscale_output(self, out, transforms):
+    def unscale_output(self, out, transforms, labels):
         """Inverse-transform continuous predictions ('loc'/'value') back to
         natural units, so metrics are always reported on the original data scale.
         A no-op when :attr:`scale_concepts` is off or no 'concepts'
@@ -262,19 +266,22 @@ class BaseLearner(pl.LightningModule):
         Args:
             out: Model output whose continuous quantities are in scaled space.
             transforms: The batch's fitted scalers.
+            labels: The continuous concept labels, in the column order the
+                'concepts' scaler was fitted on. Predictions are matched to them
+                by name.
         Returns:
             The output with continuous quantities restored to the original scale.
         """
         scaler = transforms.get('concepts') if self.scale_concepts else None
-        if scaler is None:
+        if scaler is None or not labels:
             return out
         for quantity in CONTINUOUS_QUANTITIES:  # ('loc', 'value')
             pred = out.params.get(quantity)
-            if pred is None:
+            if pred is None or set(labels).isdisjoint(pred.annotations.label_to_index):
                 continue
-            setattr(out, quantity, AnnotatedTensor(
-                scaler.inverse_transform(pred.tensor), pred.annotation, pred.axis
-            ))
+            restored = AnnotatedTensor(pred.tensor.clone(), pred.annotations, pred.axis)
+            restored[labels] = scaler.inverse_transform(pred[labels].tensor)
+            setattr(out, quantity, restored)
         return out
 
     @cached_property
@@ -309,40 +316,41 @@ class BaseLearner(pl.LightningModule):
         # TODO: needs to extend to arbitrary leading dims (e.g., for text)
         batch_size = batch['inputs']['x'].size(0)
 
-        inputs = self.maybe_scale_inputs(inputs, transforms)
-        c_loss = self.maybe_scale_concepts(concepts, transforms).get('c', None)
+        scaled_inputs = self.maybe_scale_inputs(inputs, transforms)
+        scaled_concepts = self.maybe_scale_concepts(concepts, transforms)
+        scaled = {
+            **batch,
+            'inputs': scaled_inputs,
+            'concepts': {**batch['concepts'], **scaled_concepts},
+        }
 
         # --- Model forward (scaled space) ---
         # Both are split-aware: the concepts are teacher-forced at 'train' and
-        # left latent at 'val'/'test' (see `default_query`).
-        query = self.default_query(c_loss, step)
-        evidence = self.default_evidence(inputs, step)
+        # left latent at 'val'/'test' (see `prepare_query`).
+        query = self.prepare_query(scaled, step)
+        evidence = self.prepare_evidence(scaled, step)
         out = self.forward(query=query, evidence=evidence)
 
-        target = self.prepare_target(c_loss, out)
+        target = self.prepare_target(scaled)
 
         # --- Compute loss (scaled space) ---
         loss = None
         if self.loss is not None:
-            if not self._loss_takes_model_output:
-                raise NotImplementedError(
-                    "Only a PyCLoss (e.g. ConceptLoss) is supported; a plain "
-                    "loss(input, target) is not."
-                )
             if isinstance(self.loss, CompositeLoss):
                 # log each term of a CompositeLoss separately
-                terms = self.loss.breakdown(out, target)
+                terms = self.loss.breakdown(out, target, self)
                 loss = sum(terms.values())
                 for term_name, value in terms.items():
                     self.log_loss(f"{step}_{term_name}", value, batch_size=batch_size)
             else:
-                loss = self.loss(out, target)
+                loss = self.loss(out, target, self)
             self.log_loss(step, loss, batch_size=batch_size)
 
         # --- Update and log metrics (original scale) ---
-        out = self.unscale_output(out, transforms)
-        target = self.prepare_target(concepts.get('c', None), out)
-        self.update_and_log_metrics(out, target, step, batch_size)
+        # The scaler was fitted on the batch's continuous concepts, in its order.
+        labels = concepts['c'].annotations.labels_by_type.get('continuous')
+        out = self.unscale_output(out, transforms, labels)
+        self.update_and_log_metrics(out, self.prepare_target(batch)['c'], step, batch_size)
         return loss
 
     def training_step(self, batch):

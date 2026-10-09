@@ -51,7 +51,7 @@ class TestConceptSubset(unittest.TestCase):
         """Test that missing concepts raise clear error."""
         subset = ['concept_1', 'nonexistent_concept', 'another_missing']
 
-        with self.assertRaises(AssertionError) as context:
+        with self.assertRaises(ValueError) as context:
             ConceptDataset(
                 self.X,
                 self.C,
@@ -62,7 +62,7 @@ class TestConceptSubset(unittest.TestCase):
         error_msg = str(context.exception)
         self.assertIn('nonexistent_concept', error_msg)
         self.assertIn('another_missing', error_msg)
-        self.assertIn('Concepts not found', error_msg)
+        self.assertIn('Unknown labels', error_msg)
 
     def test_subset_single_concept(self):
         """Test selecting a single concept."""
@@ -262,7 +262,7 @@ class TestAnnotationSpaces(unittest.TestCase):
         self.assertEqual(list(dataset.annotations.cardinalities), [3, 10])
         self.assertFalse(dataset.annotations.concept_space)
         # The tensor holds one integer column per concept, and says so.
-        self.assertTrue(dataset.concepts.annotation.concept_space)
+        self.assertTrue(dataset.concepts.annotations.concept_space)
         self.assertEqual(dataset.concepts.shape[1], 2)
 
 

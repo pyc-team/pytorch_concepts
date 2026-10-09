@@ -122,7 +122,7 @@ class TestLazyCPDParentsPreserved:
         B = 4
         out = cpd_c(parent_values={"x": torch.randn(B, 8)})
         assert "probs" in out
-        assert out["probs"].shape == (B, 2)
+        assert out["probs"].shape == (B, 1, 2)  # member layout (B, n_members, size)
 
 
 # ===========================================================================
@@ -136,18 +136,20 @@ class TestForwardPassParentConsistency:
         # Manually run the forward pass following the chain
         params_x = m.factors["x"].root_params(B)
         val_x = params_x["value"]
-        assert val_x.shape == (B, 4)
+        # Every CPD reports member layout (B, n_members, size), and a child reads
+        # its parent's value back in that layout.
+        assert val_x.shape == (B, 1, 4)
 
         params_a = m.factors["a"](parent_values={"x": val_x})
         val_a = params_a["probs"]
-        assert val_a.shape == (B, 1)
+        assert val_a.shape == (B, 1, 1)
 
         params_b = m.factors["b"](parent_values={"a": val_a})
         val_b = params_b["probs"]
-        assert val_b.shape == (B, 1)
+        assert val_b.shape == (B, 1, 1)
 
         params_c = m.factors["c"](parent_values={"b": val_b})
-        assert params_c["probs"].shape == (B, 1)
+        assert params_c["probs"].shape == (B, 1, 1)
 
     def test_multi_parent_feature_sizes(self):
         p1 = ConceptVariable("p1", distribution=dist.Bernoulli, size=2)
@@ -161,4 +163,4 @@ class TestForwardPassParentConsistency:
         v_p1 = torch.rand(B, 2)
         v_p2 = torch.rand(B, 3)
         out = m.factors["c"](parent_values={"p1": v_p1, "p2": v_p2})
-        assert out["probs"].shape == (B, 1)
+        assert out["probs"].shape == (B, 1, 1)

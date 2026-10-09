@@ -106,7 +106,7 @@ class TestUncertaintyPolicyGradients:
 
 
 # ===========================================================================
-# 5. build_mask (inherited from BaseInterventionPolicy)
+# 5. build_mask (inherited from InterventionPolicy)
 # ===========================================================================
 
 class TestUncertaintyBuildMask:

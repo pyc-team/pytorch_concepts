@@ -121,7 +121,7 @@ class LLMConceptGenerator(Generator):
         raw_output = self.llm(prompt_payload, **self.llm_kwargs)
         specs = self.postprocessor(self.parser(raw_output))
         normalized = default_concept_postprocessor(specs)
-        return concept_specs_to_annotation(normalized)
+        return concept_specs_to_annotations(normalized)
 
     def _render_prompt(
         self,
@@ -262,7 +262,7 @@ def default_concept_postprocessor(concepts: list[Any]) -> list[ConceptSpec]:
     return processed
 
 
-def concept_specs_to_annotation(concepts: list[Any]) -> Annotations:
+def concept_specs_to_annotations(concepts: list[Any]) -> Annotations:
     """Convert normalized LLM concept specifications to an annotation axis."""
     specs = default_concept_postprocessor(concepts)
     labels = [spec["name"] for spec in specs]
