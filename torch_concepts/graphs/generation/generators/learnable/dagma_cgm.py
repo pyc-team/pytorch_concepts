@@ -3,7 +3,7 @@
 Adjacency [i, j] represents i -> j. The source owns weights, optional pair
 orientation logits and a registered edge mask. Raw adjacency can contain
 cycles; the source provides neither a training loop nor an acyclicity loss.
-Use a model-specific objective and, if needed, cycle removal on to_graph().
+Use a model-specific objective and, if needed, cycle removal during eval.
 """
 
 from __future__ import annotations
@@ -15,14 +15,13 @@ import torch
 from torch import nn
 
 from ...base.learnable import GraphGeneratorLearnable, GraphGeneratorLearnableSpec
-from ...initialization.initializations import random_initialization
 
 
 # ------------------------------------------------------------------
 # DAGMA-CGM: CausalCGM's modified DAGMA adjacency
 # ------------------------------------------------------------------
 def _dagma_cgm_forward(
-    generator: GraphGeneratorLearnable, _dataset=None,
+    generator: GraphGeneratorLearnable, concept_values, concept_names, concept_descriptions,
 ) -> torch.Tensor:
     """Compute weighted adjacency with a straight-through threshold gate.
 
@@ -34,7 +33,7 @@ def _dagma_cgm_forward(
     The forward gate is hard (weight > threshold); backward uses
     sigmoid(5 * (weight - threshold)). Surviving edges keep their weight rather
     than becoming binary. No acyclicity penalty, refinement or cache is applied.
-    _dataset is an unused compatibility argument.
+    concept_values is unused: adjacency depends on learned weights only.
     """
     weights = (generator.fc1.weight * generator.edge_mask).abs()
     # Ambiguous pairs are parameterized once, then completed in the opposite
@@ -57,9 +56,9 @@ def _dagma_cgm_forward(
 def _load_dagma_cgm_source(
     generator: GraphGeneratorLearnable,
     name: str,
-    concept_names: List[str],
+    n_concepts: int,
     n_tasks: int = 0,
-    task_names: Optional[List[str]] = None,
+    task_indices: Optional[List[int]] = None,
     threshold: float = 0.02,
     no_out_task: bool = True,
     edges_to_check=None,
@@ -72,13 +71,12 @@ def _load_dagma_cgm_source(
         PyTorch module receiving fc1, edge_matrix, edge_mask and method options.
     name : {"dagma_cgm"}
         Registered method under source="DAGMA_CGM".
-    concept_names : list[str]
-        Ordered names of all graph nodes, including any task nodes.
+    n_concepts : int
+        Number of graph nodes, including task nodes. Names are supplied at call time.
     n_tasks : int, default 0
-        If task_names is omitted, mark the final n_tasks nodes as tasks.
-    task_names : list[str], optional
-        Explicit task nodes within concept_names. When supplied, this list
-        determines task indices and the stored task count.
+        If task_indices is omitted, mark the final n_tasks nodes as tasks.
+    task_indices : list[int], optional
+        Explicit task indices; determines the stored task count.
     threshold : float, default 0.02
         Cutoff used by the straight-through gate; values equal to it are removed.
     no_out_task : bool, default True
@@ -91,7 +89,7 @@ def _load_dagma_cgm_source(
     Returns
     -------
     GraphGeneratorLearnableSpec
-        Differentiable callback with random_initialization as its default.
+        Differentiable callback using the weights initialized by nn.Linear.
 
     Notes
     -----
@@ -101,18 +99,18 @@ def _load_dagma_cgm_source(
     """
     if name != "dagma_cgm":
         raise ValueError("The DAGMA_CGM source supports only name='dagma_cgm'.")
-    if not 0 <= n_tasks <= len(concept_names):
+    if not isinstance(n_concepts, Integral) or isinstance(n_concepts, bool) or n_concepts < 1:
+        raise ValueError("n_concepts must be a positive integer.")
+    if not isinstance(n_tasks, Integral) or isinstance(n_tasks, bool) or not 0 <= n_tasks <= n_concepts:
         raise ValueError("n_tasks must be between zero and the number of nodes.")
-    generator.concept_names = list(concept_names)
-    generator.n_concepts = len(concept_names)
-    if task_names is None:
-        task_names = concept_names[-n_tasks:] if n_tasks else []
-    missing = set(task_names) - set(concept_names)
-    if missing:
-        raise ValueError(f"task_names must be graph nodes; missing: {sorted(missing)}.")
-    generator.task_names = list(task_names)
-    generator.task_indices = [concept_names.index(task) for task in task_names]
-    generator.n_tasks = len(task_names)
+    indices = list(range(n_concepts - n_tasks, n_concepts)) if task_indices is None else list(task_indices)
+    if len(set(indices)) != len(indices) or any(
+        not isinstance(i, Integral) or isinstance(i, bool) or not 0 <= i < n_concepts for i in indices
+    ):
+        raise ValueError("task_indices must contain unique valid node indices.")
+    generator.n_concepts = n_concepts
+    generator.task_indices = indices
+    generator.n_tasks = len(indices)
     generator.fc1 = nn.Linear(
         generator.n_concepts, generator.n_concepts, bias=False
     )
@@ -138,5 +136,5 @@ def _load_dagma_cgm_source(
     generator.threshold = float(threshold)
     return GraphGeneratorLearnableSpec(
         forward=_dagma_cgm_forward,
-        initialization=random_initialization,
+        weights=generator.fc1.weight,
     )

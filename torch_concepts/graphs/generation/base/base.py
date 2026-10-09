@@ -1,25 +1,8 @@
-"""Shared graph generation lifecycle and source registration.
+"""Common construction, refinement, validation and cache identity for graph generators.
 
-Static sources provide ``compute(generator, dataset) -> ConceptGraph``;
-learnable sources provide ``forward(generator) -> Tensor`` and optionally an
-initializer. Source loaders attach options/state and return the concrete spec.
-Configuration is chosen at construction and is read-only afterwards.
-
-Materialization resolves descriptions, computes source output, applies ordered
-``ConceptGraph -> ConceptGraph`` refinements, then validates node order and,
-when require_dag=True, acyclicity. Generation and refinements share descriptions:
-generator descriptions override dataset defaults.
-
-Static disk caching belongs to dataset/datamodule.precompute_graph. Learnable
-final graphs are cached in memory by to_graph() in eval mode; ordinary forward()
-never uses that cache. Cache keys include options and descriptions where used,
-but do not fingerprint dataset values or custom callable code. Use force=True
-when data or external callable behavior changes.
-
-Register custom loaders with GraphGeneratorStatic.register_source or
-GraphGeneratorLearnable.register_source. Static specs require compute; learnable
-specs require forward. The common spec holds refinement options only.
-See doc/guides/graph_generation.rst for usage and extension examples.
+Static sources provide compute; learnable sources provide forward. Both receive
+values, names and descriptions and return adjacency or a ConceptGraph.
+Concrete subclasses control when finalization and caching occur.
 """
 
 from __future__ import annotations
@@ -29,14 +12,11 @@ from inspect import Parameter, signature
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from functools import partial
-from typing import Any, Optional, Sequence, TYPE_CHECKING
+from typing import Any, Optional, Sequence
 
 import torch
 
 from torch_concepts.concept_graph import ConceptGraph
-
-if TYPE_CHECKING:
-    from torch_concepts.data.base.dataset import ConceptDataset
 
 class GraphGenerator:
     """Common state and lifecycle for static and learnable graph generators.
@@ -72,8 +52,7 @@ class GraphGenerator:
     source : str
         Resolved implementation family.
     graph : ConceptGraph or None
-        Most recent materialized graph; forward() on a learnable generator does
-        not set this attribute.
+        Most recent finalized graph; training calls do not set this attribute.
     fitted : bool
         True after successful materialization or static cache loading; this is
         not evidence that a learnable source has been optimized.
@@ -82,8 +61,7 @@ class GraphGenerator:
     """
 
     trainable: bool
-    _sources: dict[str, Callable] = {}
-    _name_sources: dict[str, set[str]] = {}
+    _source_loaders: dict[str, Callable] = {}
 
     def __init__(
         self,
@@ -103,9 +81,11 @@ class GraphGenerator:
         self.source = self.resolve_source(name, source)
         self.graph: Optional[ConceptGraph] = None
         self.fitted = False
+        self._cache_key = None
+        self._trained_cached_graph = None
         self._concept_descriptions = {}
         self.require_dag = require_dag
-        loader = self._sources[self.source]
+        loader = self._source_loaders[self.source]
         defaults = {
             name: parameter.default
             for name, parameter in signature(loader).parameters.items()
@@ -153,25 +133,33 @@ class GraphGenerator:
         """Register a source initializer and the method names it provides.
         """
         def decorator(fn: Callable) -> Callable:
-            cls._sources[source] = fn
-            for name in names or ():
-                cls._name_sources.setdefault(name, set()).add(source)
+            loader = partial(fn)
+            loader._method_names = tuple(names or ())
+            cls._source_loaders[source] = loader
             return fn
         return decorator
+
+    @classmethod
+    def _find_sources(cls, name: str) -> list[str]:
+        """Find registered loaders supporting the method name."""
+        return sorted(
+            source for source, loader in cls._source_loaders.items()
+            if name in loader._method_names
+        )
 
     @classmethod
     def resolve_source(cls, name: str, source: Optional[str] = None) -> str:
         """Resolve the implementation family for a method name.
         """
         if source is not None:
-            if source not in cls._sources:
+            if source not in cls._source_loaders:
                 raise ValueError(
                     f"Unknown source {source!r} for {cls.__name__}; "
-                    f"registered sources: {sorted(cls._sources)}. Register new "
+                    f"registered sources: {sorted(cls._source_loaders)}. Register new "
                     f"ones with @{cls.__name__}.register_source(...)."
                 )
             return source
-        matches = sorted(cls._name_sources.get(name, set()))
+        matches = cls._find_sources(name)
         if len(matches) == 1:
             return matches[0]
         if not matches:
@@ -183,47 +171,64 @@ class GraphGenerator:
             "specify `source`."
         )
 
-    def _prepare_context(self, dataset=None) -> None:
-        """Resolve one shared description context for generation and refinements.
-
-        Generator descriptions override dataset defaults.
-        Stored refinements receive the resolved context;
-        caller-owned dictionaries and callables stay intact.
-        """
-        steps = self._spec.refinement or ()
-        explicit = dict(getattr(self, "concept_descriptions", None) or {})
-        descriptions = {**(getattr(dataset, "label_descriptions", None) or {}), **explicit}
-        names = getattr(dataset, "concept_names", None)
-        if names is not None:
-            descriptions = {name: descriptions.get(name, "") for name in names}
+    def _prepare_context(self, concept_names, concept_descriptions=None):
+        """Bind call descriptions to refinements without changing the originals."""
+        descriptions = {
+            name: (concept_descriptions or {}).get(name, "")
+            for name in concept_names
+        }
         self._concept_descriptions = descriptions
-        if "concept_descriptions" in self._method_parameters:
-            self._method_parameters["concept_descriptions"] = dict(descriptions)
-        refinements = tuple(
+        self._context_names = list(concept_names)
+        self._resolved_refinements = tuple(
             partial(step, concept_descriptions=descriptions)
             if isinstance(step, partial) and "concept_descriptions" in step.keywords
-            else step
-            for step in steps
+            else step for step in self._spec.refinement or ()
         )
-        self._spec = replace(self._spec, refinement=refinements or None)
 
-    def _cache_key(self, dataset) -> Any:
-        """Build static cache metadata, including descriptions only where consumed.
+    def _validate_inputs(self, values, names, descriptions):
+        if values is not None and (not isinstance(values, torch.Tensor) or values.ndim != 2):
+            raise ValueError("concept_values must be a Tensor of shape (samples, concepts).")
+        count = values.shape[1] if values is not None else getattr(self, "n_concepts", None)
+        if names is None:
+            if count is None:
+                raise ValueError("Provide concept_names when concept_values is omitted.")
+            names = [str(i) for i in range(count)]
+        if isinstance(names, (str, bytes)):
+            raise ValueError("concept_names must be a sequence of unique strings.")
+        names = list(names)
+        if not all(isinstance(n, str) for n in names) or len(set(names)) != len(names):
+            raise ValueError("concept_names must contain unique strings.")
+        if count is not None and len(names) != count:
+            raise ValueError("concept_names must match the concept columns.")
+        if self.trainable and getattr(self, "n_concepts", len(names)) != len(names):
+            raise ValueError("concept_names must match the number of generator nodes.")
+        descriptions = {} if descriptions is None else descriptions
+        if not isinstance(descriptions, dict) or not all(
+            isinstance(k, str) and isinstance(v, str) for k, v in descriptions.items()
+        ):
+            raise ValueError("concept_descriptions must be a dictionary of strings.")
+        return names, descriptions
 
-        Dataset contents and callable implementation code are not fingerprinted.
-        Learnable callers use the same tensor-state tracking as to_graph.
+    def _build_cache_key(self, *, concept_values=None, cache_metadata=None) -> Any:
+        """Build cache identity from all supplied inputs and generator configuration.
+
+        Optional cache_metadata is supplied by the caller, independently of context.
+        Input values are fingerprinted; callable implementation code is not.
+        Learnable cache keys also track parameter/buffer state.
         The caller must resolve descriptions with _prepare_context first.
         """
         key = {
+            "concept_names": list(getattr(self, "_context_names", ()) or ()),
             "source": self.source,
             "name": self.name,
             "method_parameters": self._cache_parameter(self._method_parameters),
             "require_dag": self.require_dag,
-            "dataset": self._dataset_cache_key(dataset),
-            "refinement": self._refinement_cache_key(self._spec.refinement),
+            "dataset": self._cache_parameter(cache_metadata),
+            "refinement": self._refinement_cache_key(getattr(self, "_resolved_refinements", self._spec.refinement)),
         }
         if self.trainable:
             key["tensor_state"] = self._tensor_state()
+        key["concept_descriptions"] = dict(self._concept_descriptions)
         return key
 
     @staticmethod
@@ -274,23 +279,6 @@ class GraphGenerator:
         }
 
     @staticmethod
-    def _dataset_cache_key(dataset) -> Optional[dict[str, Any]]:
-        """Identify a dataset by metadata and optional ordered training indices.
-        """
-        if dataset is None:
-            return None
-        return {
-            "class": type(dataset).__qualname__,
-            "name": getattr(dataset, "name", None),
-            "concept_names": list(dataset.concept_names),
-            "n_samples": dataset.n_samples,
-            "is_subset": getattr(dataset, "is_subset", False),
-            "subset_seed": getattr(dataset, "subset_seed", None),
-            "seed": getattr(dataset, "seed", None),
-            "training_indices": getattr(dataset, "graph_training_indices", None),
-        }
-
-    @staticmethod
     def _refinement_cache_key(refinement) -> Optional[dict[str, Any]]:
         """Represent refinement identity, partial arguments and declared cache keywords.
         """
@@ -325,7 +313,8 @@ class GraphGenerator:
         """Discard the materialized graph without changing generator parameters."""
         self.graph = None
         self.fitted = False
-
+        self._cache_key = None
+        self._trained_cached_graph = None
 
     def _validate_graph(self, graph: ConceptGraph) -> None:
         """Require finite adjacency and, when requested, an acyclic graph."""
@@ -343,44 +332,31 @@ class GraphGenerator:
             )
 
     def _construct_graph(
-        self,
-        dataset: Optional[ConceptDataset] = None,
+        self, concept_values, concept_names, concept_descriptions=None, *,
+        finalize=True,
     ) -> ConceptGraph:
-        """Materialize source output, refine it, validate it and retain the graph.
-
-        Static compute receives a required dataset and returns ConceptGraph.
-        The caller must resolve descriptions with _prepare_context first.
-        """
-
-        if self.trainable:
-            with torch.no_grad():
-                adjacency = self._spec.forward(self)
-            if not isinstance(adjacency, torch.Tensor):
-                raise TypeError("Learnable forward must return an adjacency Tensor.")
-            concept_names = list(self.concept_names)
-            if dataset is not None and list(dataset.concept_names) != concept_names:
-                raise ValueError("Dataset concept names must match the generator concepts.")
-            graph = ConceptGraph(adjacency.detach(), node_names=concept_names)
-        else:
-            if dataset is None:
-                raise ValueError("Static graph construction requires a dataset.")
-            graph = self._spec.compute(self, dataset)
-            if not isinstance(graph, ConceptGraph):
-                raise TypeError("Static compute must return a ConceptGraph.")
-            concept_names = list(dataset.concept_names)
-
-        if list(graph.node_names) != concept_names:
-            self._invalidate_cache()
+        """Compute through the common source contract, then optionally finalize."""
+        names, descriptions = self._validate_inputs(concept_values, concept_names, concept_descriptions)
+        compute = self._spec.forward if self.trainable else self._spec.compute
+        output = compute(self, concept_values, names, descriptions)
+        graph = ConceptGraph(output, node_names=names) if isinstance(output, torch.Tensor) else output
+        if not isinstance(graph, ConceptGraph):
+            raise TypeError("Source compute must return a Tensor or ConceptGraph.")
+        if not torch.is_grad_enabled() and graph.data.requires_grad:
+            graph = ConceptGraph(graph.data.detach(), node_names=names)
+        if graph.node_names != names:
             raise ValueError("Graph nodes must match the concept names and order.")
-        if self._spec.refinement is not None:
-            # Refinement is always graph-to-graph and runs before validation.
-            for refinement in self._spec.refinement:
-                graph = refinement(graph)
-                if not isinstance(graph, ConceptGraph):
-                    raise TypeError("Refinement must return a ConceptGraph.")
-                if list(graph.node_names) != concept_names:
-                    self._invalidate_cache()
-                    raise ValueError("Refinement nodes must match the concept names and order.")
+        if not finalize:
+            return graph
+        resolved = {name: descriptions.get(name, "") for name in names}
+        if getattr(self, "_context_names", None) != names or self._concept_descriptions != resolved:
+            self._prepare_context(concept_names=names, concept_descriptions=descriptions)
+        for refinement in self._resolved_refinements:
+            graph = refinement(graph)
+            if not isinstance(graph, ConceptGraph):
+                raise TypeError("Refinement must return a ConceptGraph.")
+            if graph.node_names != names:
+                raise ValueError("Refinement nodes must match the concept names and order.")
         self._validate_graph(graph)
         self.graph = graph
         self.fitted = True
@@ -399,9 +375,7 @@ class GraphGenerator:
 class GraphGeneratorSpec:
     """Options shared by static and learnable graph sources.
 
-    Generation callbacks are required by the concrete specs:
-    GraphGeneratorStaticSpec.compute(generator, dataset) returns a ConceptGraph;
-    GraphGeneratorLearnableSpec.forward(generator) returns an adjacency Tensor.
+    Static and learnable specs define their own source callbacks.
 
     Attributes
     ----------

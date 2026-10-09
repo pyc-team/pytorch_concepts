@@ -661,6 +661,7 @@ class ConceptDataset(Dataset):
         force: bool = False,
         *,
         training_indices=None,
+        concept_descriptions: Optional[dict[str, str]] = None,
     ) -> None:
         """Precompute a static concept graph and store it as ``graph``.
 
@@ -676,16 +677,16 @@ class ConceptDataset(Dataset):
         With ``cache=True`` (default), the graph is saved under ``cache_dir``
         (by default ``root_dir``) and reused on later calls with matching
         generator options, concept descriptions, dataset metadata and training indices.
-        ``force=True`` recomputes and updates the cache. The ``ground_truth``
-        method uses the native graph and skips disk caching.
-        Changes to dataset values or generation/refinement code are not detected
-        by the cache; pass ``force=True`` after changing them.
+        ``force=True`` recomputes and updates the cache.
+        Changes to concept values and descriptions invalidate the cache.
+        Changes to generation/refinement code require ``force=True``.
 
         Parameters
         ----------
         graph_generator : GraphGeneratorStatic
-            Static generator configured with a source, method and optional
-            refinements. Learnable generators are not supported.
+            Static generator with optional refinements.
+        concept_descriptions : dict[str, str], optional
+            Override individual dataset descriptions for generation and refinements.
         cache : bool, default True
             Persist the graph to disk and reuse it across calls. Pass False
             to recompute without reading or writing the disk cache.
@@ -725,11 +726,24 @@ class ConceptDataset(Dataset):
         graph_dataset._subset_rows(training_indices)
         graph_dataset.graph_training_indices = training_indices
 
-        graph_generator._prepare_context(graph_dataset)
+        graph_dataset.label_descriptions = {
+            **(getattr(self, "label_descriptions", None) or {}),
+            **(concept_descriptions or {}),
+        }
+        graph_generator._validate_inputs(
+            graph_dataset.concepts.tensor, graph_dataset.concept_names,
+            getattr(graph_dataset, "label_descriptions", None),
+        )
+        graph_generator._prepare_context(
+            graph_dataset.concept_names, graph_dataset.label_descriptions,
+        )
         graph = None
         cache_path = None
-        if cache and graph_generator.name != "ground_truth":
-            cache_key = graph_generator._cache_key(graph_dataset)
+        if cache:
+            cache_key = graph_generator._build_cache_key(
+                concept_values=graph_dataset.concepts.tensor,
+                cache_metadata=graph_dataset._graph_cache_metadata(),
+            )
             cache_dir = cache_dir or self.root_dir
             os.makedirs(cache_dir, exist_ok=True)
             digest = hashlib.sha256(
@@ -753,17 +767,27 @@ class ConceptDataset(Dataset):
                 )
 
         if graph is None:
-            graph = graph_generator._construct_graph(graph_dataset)
+            graph = graph_generator._construct_graph(
+                graph_dataset.concepts.tensor, list(graph_dataset.concept_names),
+                getattr(graph_dataset, "label_descriptions", None),
+            )
             if cache_path is not None:
                 logger.info("Saving graph to %s", cache_path)
-                torch.save(
-                    {
-                        "adjacency": graph.data.cpu(),
-                        "node_names": list(graph.node_names),
-                    },
-                    cache_path,
-                )
+                graph.save(cache_path)
         self._graph, self._graph_generator = graph, graph_generator
+
+    def _graph_cache_metadata(self):
+        """Identify this graph precomputation by dataset metadata and row selection."""
+        return {
+            "class": type(self).__qualname__,
+            "name": getattr(self, "name", None),
+            "concept_names": list(self.concept_names),
+            "n_samples": self.n_samples,
+            "is_subset": getattr(self, "is_subset", False),
+            "subset_seed": getattr(self, "subset_seed", None),
+            "seed": getattr(self, "seed", None),
+            "training_indices": getattr(self, "graph_training_indices", None),
+        }
 
     def _subset_rows(self, indices) -> None:
         """Subset every row-aligned source and rebuild selected supervision."""

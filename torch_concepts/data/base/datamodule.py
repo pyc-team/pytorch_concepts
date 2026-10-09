@@ -447,9 +447,11 @@ class ConceptDataModule(LightningDataModule):
     def precompute_graph(
         self, graph_generator, cache: bool = True,
         cache_dir: Optional[str] = None, force: bool = False,
+        concept_descriptions: Optional[dict[str, str]] = None,
     ) -> None:
-        """Estimate a static graph from training rows and store it on the dataset.
+        """Precompute a static graph from training rows and store it on the dataset.
 
+        Descriptions default to the dataset; supplied entries override them.
         Call ``setup('fit')`` first to prepare the training split.
         """
         if getattr(graph_generator, "trainable", False):
@@ -462,6 +464,7 @@ class ConceptDataModule(LightningDataModule):
             graph_generator, cache=cache,
             cache_dir=cache_dir, force=force,
             training_indices=self.trainset.indices,
+            concept_descriptions=concept_descriptions,
         )
 
     def setup(self, stage: StageOptions = None) -> None:

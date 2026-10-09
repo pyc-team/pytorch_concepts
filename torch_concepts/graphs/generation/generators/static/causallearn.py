@@ -8,16 +8,13 @@ removal refinement before the default require_dag=True validation.
 
 from __future__ import annotations
 
-from typing import Any, TYPE_CHECKING
+from typing import Any
 
 import numpy as np
 import torch
 
 from torch_concepts.concept_graph import ConceptGraph
 from ...base.static import GraphGeneratorStatic, GraphGeneratorStaticSpec
-
-if TYPE_CHECKING:
-    from torch_concepts.data.base.dataset import ConceptDataset
 
 
 _CONSTRAINT_BASED = {"pc"}
@@ -69,16 +66,18 @@ def _cl_graph_to_adj(cl_graph: Any) -> torch.Tensor:
 
 def _compute_causallearn(
     self: GraphGeneratorStatic,
-    dataset: ConceptDataset,
+    concept_values, concept_names, concept_descriptions,
 ) -> ConceptGraph:
-    """Discover a graph from dataset.concepts in dataset.concept_names order.
+    """Discover a graph from concept_values in concept_names order.
 
     Concept observations are detached and moved to CPU/NumPy. PC uses alpha
     and indep_test; GES uses score_func. Return endpoint-converted adjacency
     without refinement; the common materialization lifecycle handles validation.
     """
+    if concept_values is None:
+        raise ValueError("This source requires concept_values.")
     algorithm = _import_causallearn(self.name)
-    data = dataset.concepts.detach().cpu().numpy()
+    data = concept_values.detach().cpu().numpy()
 
     if self.name in _CONSTRAINT_BASED:
         result = algorithm(data, self.alpha, self.indep_test)
@@ -86,7 +85,6 @@ def _compute_causallearn(
     else:
         cl_graph = algorithm(data, score_func=self.score_func)["G"]
 
-    concept_names = list(dataset.concept_names)
     return ConceptGraph(
         _cl_graph_to_adj(cl_graph),
         node_names=concept_names,
@@ -122,7 +120,7 @@ def _load_causallearn_source(
     Returns
     -------
     GraphGeneratorStaticSpec
-        Dataset-based compute contract. causal-learn is imported at compute time.
+        Common compute contract. causal-learn is imported at compute time.
     """
     supported = _CONSTRAINT_BASED | _SCORE_BASED
     if name not in supported:

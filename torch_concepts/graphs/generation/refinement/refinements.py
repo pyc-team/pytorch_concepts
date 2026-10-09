@@ -2,8 +2,9 @@
 
 Each public refinement returns a new graph with the same node names and
 order. LLM orientation handles reciprocal edges only; cycle removal acts
-on all nonzero edges. These are export/precomputation operations, not
-training objectives. Generator validation runs after all refinements.
+on all nonzero edges. Generators run refinements before validation on every
+call. Cycle removal preserves gradients for retained weights; selecting which
+edges to remove is discrete.
 """
 
 from __future__ import annotations
@@ -87,7 +88,7 @@ def refine_llm(
     ) -> ConceptGraph:
         descriptions = concept_descriptions or {}
         concept_names = list(graph.node_names)
-        adjacency = graph.data
+        adjacency = graph.data.clone()
         for i in range(len(concept_names)):
             for j in range(i + 1, len(concept_names)):
                 if adjacency[i, j] == 0 or adjacency[j, i] == 0:
@@ -123,50 +124,45 @@ def refine_llm(
 
 
 def remove_weakest_cycles(graph: ConceptGraph) -> ConceptGraph:
-    """Remove minimum-absolute-weight cyclic edges until the graph is a DAG.
+    """Remove minimum-weight cyclic edges, following CausalCGM's strategy.
 
-    Parameters
-    ----------
-    graph : ConceptGraph
-        Directed weighted adjacency; every nonzero entry is an edge.
-
-    Returns
-    -------
-    ConceptGraph
-        A detached copy with the same node names/order, device and dtype.
-        All surviving weights are preserved.
-
-    Notes
-    -----
-    At each iteration, find strongly connected components and remove the
-    weakest edge whose endpoints share a component, including self-loops.
-    The choice considers all cyclic components, not a single selected cycle.
-    Ties follow NetworkX edge iteration order. No input graph mutation occurs.
-    Reciprocal (-1, -1) entries trigger a warning: PC/GES undirected edges
-    are treated as opposite directed edges. Apply refine_llm first to orient them.
+    Try a topological sort; if a cycle remains, remove the minimum-weight edge
+    belonging to a simple cycle. Include self-loops and break ties
+    in row/column order. At most the initial number of edges can be removed.
+    Preserve input, node order, device, dtype and gradients of surviving weights.
     """
-    adjacency = graph.data.detach()
+    import numpy as np
+
+    adjacency = graph.data.clone()
+    if not torch.isfinite(adjacency).all():
+        raise ValueError("Cycle removal requires finite adjacency values.")
     _warn_undirected_edges(
         adjacency, "remove_weakest_cycles",
-        "directions are removed by minimum absolute weight, with ties resolved "
-        "by NetworkX edge iteration order, without causal orientation",
+        "directions are removed by minimum weight, with ties resolved in "
+        "row/column order, without causal orientation",
     )
-    while True:
-        network = nx.from_numpy_array(adjacency.cpu().numpy(), create_using=nx.DiGraph)
-        components = {
-            node: index
-            for index, nodes in enumerate(nx.strongly_connected_components(network))
-            for node in nodes
-        }
-        cyclic_edges = [
-            edge for edge in network.edges
-            if components[edge[0]] == components[edge[1]]
-        ]
-        if not cyclic_edges:
-            break
-        weakest = min(cyclic_edges, key=lambda edge: abs(float(adjacency[edge])))
-        adjacency[weakest] = 0
-    return ConceptGraph(adjacency, node_names=list(graph.node_names))
+    for _ in range(int(torch.count_nonzero(adjacency)) + 1):
+        network = nx.from_numpy_array(adjacency.detach().cpu().numpy(), create_using=nx.DiGraph)
+        try:
+            list(nx.topological_sort(network))
+            return ConceptGraph(adjacency, node_names=list(graph.node_names))
+        except nx.NetworkXUnfeasible:
+            cycles_edges = set()
+            for cycle in nx.simple_cycles(network):
+                cycles_edges.update(zip(cycle, cycle[1:] + cycle[:1]))
+
+            scm_tmp = adjacency.detach().cpu().numpy().astype(float, copy=True)
+            scm_tmp[scm_tmp == 0] = float("inf")
+            for i in range(scm_tmp.shape[0]):
+                for j in range(scm_tmp.shape[1]):
+                    if (i, j) not in cycles_edges:
+                        scm_tmp[i, j] = float("inf")
+
+            if not np.isfinite(scm_tmp).any():
+                raise RuntimeError("No finite cyclic edge available for removal.")
+            index = np.unravel_index(np.argmin(scm_tmp), scm_tmp.shape)
+            adjacency[index] = 0
+    raise RuntimeError("Cycle removal did not produce a DAG.")
 
 
 def dfs_remove_cycles(
@@ -204,7 +200,7 @@ def dfs_remove_cycles(
     Reciprocal (-1, -1) entries trigger a warning: PC/GES undirected edges
     are treated as opposite directed edges. Apply refine_llm first to orient them.
     """
-    adjacency = graph.data.detach()
+    adjacency = graph.data.clone()
     _warn_undirected_edges(
         adjacency, "dfs_remove_cycles",
         "back-edge directions are removed according to DFS traversal order, "

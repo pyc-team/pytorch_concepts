@@ -165,12 +165,6 @@ def _most_frequent_token(response: Any, tokens: tuple[str, ...] = _EDGE_TOKENS) 
     return winners[0] if len(winners) == 1 else "none"
 
 
-def is_fully_directed(adjacency: torch.Tensor) -> bool:
-    """Return whether no edge pair has two nonzero endpoints."""
-    nonzero = adjacency != 0
-    return not bool((nonzero & nonzero.T).any())
-
-
 def _dfs(node, adj_matrix, visited, stack, remove):
     """Visit parents in index order; optionally remove the first cycle edge."""
     visited[node] = True
@@ -189,12 +183,10 @@ def _dfs(node, adj_matrix, visited, stack, remove):
 
 
 def contains_cycle(adj_matrix: torch.Tensor) -> bool:
-    """Detect any directed cycle, including self-loops, without modifying input.
-    """
+    """Detect directed cycles, including self-loops, without modifying input."""
     visited = [False] * len(adj_matrix)
     stack = [False] * len(adj_matrix)
     for node in range(len(adj_matrix)):
-        if not visited[node]:
-            if _dfs(node, adj_matrix, visited, stack, False):
-                return True
+        if not visited[node] and _dfs(node, adj_matrix, visited, stack, False):
+            return True
     return False
