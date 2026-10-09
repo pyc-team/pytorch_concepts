@@ -1,5 +1,5 @@
 import torch
-from torch_concepts import Annotations
+from torch_concepts import Annotations, AnnotatedTensor
 from torch_concepts.nn import (
     CMRTaskLoss,
     CompositeLoss,
@@ -27,21 +27,27 @@ def make_cmr_loss(task_names, concept_weight=1.0, task_weight=1.0):
 
 
 def test_cmr_exposes_reconstruction_prediction_beside_the_task():
+    annotations = Annotations(labels=["c1", "c2", "xor"], cardinalities=[1, 1, 1])
     model = ConceptMemoryReasoner(
         input_size=2,
-        annotations=Annotations(labels=["c1", "c2", "xor"], cardinalities=[1, 1, 1]),
+        annotations=annotations,
         task_names=["xor"],
         n_rules=3,
     )
-    target = torch.tensor([[0., 1., 1.], [1., 0., 0.]])
-    query = model.fully_observed_query(target)
-    query["tasks_with_rec"] = None
-    output = model(query=query, evidence={"input": torch.randn(2, 2)})
+    target = AnnotatedTensor(
+        torch.tensor([[0., 1., 1.], [1., 0., 0.]]),
+        annotations.to_concept_space(),
+        axis=-1,
+    )
+    batch = {"inputs": {"x": torch.randn(2, 2)}, "concepts": {"c": target}}
+    query = model.prepare_query(batch)
+    assert query["tasks_with_rec"] is None
+    output = model(query=query, evidence=model.prepare_evidence(batch))
 
     assert output.probs["xor"].shape == (2, 1)
     assert output.probs["tasks_with_rec"].shape == (2, 1)
 
-    loss = make_cmr_loss(task_names=["xor"])(output, model.prepare_target(target))
+    loss = make_cmr_loss(task_names=["xor"])(output, model.prepare_target(batch))
     loss.backward()
     assert torch.isfinite(loss)
 
@@ -71,23 +77,31 @@ def test_cmr_cpd_parametrizations_match_layer_output_domains():
 def test_cmr_composite_loss_matches_original_value_and_gradients():
     torch.manual_seed(7)
     task_names = ["y1", "y2"]
+    annotations = Annotations(
+        labels=["c1", "c2", "c3", *task_names],
+        cardinalities=[1, 1, 1, 1, 1],
+    )
     model = ConceptMemoryReasoner(
         input_size=4,
-        annotations=Annotations(
-            labels=["c1", "c2", "c3", *task_names],
-            cardinalities=[1, 1, 1, 1, 1],
-        ),
+        annotations=annotations,
         task_names=task_names,
         n_rules=4,
         hard_roles_at_eval=False,
     )
     model.train()
 
-    raw_target = torch.randint(0, 2, (9, 5)).float()
-    target = model.prepare_target(raw_target)
-    query = {name: None for name in model.fully_observed_query(raw_target)}
-    query["tasks_with_rec"] = None
-    output = model(query=query, evidence={"input": torch.randn(9, 4)})
+    batch = {
+        "inputs": {"x": torch.randn(9, 4)},
+        "concepts": {"c": AnnotatedTensor(
+            torch.randint(0, 2, (9, 5)).float(),
+            annotations.to_concept_space(),
+            axis=-1,
+        )},
+    }
+    target = model.prepare_target(batch)
+    # Latent concepts, as at evaluation: every prediction depends on the input.
+    query = model.prepare_query(batch, step="val")
+    output = model(query=query, evidence=model.prepare_evidence(batch))
 
     concept_weight, task_weight = 0.7, 1.3
     composed = make_cmr_loss(
@@ -97,14 +111,15 @@ def test_cmr_composite_loss_matches_original_value_and_gradients():
     )
     actual = composed(output, target)
 
+    c = target["c"]
     concept_names = [
-        name for name in target.annotation.labels if name not in task_names
+        name for name in c.annotations.labels if name not in task_names
     ]
     concept_loss = torch.nn.functional.binary_cross_entropy(
         output.probs[concept_names],
-        target[concept_names].to(output.probs.dtype),
+        c[concept_names].to(output.probs.dtype),
     )
-    task_target = target[task_names].to(output.probs.dtype)
+    task_target = c[task_names].to(output.probs.dtype)
     task_pred = output.probs[task_names]
     rec_pred = output.probs["tasks_with_rec"].to(task_pred.dtype)
     ordinary_bce = torch.nn.functional.binary_cross_entropy(

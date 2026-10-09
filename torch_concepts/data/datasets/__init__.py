@@ -1,5 +1,1 @@
-"""Built-in concept datasets."""
-
-from .toy import ToyDataset
-
-__all__ = ["ToyDataset"]
+__all__: list[str] = []

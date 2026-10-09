@@ -119,6 +119,5 @@ class TestSelectorEmbeddingEncoder(unittest.TestCase):
             self.assertEqual(output.shape, (batch_size, 3, 4))
 
 
-
 if __name__ == '__main__':
     unittest.main()
