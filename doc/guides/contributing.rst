@@ -101,8 +101,8 @@ Development Setup
 Prerequisites
 ^^^^^^^^^^^^^
 
-- Python 3.9 or higher
-- PyTorch (latest stable version)
+- Python 3.10 or higher
+- PyTorch 2.6 or higher
 
 Installation
 ^^^^^^^^^^^^
@@ -112,11 +112,9 @@ For development, you may want to install PyC in editable mode and have the compl
 
    git clone https://github.com/YOUR_USERNAME/pytorch_concepts.git
    cd pytorch_concepts
-   # install and activate conda environment (use environment_silicon for Apple Silicon chips)
-   conda env create -f conceptarium/environment.yaml
-   conda activate conceptarium
-   # install your local pyc
-   pip install -e .
+   # create and activate the conda environment (PyC in editable mode, with all extras)
+   conda env create -f environment.yml
+   conda activate pyc
 
 
 Reporting Issues
@@ -146,7 +144,9 @@ Please follow these guidelines when contributing code:
    * - **Type hints**
      - Use type hints where appropriate to improve code clarity.
    * - **Docstrings**
-     - Write clear docstrings for all public functions and classes.
+     - Write clear docstrings for all public functions and classes, in
+       `Google style <https://www.sphinx-doc.org/en/master/usage/extensions/example_google.html>`_
+       (``Args:``, ``Returns:``), as in PyTorch.
    * - **Tests**
      - Write tests for new features and bug fixes.
    * - **Documentation**

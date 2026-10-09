@@ -48,7 +48,7 @@ import torch.distributions as dist
 
 from ....graph.bayesian_network import BayesianNetwork
 from ....distributions import spec_for
-from ...utils import build_distribution, make_temperature_schedule
+from ...utils import build_distribution
 from .....outputs import InferenceOutput
 from ..base import TorchBaseInference
 from ..utils import build_relaxed_distribution
@@ -69,7 +69,8 @@ def _soft_match(
     ``1[sample == target]`` as the relaxation temperature goes to zero.
 
     * Bernoulli family: ``prod_d  s_d if t_d == 1 else (1 - s_d)``.
-    * OneHotCategorical family: ``<s, t>`` over the class (last) axis.
+    * OneHotCategorical family: ``<s, t>`` over one member's class axis, then
+      the product over members.
     """
     D = variable.distribution
     s = sample
@@ -78,8 +79,13 @@ def _soft_match(
         m = t * s + (1.0 - t) * (1.0 - s)
         return m.flatten(2).prod(dim=-1)
     if issubclass(D, _ONEHOT):
-        m = (s * t).sum(dim=-1)  # contract the class axis
-        while m.dim() > 2:       # product over any remaining event axes
+        # Read into member layout first. The event of a k-member plate is flat
+        # (k * width), so contracting it whole would *sum* the per-member inner
+        # products where the joint match is their *product* — which on a plate
+        # reports a "probability" of up to k. One member's classes contract;
+        # the members multiply.
+        m = (variable.to_member(s) * variable.to_member(t)).sum(dim=-1)
+        while m.dim() > 2:       # product over members and any further axes
             m = m.prod(dim=-1)
         return m
     raise ValueError(
@@ -121,9 +127,16 @@ class ImportanceSampling(TorchBaseInference):
         initial_temperature: float = 1.0,
         annealing: Union[str, Callable[[int], float]] = "constant",
         annealing_rate: float = 0.0,
+        final_temperature: float = 1e-6,
         warn_low_ess: float = 0.01,
     ) -> None:
-        super().__init__(pgm)
+        super().__init__(
+            pgm,
+            initial_temperature=initial_temperature,
+            annealing=annealing,
+            annealing_rate=annealing_rate,
+            final_temperature=final_temperature,
+        )
         self._require_directed()
         if not isinstance(proposal, BaseProposal):
             raise TypeError(
@@ -135,18 +148,6 @@ class ImportanceSampling(TorchBaseInference):
         self.proposal = proposal
         self.n_samples = int(n_samples)
         self.warn_low_ess = float(warn_low_ess)
-        # Retained for repr/introspection; the live schedule lives in ``_schedule``.
-        self.initial_temperature = float(initial_temperature)
-        self.annealing = annealing
-        self.annealing_rate = float(annealing_rate)
-
-        self._schedule = make_temperature_schedule(
-            initial_temperature, annealing, annealing_rate
-        )
-        self._step = 0
-        self.register_buffer(
-            "_temperature", torch.tensor(float(self._schedule(self._step)))
-        )
 
     def __repr__(self) -> str:
         return self._format_repr(
@@ -155,17 +156,9 @@ class ImportanceSampling(TorchBaseInference):
             initial_temperature=self.initial_temperature,
             annealing=self.annealing,
             annealing_rate=self.annealing_rate,
+            final_temperature=self.final_temperature,
             warn_low_ess=self.warn_low_ess,
         )
-
-    @property
-    def temperature(self) -> torch.Tensor:
-        return self._temperature
-
-    def step(self) -> None:
-        """Advance the temperature schedule by one step."""
-        self._step += 1
-        self._temperature.fill_(float(self._schedule(self._step)))
 
     # ------------------------------------------------------------------
     def _model_log_joint(
@@ -200,7 +193,10 @@ class ImportanceSampling(TorchBaseInference):
                 # is passed straight through; the CPD resolves each parent.
                 params = cpd(parent_values=samples, **layer_kwargs.get(name, {}))
 
-            value = samples[name].reshape(batch_size, var.size)
+            # Member layout: both builders below lay a plate out as one
+            # distribution per member, so the value must carry the member
+            # axis too — a flat (batch, size) row would not broadcast.
+            value = var.to_member(samples[name])
             if name in evidence_names:
                 d = build_distribution(var, params)
             else:

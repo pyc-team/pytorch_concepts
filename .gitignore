@@ -82,6 +82,7 @@ model_results.csv
 # data folder (but not torch_concepts/data/)
 data/
 !torch_concepts/data/
+!examples/data/
 !tests/data/
 
 # conceptarium logs
@@ -90,6 +91,5 @@ conceptarium/results/
 outputs/
 
 # analysis
-conceptarium/visualize.py
-conceptarium/run_analysis.py
-conceptarium/conf/benchmark.yaml
+results/
+examples/experiments/*.png

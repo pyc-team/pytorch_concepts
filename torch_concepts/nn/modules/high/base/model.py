@@ -35,7 +35,9 @@ from .....annotations import Annotations
 from .....tensor import AnnotatedTensor
 from .....distributions import Delta
 from ...utils import with_training_mode
-from ...outputs import ModelOutput
+from ...outputs import InferenceOutput
+from ...low.encoders.linear import LinearEmbeddingToConcept
+from ...low.sequential import Sequential
 from ...mid.distributions import DEFAULT_DIST_KWARGS
 from ...mid.variable import _DEFAULT_DISTRIBUTIONS, ConceptVariable, EmbeddingVariable
 
@@ -261,10 +263,10 @@ class BaseModel(nn.Module, ABC):
         if variable_dist_kwargs is not None:
             self.variable_dist_kwargs = {**self.variable_dist_kwargs, **variable_dist_kwargs}
 
-        # Plate preference used by the level factories: None = auto-detect per
-        # level, True = force a plate (raise on a heterogeneous level), False =
-        # force one variable per concept.
-        self._plate_pref = plate
+        # Plate preference used by the level factories: None/True groups
+        # homogeneous concepts into the minimum number of plates, False gives one
+        # variable per concept.
+        self.plate = plate
 
         self._setup_annotations(annotations)
         self._setup_backbone(backbone, input_size, latent_size)
@@ -319,7 +321,7 @@ class BaseModel(nn.Module, ABC):
         """Resolve how a level is laid out, shared by the variable factories.
 
         Returns a list of ``(kind, name, members)`` where ``kind`` is ``"plate"``
-        or ``"individual"``. Honours the ``plate`` preference (:attr:`_plate_pref`):
+        or ``"individual"``. Honours the ``plate`` preference (:attr:`plate`):
 
         * ``None`` (default) / ``True`` — group homogeneous concepts into the
           minimum number of plates; even a lone concept becomes a single-member
@@ -332,7 +334,7 @@ class BaseModel(nn.Module, ABC):
         with their ``type`` and ``cardinality`` (e.g. ``concepts_binary_1``) so the
         names are unique.
         """
-        if self._plate_pref is False:
+        if self.plate is False:
             return [("individual", n, [n]) for n in names]
         # None / True: always plates (a lone concept is a single-member plate).
         groups = self._plate_groups(names)
@@ -398,8 +400,8 @@ class BaseModel(nn.Module, ABC):
 
         * a plate of ``k`` homogeneous concepts → one :class:`EmbeddingVariable` of
           shape ``(k * cardinality, embedding_size)`` (the members' state embeddings
-          stacked into one matrix); a lone concept is a single-member plate of shape
-          ``(cardinality, embedding_size)``;
+          stacked into one matrix); a lone concept is a single-member plate of
+          shape ``(cardinality, embedding_size)``;
         * with ``plate=False``, one ``EmbeddingVariable`` per concept of shape
           ``(cardinality, embedding_size)``, named via ``name_fmt``.
 
@@ -411,12 +413,12 @@ class BaseModel(nn.Module, ABC):
         out: List[EmbeddingVariable] = []
         for kind, name, members in self._plate_layout(names, plate_name):
             if kind == "plate":
-                card0 = self.concept_annotations.concept(members[0]).cardinality
-                shape = (len(members) * card0, embedding_size)
+                c0 = self.concept_annotations.concept(members[0])
+                shape = (len(members) * c0.cardinality, embedding_size)
             else:
                 name = name_fmt.format(name)
-                card = self.concept_annotations.concept(members[0]).cardinality
-                shape = (card, embedding_size)
+                c = self.concept_annotations.concept(members[0])
+                shape = (c.cardinality, embedding_size)
             out.append(EmbeddingVariable(name, distribution=Delta, shape=shape))
         return out
 
@@ -589,7 +591,7 @@ class BaseModel(nn.Module, ABC):
         evidence: Optional[Dict[str, torch.Tensor]] = None,
         input: Optional[torch.Tensor] = None,
         **inference_kwargs,
-    ) -> ModelOutput:
+    ) -> InferenceOutput:
         """Unified forward pass for all inference engines.
 
         The active inference engine is selected automatically based on
@@ -611,7 +613,7 @@ class BaseModel(nn.Module, ABC):
 
         Returns
         -------
-        ModelOutput
+        InferenceOutput
             ``params``/``samples``/``probabilities`` from the engine.
         """
         if evidence is None:
@@ -619,18 +621,7 @@ class BaseModel(nn.Module, ABC):
         if input is not None:
             evidence['input'] = input
 
-        result = self.inference.query(
-            query=query,
-            evidence=evidence,
-            **inference_kwargs,
-        )
-
-        return ModelOutput(
-            params=result.params,
-            guide_params=result.guide_params,
-            samples=result.samples,
-            probabilities=result.probabilities,
-        )
+        return self.inference.query(query=query, evidence=evidence, **inference_kwargs)
 
     @functools.cached_property
     def _query_plan(self):
@@ -650,46 +641,130 @@ class BaseModel(nn.Module, ABC):
             if var.variable_type == "concept"
         ]
 
-    def fully_observed_query(self, ground_truth: torch.Tensor) -> Dict[str, torch.Tensor]:
-        """Build the full-observation query that fills every concept's tensor.
+    @functools.cached_property
+    def _query_segments(self):
+        """Precompute the gather/one-hot plan used by :meth:`fully_observed_query`.
 
-        Maps the batch concept ground truth (``(batch, n_concepts)`` integer-coded,
-        columns in ``concept_annotations.labels`` order) to
-        ``{concept_variable_name: tensor}`` for every concept variable in the PGM.
-        The query is keyed by the *variable* name (so the inference engine teacher-
-        forces it via ``query.get(variable.name)`` — uniformly for plate and
-        individual layouts), and each tensor is assembled from the variable's members:
-        a categorical member (``cardinality > 1``) is one-hot encoded, a binary /
-        scalar member is taken as-is. Evidence (the raw input) is supplied separately.
+        Run-length-encodes each concept variable's members (from :attr:`_query_plan`)
+        into segments, in member order: a maximal run of consecutive cardinality-1
+        members (binary and/or continuous, which need no expansion) is merged into
+        one ``'plain'`` segment fetched with a single vectorized gather; each
+        cardinality>1 member (categorical) becomes its own ``'onehot'`` segment.
+        Computed once and cached, since the PGM structure is fixed after construction.
+
+        Returns:
+            dict[str, list[tuple]]: Map from concept variable name to its ordered
+            list of segments. Each segment is one of:
+
+            - ``('plain', index_tensor)`` — a :class:`torch.LongTensor` of
+              ground-truth column indices to gather directly (no expansion).
+            - ``('onehot', (index, cardinality))`` — a single ground-truth column
+              index and its number of classes, to be one-hot encoded.
         """
-        query = {}
+        segments = {}
         for name, members in self._query_plan:
-            cols = [
-                ground_truth[:, i].float().unsqueeze(-1) if card == 1
-                else F.one_hot(ground_truth[:, i].long(), card).float()
-                for i, card in members
-            ]
-            query[name] = torch.cat(cols, dim=-1)
+            var_segments = []
+            run = []
+            for i, card in members:
+                if card == 1:
+                    run.append(i)
+                    continue
+                if run:
+                    var_segments.append(('plain', torch.tensor(run, dtype=torch.long)))
+                    run = []
+                var_segments.append(('onehot', (i, card)))
+            if run:
+                var_segments.append(('plain', torch.tensor(run, dtype=torch.long)))
+            segments[name] = var_segments
+        return segments
+
+    def fully_observed_query(self, ground_truth: torch.Tensor) -> Dict[str, torch.Tensor]:
+        """Build the teacher-forcing query from full concept ground truth.
+
+        Assembles, for every concept variable in the PGM, the tensor the inference
+        engine should force it to during a fully-observed pass (e.g. teacher forcing
+        in training/eval). Each variable's tensor is built from :attr:`_query_segments`:
+        binary/continuous columns are gathered directly, categorical columns are
+        one-hot encoded. Evidence (the raw input) is supplied separately by the caller.
+
+        Args:
+            ground_truth: Batch concept ground truth of shape ``(batch, n_concepts)``,
+                integer-coded, with columns ordered as in ``concept_annotations.labels``.
+                May be a plain :class:`torch.Tensor` or an :class:`AnnotatedTensor`
+                (unwrapped internally).
+
+        Returns:
+            dict[str, torch.Tensor]: Map from concept variable name to its query
+            tensor, keyed for lookup via ``query.get(variable.name)``.
+        """
+        # By name, not position: the batch may order (or hold more) concepts.
+        if isinstance(ground_truth, AnnotatedTensor):
+            ground_truth = ground_truth[list(self.concept_annotations.labels)].tensor
+        raw = ground_truth
+        query = {}
+        for name, segments in self._query_segments.items():
+            if len(segments) == 1 and segments[0][0] == 'plain':
+                query[name] = raw[..., segments[0][1]].float()
+                continue
+            pieces = []
+            for kind, payload in segments:
+                if kind == 'plain':
+                    pieces.append(raw[..., payload].float())
+                else:
+                    i, card = payload
+                    pieces.append(F.one_hot(raw[..., i].long(), card).float())
+            query[name] = torch.cat(pieces, dim=-1)
         return query
 
-    def prepare_target(self, target: torch.Tensor) -> torch.Tensor:
-        """Prepare ground-truth labels for loss/metrics.
+    def prepare_query(self, batch: Dict, step='train') -> Dict:
+        """The query a training/eval step asks for, built from a batch: every
+        concept, teacher-forced at ``'train'`` and latent otherwise, so
+        evaluation measures the model unaided.
 
-        Returns the target as a concept-space :class:`AnnotatedTensor` (one column
-        per concept), so losses and metrics can align it to the predictions by
-        name. A target that already carries an annotation is returned unchanged.
-        Override in subclasses that predict a subset of concepts (e.g. task-only).
+        The keys are the same either way, only the values differ, so this makes a
+        difference only to an engine with ``p_int > 0`` (``VariationalInference``,
+        ``IndependentInference``). Override to observe a subset, or to read other
+        batch entries::
+
+            q = self.fully_observed_query(batch['concepts']['c'])
+            return {n: (v if n in KEEP else None) for n, v in q.items()}
 
         Parameters
         ----------
-        target : torch.Tensor
-            Raw ground-truth labels from the batch.
+        batch : dict
+            ``{'inputs': {...}, 'concepts': {'c': AnnotatedTensor, ...}, ...}`` —
+            under the learner, with inputs and concepts already scaled.
+        step : {'train', 'val', 'test'}
+        """
+        query = self.fully_observed_query(batch['concepts']['c'])
+        return query if step == 'train' else {name: None for name in query}
+
+    def prepare_evidence(self, batch: Dict, step='train') -> Dict:
+        """The evidence a training/eval step observes, built from a batch: the
+        input only (``{"input": batch['inputs']['x']}``).
+
+        Override to supply additional observed (non-concept) variables, per
+        ``step`` if they differ between training and evaluation.
+        """
+        return {"input": batch['inputs']['x']}
+
+    def prepare_target(self, batch: Dict) -> Dict:
+        """The ``target`` a loss receives, built from a batch.
+
+        Default: the batch inputs (``'x'``, ...) plus the concept ground truth
+        under ``'c'``, the concept-space :class:`AnnotatedTensor` (one column per
+        concept) losses and metrics align to the predictions by name. Override to
+        organize the target for a model (e.g. supervise only the tasks).
+
+        Parameters
+        ----------
+        batch : dict
+            ``{'inputs': {...}, 'concepts': {'c': AnnotatedTensor, ...}, ...}`` —
+            under the learner, with inputs and concepts already scaled.
 
         Returns
         -------
-        AnnotatedTensor or None
-            Concept-space annotated target.
+        dict
+            ``{**batch['inputs'], 'c': concept-space AnnotatedTensor}``.
         """
-        if target is None or hasattr(target, 'annotation'):
-            return target
-        return AnnotatedTensor(target, self.concept_annotations.to_concept_space(), axis=-1)
+        return {**batch['inputs'], 'c': batch['concepts']['c']}

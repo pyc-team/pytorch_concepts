@@ -25,6 +25,30 @@ Annotations & Tensors
 
    Concept
 
+.. currentmodule:: torch_concepts
+
+Backbones
+---------
+
+Pretrained feature extractors that turn raw images or text into embeddings.
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   Backbone
+   ImageBackbone
+   TextBackbone
+
+Utilities
+---------
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   seed_everything
+
 .. currentmodule:: torch_concepts.nn
 
 Encoders
@@ -35,7 +59,9 @@ Encoders
    :nosignatures:
 
    LinearEmbeddingToConcept
+   MLPEmbeddingToConcept
    LinearEmbeddingEncoder
+   MLPEmbeddingEncoder
    SelectorEmbeddingEncoder
    ConceptWhitening
    WhitenedEmbeddingToConcept
@@ -49,9 +75,11 @@ Predictors
    :nosignatures:
 
    LinearConceptToConcept
+   MLPConceptToConcept
    CallableConceptToConcept
    HyperlinearConceptEmbeddingToConcept
    MixConceptEmbeddingToConcept
+   MixConceptEmbeddings
 
 Dense Layers
 ------------
@@ -74,6 +102,17 @@ Priors
 
    LearnablePrior
    FixedPrior
+   TiedPrior
+
+Activations
+-----------
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   TrilActivation
+   GlobalScale
 
 Graph Learners
 --------------
@@ -92,6 +131,7 @@ Interventions
    :nosignatures:
 
    intervention
+   InterventionModule
    GroundTruthIntervention
    DoIntervention
    DistributionIntervention
@@ -119,7 +159,7 @@ Base Classes
 
    BaseConceptLayer
    BaseGraphLearner
-   BaseConceptInterventionStrategy
-   BaseModuleInterventionStrategy
-   BaseInterventionPolicy
-   BaseInterventionModule
+   InterventionStrategy
+   ConceptInterventionStrategy
+   ModuleInterventionStrategy
+   InterventionPolicy

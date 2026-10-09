@@ -2,7 +2,8 @@
 
 Sweeps the concept count N and times four access patterns:
 
-  1. single      -- one concept,                e.g. t['c0']       vs data[:, 0]
+  1. single      -- one concept,                
+                    e.g. t['c0']                 vs data[:, 0]
   2. plate       -- a contiguous run via a registered plate name,
                     e.g. t['plate']              vs data[:, :k]
   3. consecutive -- the same contiguous run via an explicit label list,
@@ -68,7 +69,7 @@ def wrap_only_fn(ann, data, query):
 
 def run(n):
     labels, data, t = build(n)
-    ann = t.annotation
+    ann = t.annotations
     run_len = max(1, n // 10)
 
     plate_labels = labels[:run_len]

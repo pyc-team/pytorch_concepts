@@ -1,5 +1,5 @@
 """
-Abstract class for PGM factors.
+Abstract class for factors.
 """
 
 from __future__ import annotations
@@ -21,21 +21,29 @@ _PYC_PARAM_SETS = [
     {'concepts', 'embeddings'},
 ]
 
+# Key the shared trunk is registered under in the signature/aggregator maps, so
+# it reuses the same PyC-vs-standard resolution as the parameter modules. 
+_TRUNK_KEY = "__trunk__"
+
 
 def _cat_parents(inputs: Dict[str, torch.Tensor]) -> torch.Tensor:
     """Concatenate parent values along the last dim, preserving their shape.
 
     No flattening or reshaping is performed: every parent value keeps its full
     event shape and the tensors are concatenated along ``dim=-1``. 
+    A single parent is returned as-is.
 
     NOTE: this deliberately raises when the values have mismatched non-concatenation
     dimensions (e.g. a matrix-valued parent alongside a vector-valued one).
+
+    NOTE: in the case of a single input, returning as-is avoids a copy.
+    A parametrization layer module must then not modify its input in place.
     """
     vals = [
         v.float() if not v.is_floating_point() else v
         for v in inputs.values()
     ]
-    return torch.cat(vals, dim=-1)
+    return vals[0] if len(vals) == 1 else torch.cat(vals, dim=-1)
 
 
 def _module_input_names(mod: nn.Module) -> Set[str]:
@@ -66,9 +74,8 @@ class ParametricFactor(nn.Module, ABC):
     **Subclass contract.** Before calling ``super().__init__``, a subclass must
     set ``self.inputs``: the ordered list of variables the aggregation machinery
     feeds to the parametrization modules. For a :class:`ParametricCPD` these are
-    the CPD's parents; for a ``ParametricPotential`` they are its ``scope``
-    (an undirected factor has no parents, hence the neutral name). This is the
-    only attribute the base class reads off the subclass.
+    the CPD's parents; for a ``ParametricPotential`` they are its ``scope``. 
+    This is the only attribute the base class reads off the subclass.
 
     Subclasses call ``super().__init__(parametrization, aggregate)`` to store:
 
@@ -104,13 +111,24 @@ class ParametricFactor(nn.Module, ABC):
         'embeddings': ...}`` dict the module expects; for a **standard** module
         it receives the single ``agg(inputs)`` dict and returns one concatenated
         tensor. See :meth:`_resolve_aggregator`.
+    trunk : nn.Module, optional
+        A feature extractor **shared by every parameter module**. When given,
+        the inputs are aggregated once and passed through ``trunk``, and each
+        entry of ``parametrization`` maps the trunk's output to its parameter.
+
+        The trunk's own aggregation is resolved from its ``forward`` signature
+        by the same PyC-vs-standard rule as a parameter module. A single
+        callable ``aggregate`` applies to it as usual; a **dict** ``aggregate``
+        must key it under ``'__trunk__'``, since the parameter modules no longer
+        aggregate anything themselves.
 
     Raises
     ------
     TypeError
         If a subclass reaches ``super().__init__`` without having set
-        ``self.inputs``, or if ``aggregate`` is neither ``None``, a callable,
-        nor a dict whose values are all callables.
+        ``self.inputs``, if ``aggregate`` is neither ``None``, a callable,
+        nor a dict whose values are all callables, or if ``trunk`` is not an
+        ``nn.Module``.
     """
 
     # Ordered aggregation inputs, set by every concrete subclass before
@@ -126,6 +144,7 @@ class ParametricFactor(nn.Module, ABC):
                 Dict[str, Callable],
             ]
         ] = None,
+        trunk: Optional[nn.Module] = None,
     ):
         super().__init__()
 
@@ -135,6 +154,12 @@ class ParametricFactor(nn.Module, ABC):
                 "ordered aggregation inputs) before calling super().__init__()."
             )
 
+        if trunk is not None and not isinstance(trunk, nn.Module):
+            raise TypeError(
+                f"{type(self).__name__}: `trunk` must be an nn.Module, "
+                f"got {type(trunk).__name__}."
+            )
+
         parametrization = self._initialize_parametrization(parametrization)
 
         # Cache each module's forward parameter names once at construction time.
@@ -142,14 +167,21 @@ class ParametricFactor(nn.Module, ABC):
             pname: _module_input_names(mod)
             for pname, mod in parametrization.items()
         }
+        # The trunk joins the same map under ``_TRUNK_KEY`` so it reuses the
+        # PyC-vs-standard aggregation resolution unchanged.
+        if trunk is not None:
+            self._module_signatures[_TRUNK_KEY] = _module_input_names(trunk)
 
         # Normalise the user input to one entry per parameter (``None`` = use
         # the auto-selected default), then adapt each to the uniform
         # ``inputs -> result`` call site used by the CPD's forward.
+        # With a trunk, aggregation happens once (for the trunk) instead of once
+        # per parameter, so only the trunk's key needs an aggregator.
+        keys = [_TRUNK_KEY] if trunk is not None else list(parametrization)
         if aggregate is None:
-            per_param: Dict[str, Optional[Callable]] = {pname: None for pname in parametrization}
+            per_param: Dict[str, Optional[Callable]] = {k: None for k in keys}
         elif callable(aggregate):
-            per_param = {pname: aggregate for pname in parametrization}
+            per_param = {k: aggregate for k in keys}
         elif isinstance(aggregate, dict):
             bad = [k for k, v in aggregate.items() if not callable(v)]
             if bad:
@@ -157,7 +189,7 @@ class ParametricFactor(nn.Module, ABC):
                     f"ParametricFactor: aggregate dict contains non-callable "
                     f"values for keys {bad}."
                 )
-            per_param = {pname: aggregate.get(pname) for pname in parametrization}
+            per_param = {k: aggregate.get(k) for k in keys}
         else:
             raise TypeError(
                 "ParametricFactor: `aggregate` must be None, a callable, or a "
@@ -168,6 +200,12 @@ class ParametricFactor(nn.Module, ABC):
         }
 
         self.parametrization = parametrization
+        self.trunk = trunk
+        # The resolved aggregators close over ``self.inputs``, so they cannot be
+        # reused by a factor with different inputs. Keeping the user's argument
+        # is what lets one be rebuilt over unpacked parents (see
+        # :func:`~..inference.utils.unpack_plates`).
+        self._aggregate_arg = aggregate
 
     def _initialize_parametrization(
         self,
@@ -176,7 +214,7 @@ class ParametricFactor(nn.Module, ABC):
         """Create a ``nn.ModuleDict`` from the parametrization.
 
         Accepts a plain dict (or an existing ``nn.ModuleDict``) mapping each
-        parameter name to a ready ``nn.Module``. Concrete subclasses resolve any
+        parameter name to an ``nn.Module``. Concrete subclasses resolve any
         :class:`LazyConstructor` entries before calling ``super().__init__`` —
         the input/output sizes a lazy layer needs come from the factor's
         variables, which only the subclass knows (see
@@ -198,13 +236,8 @@ class ParametricFactor(nn.Module, ABC):
         calling convention."""
         return self._module_signatures[pname] in _PYC_PARAM_SETS
 
-    # For entries not covered by the user, pick _pyc_aggregate or
-    # _standard_aggregate based on the cached module signature.
     def _select_default(self, pname: str) -> Callable:
-        """Select the default aggregation for a parameter module.
-        
-        If pyc module return _pyc_aggregate, else return _standard_aggregate.
-        """
+        """Select the default aggregation for a parameter module."""
         return self._pyc_aggregate if self._is_pyc(pname) else self._standard_aggregate
 
     def _resolve_aggregator(
@@ -237,18 +270,23 @@ class ParametricFactor(nn.Module, ABC):
     ) -> torch.Tensor:
         """Tensor for input ``v`` from a name-keyed ``values`` mapping.
 
-        Looked up by ``v``'s exact name first (so a caller may key by the member
-        handle directly), then by its owning plate's name, in which case the
-        member's column span is sliced out (a view, no copy). A superset of keys
-        is fine — unrelated entries are ignored.
+        Looked up by ``v``'s exact name first (so a caller may key by the
+        member handle directly), then by its owning plate's name, in which case
+        that member is selected off the member axis (a view, no copy). Either
+        way the result is in event layout, which is what a parametrization
+        module expects. A superset of keys is fine — unrelated entries are
+        ignored.
         """
         value = values.get(v.name)
         if value is not None:
-            return value
+            # Normalise whatever the caller keyed in — a cached member-layout
+            # tensor, or a plain event-shaped one a user passed directly.
+            return v.as_event(value)
         owner = v.plate
         value = values.get(owner.name)
         if value is not None:
-            return value[..., owner.column_of(v.name)]
+            # One member out of its owner's value: a view along the member axis.
+            return owner.member_of(value, v.name)
         raise KeyError(
             f"{type(self).__name__}({self.name!r}): no value for input "
             f"{v.name!r} (owner {owner.name!r}) in keys {sorted(values)}."

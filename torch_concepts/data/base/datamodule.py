@@ -29,10 +29,11 @@ from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset, Subset
 
 from .dataset import ConceptDataset
+from ..generation.base.pipeline import ConceptGenerationPipeline
 
 logger = logging.getLogger(__name__)
 
-from ..splitters import RandomSplitter, NativeSplitter
+from ..splitters import RandomSplitter, NativeSplitter, FixedIndicesSplitter
 
 StageOptions = Literal['fit', 'validate', 'test', 'predict']
 
@@ -64,8 +65,11 @@ class ConceptDataModule(LightningDataModule):
         If set, subsample the dataset down to ``max_samples`` rows (chosen
         uniformly at random, seeded by ``seed``) at construction — everything
         downstream (embedding precomputation, splitting, loaders) sees only
-        the subset. Useful for quick runs and examples. Default is None (use
-        all samples).
+        the subset. A :class:`FixedIndicesSplitter`'s indices are remapped onto
+        the surviving rows, so an explicit split keeps its meaning; a
+        :class:`NativeSplitter`, which reads its indices from disk at ``fit``
+        time, cannot be remapped and is rejected. Useful for quick runs and
+        examples. Default is None (use all samples).
     scalers : Mapping or None, optional
         Unfitted scaler prototypes for data normalization, keyed by
         ``'input'`` and/or ``'concepts'``. :meth:`setup` fits them on the
@@ -161,6 +165,7 @@ class ConceptDataModule(LightningDataModule):
         super(ConceptDataModule, self).__init__()
         # Subsample the dataset down to `max_samples` rows (all downstream
         # steps — embedding precompute, splitting, loaders — see the subset).
+        # TODO: should this only affect Training or the whole dataset splits?
         if max_samples is not None:
             if isinstance(splitter, NativeSplitter):
                 raise ValueError(
@@ -168,12 +173,26 @@ class ConceptDataModule(LightningDataModule):
                     "splitter=None (-> RandomSplitter) or a compatible splitter that "
                     "does not use explicit indices."
                 )
-            n = dataset.input_data.shape[0]
+            n = dataset.n_samples
             if max_samples < n:
                 generator = torch.Generator().manual_seed(seed) if seed is not None else None
                 idx = torch.randperm(n, generator=generator)[:max_samples]
-                dataset.input_data = dataset.input_data[idx]
-                dataset.concepts = dataset.concepts[idx]
+                dataset._subset_rows(idx)
+                # Record this so any cache can be keyed to them (see ``precompute_embeddings``).
+                dataset.is_subset, dataset.subset_seed = True, seed
+                if isinstance(splitter, FixedIndicesSplitter):
+                    # Its indices name original rows, which subsampling drops and
+                    # renumbers: keep the survivors and move them to their new
+                    # positions, so the split keeps its meaning on the subset.
+                    position = {old: new for new, old in enumerate(idx.tolist())}
+                    splitter.set_indices(**{
+                        split: [position[i] for i in (indices or []) if i in position]
+                        for split, indices in (
+                            ('train', splitter.train_idxs),
+                            ('val', splitter.val_idxs),
+                            ('test', splitter.test_idxs),
+                        )
+                    })
         self.dataset = dataset
 
         # data loaders
@@ -389,7 +408,7 @@ class ConceptDataModule(LightningDataModule):
         Explicit preprocessing step — call it *before* :meth:`setup`. Delegates
         to :meth:`ConceptDataset.precompute_embeddings` with this datamodule's
         ``batch_size`` and ``workers``. With ``cache=True`` (default) the
-        embeddings are persisted to ``{cache_dir or dataset.root_dir}/{backbone.filename}``
+        embeddings are persisted to ``{cache_dir or dataset.root_dir}``
         and loaded from there on subsequent calls.
 
         Parameters
@@ -412,12 +431,26 @@ class ConceptDataModule(LightningDataModule):
             force=force,
         )
 
+    def generate_concepts(
+        self,
+        concept_pipeline: ConceptGenerationPipeline,
+        **kwargs,
+    ):
+        """Generate and annotate concepts on the underlying dataset.
+
+        This is an explicit preprocessing step, parallel to
+        :meth:`precompute_embeddings`. All keyword arguments are forwarded to
+        :meth:`ConceptDataset.generate_concepts`, including generation options
+        and the generated source selected as ``concepts['c']``.
+        """
+        return self.dataset.generate_concepts(concept_pipeline, **kwargs)
+
     def setup(self, stage: StageOptions = None) -> None:
         """Prepare the data splits for training, validation, or testing.
 
         Called by PyTorch Lightning with 'fit', 'validate', 'test', or
-        'predict' stages. Handles splitting and, on the 'fit' stage, fitting
-        any configured scalers on the training split.
+        'predict' stages. Handles splitting and fitting any configured
+        scalers on the training split.
 
         Parameters
         ----------
@@ -437,7 +470,9 @@ class ConceptDataModule(LightningDataModule):
         # ----------------------------------
         # Fit scalers on training data only
         # ----------------------------------
-        if stage in ['fit', None] and self.scalers is not None:
+        # Every stage, not only 'fit': a fresh datamodule passed to `trainer.test`
+        # must ship the same (train-split) scalers the model was trained with.
+        if self.scalers is not None:
             for key, scaler in self.scalers.items():
                 # 'input' names the scaler slot, but the dataset stores it as `input_data`.
                 attr_name = 'input_data' if key == 'input' else key
@@ -447,6 +482,12 @@ class ConceptDataModule(LightningDataModule):
 
                 # Get the training data for the specified key (e.g., 'concepts' or 'input')
                 train_data = getattr(self.dataset, attr_name)
+                if key == 'concepts' and train_data is None:
+                    warnings.warn(
+                        "A 'concepts' scaler was configured but the dataset has "
+                        "no concept supervision; concept scaling is skipped."
+                    )
+                    continue
                 if isinstance(self.trainset, Subset):
                     train_data = train_data[self.trainset.indices]
 

@@ -18,10 +18,10 @@ plt.rcParams.update({
     # --- TEXT SIZE SETTINGS ---
     "font.size": 14,                # Base font size for all text
     "axes.titlesize": 18,           # Specifically for the title
-    "axes.labelsize": 16,           # Specifically for X and Y labels
-    # "xtick.labelsize": 12,          # Size for the tick numbers
-    # "ytick.labelsize": 12,
-    "legend.fontsize": 14,          # Size for the legend text
+    "axes.labelsize": 30,           # Specifically for X and Y labels
+    "xtick.labelsize": 20,          # Size for the tick numbers
+    "ytick.labelsize": 20,
+    "legend.fontsize": 21,          # Size for the legend text
     # ---------------------------
     # 'text.color': 'white',
     # 'axes.labelcolor': 'white',
@@ -86,9 +86,9 @@ def main():
 
     criterion = torch.nn.MSELoss()
     epochs = 1000
-    method_ids = ["constrained_mlp", "mlp", "architectural_mlp"]
-    method_names = ["MLP with Interpretable Learning", "MLP", "MLP with Interpretable Architecture"]
-    outputs_dict = {"constrained_mlp": [], "mlp": [], "architectural_mlp": []}
+    method_ids = ["mlp", "constrained_mlp", "architectural_mlp"]
+    method_names = ["DNN", "DNN+L", "DNN+A"]
+    outputs_dict = {"mlp": [], "constrained_mlp": [], "architectural_mlp": []}
 
     for method_id, method_name in zip(method_ids, method_names):
         if method_id == "constrained_mlp":
@@ -122,7 +122,7 @@ def main():
 
             outputs_dict[method_id].append(outputs)
 
-    colors = ['green', 'black', 'orange']
+    colors = ['black', 'green', 'orange']
     plt.figure(figsize=(8, 5))
     plt.scatter(x.detach().numpy(), y.detach().numpy(), label='Data Points', color='blue', alpha=0.2)
     for method_id, method_name, color in zip(method_ids, method_names, colors):

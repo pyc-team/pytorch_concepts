@@ -11,10 +11,6 @@ It is the object the datamodule hands to the model: the datamodule fits it on th
 <torch_concepts.data.base.datamodule.ConceptDataModule.setup>`) and the learner
 applies it around the model's forward pass (see :meth:`BaseLearner.shared_step
 <torch_concepts.nn.modules.high.base.learner.BaseLearner.shared_step>`).
-
-This module deliberately knows nothing about ``AnnotatedTensor`` or
-``ModelOutput``: it works on plain tensors plus a list of concept labels, and the
-annotation handling stays on the learner side.
 """
 
 from copy import deepcopy

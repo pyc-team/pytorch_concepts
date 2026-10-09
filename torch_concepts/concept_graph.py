@@ -443,7 +443,17 @@ class ConceptGraph:
             >>> g = ConceptGraph(adj, node_names=['A', 'B', 'C'])
             >>> g.get_levels()
             [['A'], ['B'], ['C']]
+
+        Raises:
+            ValueError: If the graph contains a cycle. Depth from the roots is
+                undefined there, and the walk below would silently return every
+                node at depth 0 rather than fail.
         """
+        if not self.is_dag():
+            raise ValueError(
+                "get_levels() requires a directed acyclic graph, but this graph "
+                "contains a cycle; depth from the roots is undefined."
+            )
         roots = self.get_root_nodes()
         depths: Dict[str, int] = {}
         queue: deque = deque()

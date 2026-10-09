@@ -12,11 +12,14 @@ Field                        Answers the question
                              expand to (and is the shorthand legal at all)?
 ``primary_param``            which parameter carries the canonical value used
                              for deterministic propagation?
-``activations``              how is a raw parameter mapped into its domain?
+``param_activations``        which activation module turns a raw network output
+                             into a *valid* value of this parameter?
+``mode``                     what is its hard, most-likely value?
 ``is_discrete``              may it be a query/evidence variable of the
                              sampling estimators?
-``wrap_independent``         does its event need reinterpreting as one event
-                             axis of width ``size``?
+``event_ndims``              how many trailing parameter axes are its own
+                             event?
+``param_event_ndims``        which parameters carry extra rank on top of that?
 ``state_count``              how many states does it enumerate (belief
                              propagation), if any?
 ``relaxed``                  what is its reparameterisable surrogate?
@@ -37,12 +40,13 @@ distribution, add its :class:`DistributionSpec` to :data:`SPECS` here.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from functools import lru_cache, partial
+from dataclasses import dataclass, field, replace
+from functools import lru_cache
 from typing import Callable, Dict, Mapping, Optional, Tuple
 
 import torch
 import torch.distributions as dist
+import torch.nn as nn
 
 from ....distributions.delta import Delta
 
@@ -50,10 +54,6 @@ from ....distributions.delta import Delta
 # ---------------------------------------------------------------------------
 # Small named helpers (kept out of the registry so the entries stay readable).
 # ---------------------------------------------------------------------------
-def _identity(x: torch.Tensor) -> torch.Tensor:
-    return x
-
-
 def _per_element(size: int) -> int:
     """One scalar per event element — the common case."""
     return size
@@ -74,9 +74,24 @@ def _categorical_states(size: int) -> Optional[int]:
     return size
 
 
+def _threshold(x: torch.Tensor) -> torch.Tensor:
+    """Mode of a Bernoulli bit: set where the probability exceeds a half.
+
+    Strict ``>``, so an exact 0.5 resolves to 0 — the same "lowest state wins"
+    tie-break :func:`_argmax_one_hot` inherits from ``argmax``.
+    """
+    return (x > 0.5).to(x.dtype)
+
+
+def _argmax_one_hot(x: torch.Tensor) -> torch.Tensor:
+    """Mode of a categorical row: indicator of its top class (ties -> lowest)."""
+    return torch.nn.functional.one_hot(x.argmax(-1), x.shape[-1]).to(x.dtype)
+
+
 def _relaxed_bernoulli(params, temperature, validate_args):
-    d = dist.RelaxedBernoulli(temperature=temperature, **params, validate_args=validate_args)
-    return dist.Independent(d, 1, validate_args=validate_args)
+    return dist.RelaxedBernoulli(
+        temperature=temperature, **params, validate_args=validate_args
+    )
 
 
 def _relaxed_one_hot(params, temperature, validate_args):
@@ -85,7 +100,64 @@ def _relaxed_one_hot(params, temperature, validate_args):
     )
 
 
-_softmax = partial(torch.softmax, dim=-1)
+# Straight-through counterparts. Declaring a variable with one of these is how a
+# model asks for a *hard* draw — an exact bit / one-hot row forward, soft gradient
+# backward — instead of the soft Concrete sample the plain relaxed families give.
+def _relaxed_bernoulli_st(params, temperature, validate_args):
+    return _pyro_dist.RelaxedBernoulliStraightThrough(
+        temperature=temperature, **params, validate_args=validate_args
+    )
+
+
+def _relaxed_one_hot_st(params, temperature, validate_args):
+    return _pyro_dist.RelaxedOneHotCategoricalStraightThrough(
+        temperature=temperature, **params, validate_args=validate_args
+    )
+
+
+# ---------------------------------------------------------------------------
+# Activation factories for :attr:`DistributionSpec.param_activations`.
+#
+# Each returns the ``nn.Module`` mapping a *raw* network output into one
+# parameter's domain, given the variable's event ``size`` and its per-member
+# width (equal, for a lone variable). Only the categorical and Cholesky factories
+# consult them. :class:`~torch_concepts.nn.DefaultActivation` is the only caller
+# — it is also how inference maps ``logits`` to ``probs``.
+# ---------------------------------------------------------------------------
+def _sigmoid_activation(size: int, member_size: int) -> nn.Module:
+    """A Bernoulli's ``probs``: one independent probability per bit."""
+    return nn.Sigmoid()
+
+
+def _softplus_activation(size: int, member_size: int) -> nn.Module:
+    """A Normal's ``scale``: positive, one per event element."""
+    return nn.Softplus()
+
+
+def _softmax_activation(size: int, member_size: int) -> nn.Module:
+    """A categorical's ``probs``: each *member*'s states sum to one.
+
+    A plate stacks ``size // member_size`` members along the last axis, so the
+    normalisation happens per member rather than over the flattened width. A
+    lone variable is one member wide (``member_size == size``) and collapses to
+    a plain softmax.
+    """
+    if member_size == size:
+        return nn.Softmax(dim=-1)
+    return nn.Sequential(
+        nn.Unflatten(-1, (size // member_size, member_size)),
+        nn.Softmax(dim=-1),
+        nn.Flatten(start_dim=-2),
+    )
+
+
+def _tril_activation(size: int, member_size: int) -> nn.Module:
+    """A MultivariateNormal's ``scale_tril``: a positive-diagonal Cholesky factor."""
+    # Deferred like ``ParametricCPD._instantiate_lazy``'s LazyConstructor import,
+    # so this registry never pulls in the low level at module-import time.
+    from ..low.scales import TrilActivation
+
+    return TrilActivation(size)
 
 
 @dataclass(frozen=True)
@@ -109,18 +181,48 @@ class DistributionSpec:
     primary_param : str
         The parameter holding the canonical value propagated in deterministic
         mode (``loc`` for Normal, ``probs`` for Bernoulli, ``value`` for Delta).
-    activations : mapping
-        Parameter name -> activation mapping a raw network output into the
-        parameter's natural domain (e.g. ``logits`` -> ``sigmoid``).
+    param_activations : mapping
+        Parameter name -> ``(size, member_size) -> nn.Module`` building the
+        activation that turns a *raw, unconstrained* network output into a valid
+        value of that parameter (``probs`` -> ``Sigmoid``, ``scale`` ->
+        ``Softplus``). A missing entry means the parameter is unconstrained
+        (``logits``, ``loc``, a Delta's ``value``), so
+        :class:`~torch_concepts.nn.DefaultActivation` resolves it to
+        ``nn.Identity``. Used at build time to compose a head, and at inference
+        time to turn ``logits`` into the ``primary_param``'s value — the two are
+        the same map, so a family declares it once (see
+        :func:`~torch_concepts.nn.modules.mid.inference.torch.utils.propagated_value`).
+    mode : callable, optional
+        Maps an *activated* parameter to the family's hard mode, operating on
+        the last axis and preserving its width — a Bernoulli's ``probs`` to
+        ``0.``/``1.`` bits, a categorical's row to a one-hot. ``None`` means the
+        family's ``primary_param`` already *is* the mode (a Normal's ``loc``, a
+        Delta's ``value``), so it is propagated unchanged. Because the parameter
+        is activated first the rule is parametrization-agnostic:
+        ``sigmoid(logits) > 0.5`` is ``logits > 0``, and ``argmax`` is invariant
+        under ``softmax``. Used by
+        :class:`~torch_concepts.nn.MAPForwardInference` through
+        :func:`~torch_concepts.nn.modules.mid.inference.torch.utils.mode_value`;
+        ``torch.distributions``' own ``.mode`` is unusable here (the relaxed
+        families, ``Delta`` and a categorical plate's ``TransformedDistribution``
+        all raise, and ``Categorical.mode`` returns a class index).
     is_discrete : bool
         Whether values are discrete, so exact equality matching is meaningful
         and the variable may be a query/evidence variable of the sampling
         estimators. Relaxed families count as discrete: a variable declared
         ``RelaxedBernoulli`` is conceptually a binary node.
-    wrap_independent : bool
-        Whether the exact distribution has a *univariate* event that must be
-        reinterpreted (via ``Independent``) as a single event axis of width
-        ``size``, keeping ``batch_shape == (*batch,)``.
+    event_ndims : int
+        How many trailing *parameter* axes the family absorbs as its own event.
+        ``0`` for a univariate family (Bernoulli, Normal, Delta): every scalar
+        is an independent event, so a flat ``(*batch, size)`` parameter must be
+        reinterpreted via ``Independent`` to keep ``batch_shape == (*batch,)``.
+        ``1`` for a family whose event spans the trailing axis (a categorical's
+        classes, a ``MultivariateNormal``'s dimensions).
+    param_event_ndims : mapping
+        Per-parameter rank *in excess of* the variable's member event. Only
+        ``MultivariateNormal``'s ``scale_tril`` differs: it is an ``(n, n)``
+        matrix where the member event is ``(n,)``, hence ``1``. A missing entry
+        means ``0`` — the parameter has exactly the member's event shape.
     state_count : callable, optional
         ``size -> number of discrete states``, or ``None`` when this family
         cannot be enumerated at all. The callable itself returns ``None`` when
@@ -128,7 +230,8 @@ class DistributionSpec:
         bits is not one variable). Used by belief propagation.
     relaxed : callable, optional
         ``(params, temperature, validate_args) -> Distribution`` building the
-        reparameterisable surrogate. ``None`` means the exact distribution is
+        reparameterisable surrogate, **unwrapped**: the member-layout builder
+        adds the ``Independent`` wrap, uniformly for every family. ``None`` means the exact distribution is
         already reparameterisable and is used directly.
     no_relaxed_reason : str, optional
         Set when the family has no usable surrogate; the message explains what
@@ -144,9 +247,13 @@ class DistributionSpec:
     valid_param_sets: Tuple[frozenset, ...]
     default_params: Tuple[str, ...]
     primary_param: str
-    activations: Mapping[str, Callable[[torch.Tensor], torch.Tensor]]
+    param_activations: Mapping[str, Callable[..., nn.Module]] = field(
+        default_factory=dict
+    )
+    mode: Optional[Callable[[torch.Tensor], torch.Tensor]] = None
     is_discrete: bool = False
-    wrap_independent: bool = False
+    event_ndims: int = 1
+    param_event_ndims: Mapping[str, int] = field(default_factory=dict)
     state_count: Optional[Callable[[int], Optional[int]]] = None
     relaxed: Optional[Callable[..., dist.Distribution]] = None
     no_relaxed_reason: Optional[str] = None
@@ -161,10 +268,27 @@ class DistributionSpec:
     def is_per_element(self) -> bool:
         """Whether every parameter is one scalar per event element.
 
-        Plate members are addressed by slicing a contiguous column block out of
-        each parameter, which is only meaningful when this holds.
+        The condition for a plate: :attr:`Variable.param_sizes` sizes a
+        parametrization from the variable's *total* event size, so it splits
+        across members only when the mapping is linear -- ``fn(k * m)`` has to
+        equal ``k * fn(m)``. ``MultivariateNormal``'s triangular ``scale_tril``
+        is the one family where it does not.
         """
         return all(fn(3) == 3 for fn in self.param_sizes.values())
+
+    def check_param(self, param: str, family: type, context: str) -> None:
+        """Raise unless ``param`` is one of ``family``'s parameters.
+
+        The single gate for "is this a real parameter name?" -- asked wherever a
+        caller turns a name into a shape or an activation. Keep it here: a name
+        that slips through is read with the wrong trailing rank and misplaces
+        the member axis silently.
+        """
+        if param not in self.param_sizes:
+            raise ValueError(
+                f"{context}: {family.__name__} has no parameter {param!r}. "
+                f"Its parameters are {sorted(self.param_sizes)}."
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -179,19 +303,21 @@ SPECS: Dict[type, DistributionSpec] = {
         valid_param_sets=(frozenset({"value"}),),
         default_params=("value",),
         primary_param="value",
-        activations={"value": _identity},
-        # A point mass has no extra batch dims to reinterpret, and our Delta is
-        # built with ``batch_shape == ()`` already.
-        wrap_independent=False,
+        # No ``param_activations``: a point mass constrains nothing, so a raw
+        # network output is already a valid ``value``.
+        # A point mass is univariate like Bernoulli or Normal: one independent
+        # event per element.
+        event_ndims=0,
     ),
     dist.RelaxedBernoulli: DistributionSpec(
         param_sizes={"probs": _per_element, "logits": _per_element},
         valid_param_sets=_PROBS_OR_LOGITS,
         default_params=("probs",),
         primary_param="probs",
-        activations={"probs": _identity, "logits": torch.sigmoid},
+        param_activations={"probs": _sigmoid_activation},
+        mode=_threshold,
         is_discrete=True,
-        wrap_independent=True,
+        event_ndims=0,
         state_count=_binary_states,
         relaxed=_relaxed_bernoulli,
         default_dist_kwargs={"temperature": 0.5},
@@ -201,9 +327,10 @@ SPECS: Dict[type, DistributionSpec] = {
         valid_param_sets=_PROBS_OR_LOGITS,
         default_params=("probs",),
         primary_param="probs",
-        activations={"probs": _identity, "logits": torch.sigmoid},
+        param_activations={"probs": _sigmoid_activation},
+        mode=_threshold,
         is_discrete=True,
-        wrap_independent=True,
+        event_ndims=0,
         state_count=_binary_states,
         relaxed=_relaxed_bernoulli,
     ),
@@ -212,7 +339,8 @@ SPECS: Dict[type, DistributionSpec] = {
         valid_param_sets=_PROBS_OR_LOGITS,
         default_params=("probs",),
         primary_param="probs",
-        activations={"probs": _identity, "logits": _softmax},
+        param_activations={"probs": _softmax_activation},
+        mode=_argmax_one_hot,
         is_discrete=True,
         state_count=_categorical_states,
         relaxed=_relaxed_one_hot,
@@ -223,7 +351,8 @@ SPECS: Dict[type, DistributionSpec] = {
         valid_param_sets=_PROBS_OR_LOGITS,
         default_params=("probs",),
         primary_param="probs",
-        activations={"probs": _identity, "logits": _softmax},
+        param_activations={"probs": _softmax_activation},
+        mode=_argmax_one_hot,
         is_discrete=True,
         state_count=_categorical_states,
         relaxed=_relaxed_one_hot,
@@ -233,7 +362,12 @@ SPECS: Dict[type, DistributionSpec] = {
         valid_param_sets=_PROBS_OR_LOGITS,
         default_params=("probs",),
         primary_param="probs",
-        activations={"probs": _identity, "logits": _softmax},
+        param_activations={"probs": _softmax_activation},
+        # A plain Categorical's *value* is encoded as a one-hot of width
+        # ``size`` here, not as a class index — the same encoding
+        # ``inference.utils.encode_states`` uses — so that it matches the
+        # ``(*leading, size)`` layout every cached value and child CPD expects.
+        mode=_argmax_one_hot,
         is_discrete=True,
         state_count=_categorical_states,
         no_relaxed_reason=(
@@ -246,17 +380,34 @@ SPECS: Dict[type, DistributionSpec] = {
         valid_param_sets=(frozenset({"loc", "scale"}),),
         default_params=("loc", "scale"),
         primary_param="loc",
-        activations={"loc": _identity, "scale": _identity},
-        wrap_independent=True,
+        param_activations={"scale": _softplus_activation},
+        event_ndims=0,
     ),
     dist.MultivariateNormal: DistributionSpec(
         param_sizes={"loc": _per_element, "scale_tril": _lower_triangular},
         valid_param_sets=(frozenset({"loc", "scale_tril"}),),
         default_params=("loc", "scale_tril"),
         primary_param="loc",
-        activations={"loc": _identity, "scale_tril": _identity},
+        param_activations={"scale_tril": _tril_activation},
+        param_event_ndims={"scale_tril": 1},
     ),
 }
+
+# Pyro's straight-through families, registered under their own keys so
+# ``_lookup``'s exact match wins over the subclass scan — without these they
+# resolve to their plain relaxed base and silently sample *soft*. Pyro is an
+# optional dependency, hence the guard.
+try:
+    import pyro.distributions as _pyro_dist
+except ImportError:  # pragma: no cover - pyro not installed
+    _pyro_dist = None
+else:
+    SPECS[_pyro_dist.RelaxedBernoulliStraightThrough] = replace(
+        SPECS[dist.RelaxedBernoulli], relaxed=_relaxed_bernoulli_st
+    )
+    SPECS[_pyro_dist.RelaxedOneHotCategoricalStraightThrough] = replace(
+        SPECS[dist.RelaxedOneHotCategorical], relaxed=_relaxed_one_hot_st
+    )
 
 #: ``{family: default constructor kwargs}``, derived from the registry. The
 #: high-level models seed each variable's ``dist_kwargs`` from this, so a new

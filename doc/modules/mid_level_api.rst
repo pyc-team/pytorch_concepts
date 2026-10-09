@@ -33,6 +33,20 @@ Factors
 
    ParametricFactor
    ParametricCPD
+   ParametricPotential
+
+Activations
+-----------
+
+A CPD applies no activation, so a parametrization module must already emit a
+value in its parameter's domain. ``DefaultActivation`` supplies the family's
+standard mapping for a given parameter.
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   DefaultActivation
 
 Probabilistic Models
 --------------------
@@ -43,6 +57,7 @@ Probabilistic Models
 
    ProbabilisticModel
    BayesianNetwork
+   MarkovNetwork
 
 Inference
 ---------
@@ -55,10 +70,12 @@ Inference
    DeterministicInference
    IndependentInference
    AncestralSamplingInference
+   MAPForwardInference
+   BeliefPropagation
+   PgmpyVariableElimination
    RejectionSampling
    ImportanceSampling
    VariationalInference
-   PyroImportanceSampling
    BaseProposal
    MutilatedNetworkProposal
 
@@ -72,3 +89,4 @@ Base Classes
    BaseInference
    TorchBaseInference
    PyroBaseInference
+   PgmpyBaseInference

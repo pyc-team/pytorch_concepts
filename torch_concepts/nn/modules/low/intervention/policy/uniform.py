@@ -1,9 +1,9 @@
 import torch
 
-from ...base.intervention import BaseInterventionPolicy
+from ...base.intervention import InterventionPolicy
 
 
-class UniformPolicy(BaseInterventionPolicy):
+class UniformPolicy(InterventionPolicy):
     """
     Uniform intervention policy that assigns equal priority to all concepts.
 
@@ -18,7 +18,7 @@ class UniformPolicy(BaseInterventionPolicy):
 
     def forward(
         self,
-        concepts: torch.Tensor,
+        x: torch.Tensor,
         *args,
         **kwargs
     ) -> torch.Tensor:
@@ -26,9 +26,9 @@ class UniformPolicy(BaseInterventionPolicy):
         Generate uniform (zero) intervention scores.
 
         Args:
-            concepts: Input concepts of shape (batch_size, n_concepts).
+            x: Layer output of shape (batch_size, n_concepts).
 
         Returns:
             torch.Tensor: Zeros tensor of same shape as input.
         """
-        return torch.zeros_like(concepts)
+        return torch.zeros_like(x)

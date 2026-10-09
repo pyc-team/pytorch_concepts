@@ -1,9 +1,9 @@
 import torch
 
-from ...base.intervention import BaseConceptInterventionStrategy
+from ...base.intervention import ConceptInterventionStrategy
 
 
-class GroundTruthIntervention(BaseConceptInterventionStrategy):
+class GroundTruthIntervention(ConceptInterventionStrategy):
     """
     Intervention that replaces predicted concepts with ground truth values.
 

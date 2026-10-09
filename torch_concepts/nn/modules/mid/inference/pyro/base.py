@@ -1,33 +1,16 @@
-"""PyroBaseInference — base class for Pyro-backed inference engines.
+"""PyroBaseInference — base class for Pyro-backed inference engines."""
 
-Provides the shared Pyro plumbing required by any engine that uses Pyro's
-effect handlers (``poutine.trace``, ``poutine.replay``, ``pyro.infer.SVI``):
-
-- ``model_fn`` / ``guide_fn``: bound Pyro stochastic functions that traverse
-  the wrapped PGM topologically and emit ``pyro.sample`` sites.
-- ``_pyro_relaxed_distribution``: pyro-compatible straight-through relaxation
-  for the discrete distribution families.
-- ``dist_to_params`` / ``trace_to_params``: helpers to harvest distribution
-  parameters from a Pyro trace into the engine-agnostic
-  :class:`InferenceOutput.params` schema.
-
-Parameter sharing with the wrapped PGM is inherited from
-:class:`BaseInference` (the engine holds a reference to ``pgm``, so
-``engine.parameters()`` enumerates the same tensors as ``pgm.parameters()``).
-"""
 from __future__ import annotations
 
 from collections import ChainMap
 from typing import Dict, List, Optional
 
 import torch
-import torch.distributions as td
 
 from ...graph.bayesian_network import BayesianNetwork
-from ...variable import Delta
 from ..base import BaseInference
-from ..utils import build_distribution, reshape_value_to_event
-from .utils import dist_to_params, trace_to_params
+from ..utils import build_distribution, teacher_force
+from .utils import build_relaxed_pyro_distribution, dist_to_params, trace_to_params
 
 
 def _import_pyro():
@@ -57,57 +40,31 @@ class PyroBaseInference(BaseInference):
     pgm : BayesianNetwork
         The directed model to run inference on, held by reference (see
         :class:`~torch_concepts.nn.modules.mid.inference.base.BaseInference`).
-        Pyro's model/guide traces walk the topological order, so a general
-        (undirected or mixed) ``ProbabilisticModel`` is not supported here.
     """
 
     name = "PyroBaseInference"
 
-    def __init__(self, pgm: BayesianNetwork):
-        super().__init__(pgm)
+    def _flatten_multidim_events(
+        self, per_variable: Dict[str, Dict[str, torch.Tensor]]
+    ) -> Dict[str, Dict[str, torch.Tensor]]:
+        """Report a multi-dimensional event as one flat row, as this backend always has.
 
-    # ------------------------------------------------------------------
-    # Distribution helpers
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _pyro_relaxed_distribution(
-        variable,
-        params: Dict[str, torch.Tensor],
-        temperature: torch.Tensor,
-    ) -> pyro_dist.Distribution:
-        """Build a Pyro-compatible relaxed distribution for ``pyro.sample`` sites.
-
-        Returns a ``pyro.distributions`` instance (subclass of
-        ``TorchDistribution``) — required by ``pyro.sample`` for unobserved
-        sites. Plain ``torch.distributions`` objects are not callable and would
-        raise ``TypeError: 'X' object is not callable`` at runtime.
-
-        Uses Pyro's own straight-through estimators (which register correctly
-        with Pyro's effect-handler stack) for the discrete families.
+        The torch engines keep a parameter's own rank (an ``(n_states, emb)``
+        embedding stays a matrix); the Pyro engines have always flattened it onto
+        the annotated axis instead. Keeping that difference here rather than at
+        the distribution boundary means the member layout still reaches Pyro,
+        which is what makes a categorical plate ``k`` independent draws.
         """
-        # Parameters are flat (*batch, size); the single size axis is reinterpreted
-        # as the event (``to_event(1)`` / ``event_dim=1``) so batch_shape stays
-        # (*batch,) and the ``pyro.plate("batch", ...)`` dim lines up. The
-        # variable's declared shape is restored on the sampled realization.
-        _, pyro_dist, _ = _import_pyro()
-        D = variable.distribution
-        if issubclass(D, td.Bernoulli):
-            d = pyro_dist.RelaxedBernoulliStraightThrough(temperature=temperature, **params)
-            return d.to_event(1)
-        if issubclass(D, td.OneHotCategorical):
-            d = pyro_dist.RelaxedOneHotCategoricalStraightThrough(temperature=temperature, **params)
-            return d
-        if issubclass(D, td.Normal):
-            d = pyro_dist.Normal(**params)
-            return d.to_event(1)
-        if issubclass(D, td.MultivariateNormal):
-            return pyro_dist.MultivariateNormal(**params)
-        if D.__name__ == "Delta":
-            # Map ``value`` (our Delta convention) to ``v`` (Pyro Delta convention).
-            v = params["value"]
-            return pyro_dist.Delta(v, event_dim=1)
-        # Fallback for any other family: try the exact torch distribution.
-        return build_distribution(variable, params)
+        out: Dict[str, Dict[str, torch.Tensor]] = {}
+        for name, params in per_variable.items():
+            var = self.pgm.variables.get(name)
+            if var is not None and len(var.shape) > 1:
+                params = {
+                    key: var.to_flat(var.to_member(value, key))
+                    for key, value in params.items()
+                }
+            out[name] = params
+        return out
 
     # ------------------------------------------------------------------
     # Stochastic functions (bound to ``self.pgm``)
@@ -120,6 +77,7 @@ class PyroBaseInference(BaseInference):
         batch_size: Optional[int] = None,
         layer_kwargs: Dict[str, Dict] = {},
         member_evidence: Dict[str, Dict[str, torch.Tensor]] = {},
+        teacher_forced: Dict[str, torch.Tensor] = {},
     ) -> Dict[str, torch.Tensor]:
         """Pyro stochastic function for the generative model.
 
@@ -128,14 +86,20 @@ class PyroBaseInference(BaseInference):
 
         - Variables present in ``data`` are scored against their exact
           distribution (``obs=`` keyword to ``pyro.sample``).
-        - Variables absent from ``data`` are sampled via a straight-through
-          relaxation so gradients flow through the discrete sites.
+        - Variables absent from ``data`` are sampled.
 
         ``member_evidence`` forces individually-observed plate members onto the
         sampled value (value forcing; no likelihood term). Registers ``self.pgm``
         with Pyro's param store via ``pyro.module`` on every call so SVI updates
         flow back into the original PGM's ``nn.Parameter`` tensors (no parameter
         duplication).
+
+        ``teacher_forced`` carries the ground truth for variables that are to be
+        forced *stochastically* at rate ``self.p_int`` (RandInt). Such a variable
+        is a **latent** site — there is nothing to pass as ``obs=`` when only
+        some rows will take the ground truth — and the blend happens after the
+        draw. The caller supplies it only when ``p_int < 1``; at ``p_int == 1``
+        every site keeps the plain ``obs=`` path.
         """
         pyro, _, _ = _import_pyro()
         pgm = self.pgm
@@ -164,23 +128,28 @@ class PyroBaseInference(BaseInference):
                         # ChainMap avoids an O(#variables) dict copy per site.
                         params = cpd(parent_values=ChainMap(cache, data), **layer_kwargs.get(var.name, {}))
 
-                    obs = data.get(var.name, None)
+                    # A stochastically-forced variable must be *sampled* — only
+                    # some rows will take the ground truth — so it never becomes
+                    # an `obs=` site, whatever `data` holds for it.
+                    gt = teacher_forced.get(var.name, None)
+                    obs = None if gt is not None else data.get(var.name, None)
                     if obs is not None:
-                        # The distribution's event is the flat size axis, so match
-                        # the observation to it: (*batch, *shape) -> (*batch, size).
-                        obs = obs.reshape(obs.shape[0], var.size)
+                        # Match the observation to the distribution's event.
+                        obs = var.to_member(obs)
                     d = (
                         build_distribution(var, params)
                         if obs is not None
-                        else self._pyro_relaxed_distribution(var, params, temperature)
+                        else build_relaxed_pyro_distribution(var, params, temperature)
                     )
                     sample = pyro.sample(var.name, d, obs=obs)
-                    # Cache the realization in the variable's event shape; downstream
-                    # CPD aggregation re-flattens it as needed. Partial-plate evidence
-                    # is forced onto the observed members here.
-                    value = reshape_value_to_event(var, sample)
+                    if gt is not None:
+                        sample = teacher_force(
+                            sample, var.to_member(gt), self.p_int, 1, var.name,
+                        )
+                    # The realisation is already in the member layout the cache
+                    # holds. Partial-plate evidence is forced on here.
                     cache[var.name] = cpd.clamp_members(
-                        value, member_evidence.get(var.name, {})
+                        sample, member_evidence.get(var.name, {})
                     )
 
         return cache
@@ -223,5 +192,5 @@ class PyroBaseInference(BaseInference):
                     # The CPD resolves member-handle parents from ``data``.
                     params = cpd(parent_values=data, **layer_kwargs.get(name, {}))
 
-                q = self._pyro_relaxed_distribution(cpd.variable, params, temperature)
+                q = build_relaxed_pyro_distribution(cpd.variable, params, temperature)
                 pyro.sample(name, q)

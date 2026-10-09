@@ -28,3 +28,4 @@ dependencies:
     - gdown # to download files from Google Drive (CelebA dataset)
     - transformers # State-of-the-art pretrained models for backbones
     - hydra-list-sweeper
+    - pyro-ppl # probabilistic programming (Pyro inference backend)

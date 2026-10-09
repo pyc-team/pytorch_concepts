@@ -72,11 +72,11 @@ class ParamsDict(Dict[str, AnnotatedTensor]):
     what the ``out.probs`` / ``out.logits`` properties read. On top of that,
     ``__getitem__`` also accepts a variable (or plate / plate-member) name and
     returns that variable's parameters as ``{quantity: AnnotatedTensor}``,
-    where each value is a *view* into the corresponding quantity tensor:
+    where each value is a *view* into the corresponding quantity tensor::
 
-    >>> out.params['logits']            # one tensor spanning all variables
-    >>> out.params['c1']                # {'logits': <c1's columns, a view>}
-    >>> out.params['c1']['logits']      # == out.logits['c1']
+        out.params['logits']            # one tensor spanning all variables
+        out.params['c1']                # {'logits': <c1's columns, a view>}
+        out.params['c1']['logits']      # == out.logits['c1']
 
     Quantity keys take priority on the (pathological) collision where a
     variable is named like a parameter — don't call a concept ``logits``.
@@ -87,10 +87,10 @@ class ParamsDict(Dict[str, AnnotatedTensor]):
             return dict.__getitem__(self, key)
         views: Dict[str, AnnotatedTensor] = {}
         for quantity, tensor in dict.items(self):
-            annotation = tensor.annotation
+            annotations = tensor.annotations
             if (
-                key in annotation.label_to_index
-                or key in annotation.label_groups
+                key in annotations.label_to_index
+                or key in annotations.label_groups
             ):
                 views[quantity] = tensor[key]
         if not views:
@@ -99,6 +99,47 @@ class ParamsDict(Dict[str, AnnotatedTensor]):
                 f"queried variable {InferenceOutput._addressable(self)}."
             )
         return views
+
+
+def supervised_subset(tensor, target):
+    """``tensor`` restricted to the variables ``target`` provides truth for.
+
+    A quantity spans every queried variable that reports it, which need not be
+    only the supervised concepts: a generative model queried for all its
+    variables also reports ``probs`` for the reconstructed observation. Those
+    have no ground truth, so a loss or metric drops them rather than looking
+    them up in the target and failing. Returns ``None`` when nothing survives,
+    and the tensor itself when everything does (the common case, no copy).
+    """
+    if tensor is None or target is None:
+        return tensor
+    labels = list(tensor.annotations.labels)
+    keep = [n for n in labels if n in target.annotations.label_to_index]
+    if len(keep) == len(labels):
+        return tensor
+    return tensor[keep] if keep else None
+
+
+#: Quantities a *discrete* concept may be reported under, in fallback order.
+DISCRETE_QUANTITIES = ("logits", "probs")
+
+
+def resolve_quantity(params, configured, candidates, target):
+    """The quantity tensor that loss and metrics score a concept type on.
+
+    ``params[configured]`` if ``configured`` is given, else the first of
+    ``candidates`` holding at least one concept ``target`` supervises; ``None``
+    if none does.
+
+    .. warning::
+        Only one quantity is returned: supervised concepts reported under
+        another candidate (e.g. binary under ``probs``, categorical under
+        ``logits``) are silently not scored.
+    """
+    for quantity in (configured,) if configured else candidates:
+        if supervised_subset(params.get(quantity), target) is not None:
+            return params[quantity]
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -154,10 +195,12 @@ class InferenceOutput:
 
     Examples
     --------
-    >>> out = engine.query(query=['c1', 'c2'], evidence={'x': x})
-    >>> out.logits.shape                  # (*leading, width of c1 + c2)
-    >>> out.logits['c1']                  # just c1's columns (a view)
-    >>> out.logits.binary()               # binary concepts' columns (or None)
+    ::
+
+        out = engine.query(query=['c1', 'c2'], evidence={'x': x})
+        out.logits.shape                  # (*leading, width of c1 + c2)
+        out.logits['c1']                  # just c1's columns (a view)
+        out.logits.binary()               # binary concepts' columns (or None)
     """
 
     params: Dict[str, AnnotatedTensor] = field(default_factory=dict)
@@ -174,7 +217,7 @@ class InferenceOutput:
             self.guide_params = ParamsDict(self.guide_params)
 
     # Declared as fields so they can be passed to the
-    # constructor (``ModelOutput(logits=...)``), but each is turned into a
+    # constructor (``InferenceOutput(logits=...)``), but each is turned into a
     # property below, so assigning one — in ``__init__`` or later — writes
     # straight through to ``params`` and there is still only one storage
     # location per quantity. ``repr=False`` keeps them out of the generated
@@ -203,11 +246,11 @@ class InferenceOutput:
         """
         names: Dict[str, None] = {}
         for tensor in params.values():
-            annotation = tensor.annotation
+            annotations = tensor.annotations
             names.update(
-                dict.fromkeys(annotation.label_groups)
+                dict.fromkeys(annotations.label_groups)
             )
-            names.update(dict.fromkeys(annotation.labels))
+            names.update(dict.fromkeys(annotations.labels))
         return tuple(names)
 
     @property
@@ -220,6 +263,69 @@ class InferenceOutput:
         """Every name addressable in ``guide_params``. See :meth:`_addressable`."""
         return self._addressable(self.guide_params)
 
+    def union_with(self, *others: "InferenceOutput") -> "InferenceOutput":
+        """One output holding this one's and ``others``' variables.
+
+        Merges the results of successive ``query`` calls into the single output
+        a loss takes: each quantity is concatenated along the annotated axis
+        (see :meth:`AnnotatedTensor.union_with`), so ``out.logits['c1']`` works
+        whichever query reported ``c1``.
+
+        Raises:
+            ValueError: If a variable is reported by more than one output (use
+                :meth:`rename_variable` on one side first), or if more than one
+                carries ``probabilities`` — a joint estimate is not their merge.
+        """
+        outputs = (self, *others)
+        seen = set()
+        for out in outputs:
+            names = set(out.variables) | set(out.guide_variables)
+            if out.samples is not None:
+                names |= set(out._addressable({"samples": out.samples}))
+            if names & seen:
+                raise ValueError(
+                    f"union_with: {sorted(names & seen)} reported by more than one "
+                    "output. Rename one side with `rename_variable` first."
+                )
+            seen |= names
+        probabilities = [o.probabilities for o in outputs if o.probabilities is not None]
+        if len(probabilities) > 1:
+            raise ValueError("union_with: more than one output carries `probabilities`.")
+        samples = _merge({"samples": o.samples} for o in outputs if o.samples is not None)
+        return InferenceOutput(
+            params=_merge(o.params for o in outputs),
+            guide_params=_merge(o.guide_params for o in outputs),
+            samples=samples.get("samples"),
+            probabilities=probabilities[0] if probabilities else None,
+        )
+
+    def rename_variable(self, old: str, new: str) -> "InferenceOutput":
+        """A copy with variable ``old`` (a label or a plate) called ``new``.
+
+        Data is shared, only the annotations change. Querying one variable twice
+        and renaming one result is what makes the two :meth:`union_with`-able.
+        """
+        def rename(tensor):
+            if tensor is None:
+                return None
+            return AnnotatedTensor(tensor.tensor, tensor.annotations.rename({old: new}), tensor.axis)
+
+        return InferenceOutput(
+            params={q: rename(t) for q, t in self.params.items()},
+            guide_params={q: rename(t) for q, t in self.guide_params.items()},
+            samples=rename(self.samples),
+            probabilities=self.probabilities,
+        )
+
+
+def _merge(dicts) -> Dict[str, AnnotatedTensor]:
+    """Quantity-keyed dicts merged key by key, each quantity in one ``union_with``."""
+    grouped = {}
+    for d in dicts:
+        for quantity, tensor in d.items():
+            grouped.setdefault(quantity, []).append(tensor)
+    return {q: ts[0].union_with(*ts[1:]) for q, ts in grouped.items()}
+
 
 # Replace each quantity field with a property backed by ``params``. Attached
 # after ``@dataclass`` has run so the decorator saw a plain ``UNSET`` default;
@@ -230,22 +336,3 @@ for _q in QUANTITIES:
     setattr(InferenceOutput, _q, _quantity_property(_q))
 del _q
 
-
-@dataclass
-class ModelOutput(InferenceOutput):
-    """Structured output from a high-level model's ``forward()`` method.
-
-    An :class:`InferenceOutput` — same contract, same quantity-keyed layout —
-    plus the extra fields the high level attaches around a query.
-
-    Attributes
-    ----------
-    target : torch.Tensor or None
-        The prepared ground-truth tensor aligned with the annotated axis of
-        ``logits``.
-    extra : dict[str, torch.Tensor] or None
-        Model-specific extras that do not belong to the inference contract.
-    """
-
-    target: Optional[torch.Tensor] = None
-    extra: Optional[Dict[str, torch.Tensor]] = None

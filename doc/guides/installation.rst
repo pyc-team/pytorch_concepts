@@ -1,50 +1,66 @@
 Installation
 ------------
 
-Basic Installation
-^^^^^^^^^^^^^^^^^^
+Requirements
+^^^^^^^^^^^^
 
-You can install PyC with core dependencies from `PyPI <https://pypi.org/project/pytorch-concepts/>`_:
+PyC needs Python 3.10 or newer and PyTorch 2.6 or newer. pip installs a recent PyTorch
+automatically; for a specific build (CPU-only, or a given CUDA version), install PyTorch
+first by following the `PyTorch instructions <https://pytorch.org/get-started/locally/>`_.
 
-.. code-block:: bash
-
-   pip install --pre pytorch-concepts
-
-This will install the core library without data-related dependencies (opencv-python, pgmpy, bnlearn, pandas, torchvision, datasets, transformers).
-
-Installation with Data Support
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-If you plan to use the ``torch_concepts.data`` module, install with the data extras:
+Install with pip
+^^^^^^^^^^^^^^^^
 
 .. code-block:: bash
 
-   pip install --pre pytorch-concepts[data]
+   pip install --pre "pytorch-concepts[data]"
 
-This will install all dependencies including those required for data loading and preprocessing.
+The core library alone (``pip install --pre pytorch-concepts``) covers annotations, layers,
+probabilistic models and ready-made models. Optional extras add the rest:
 
-Installation with Full Support (Conda)
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.. list-table::
+   :header-rows: 1
+   :widths: 20 80
 
-For full support including all dependencies for development, experiments, and testing, use the provided conda environment:
+   * - Extra
+     - Adds
+   * - ``data``
+     - the datasets of ``torch_concepts.data``, pretrained backbones and concept generation
+   * - ``conceptarium``
+     - Hydra and W&B, to run :doc:`Conceptarium <using_conceptarium>` experiments
+   * - ``tests``
+     - pytest, to run the test suite
+   * - ``docs``
+     - Sphinx and its extensions, to build this documentation
+
+Extras can be combined, e.g. ``pip install --pre "pytorch-concepts[data,conceptarium]"``. The
+quotes stop shells such as zsh from expanding the brackets.
+
+Development install with conda
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+To work on PyC, or to run its examples and Conceptarium, clone the repository and create the
+conda environment. It installs PyC in editable mode with the ``data``, ``tests`` and
+``conceptarium`` extras:
 
 .. code-block:: bash
 
    git clone https://github.com/pyc-team/pytorch_concepts.git
    cd pytorch_concepts
-   # install and activate conda environment (use environment_silicon.yaml for Apple Silicon chips)
-   conda env create -f conceptarium/environment.yaml
-   conda activate conceptarium
-   # install pyc in editable mode
-   pip install -e .
+   conda env create -f environment.yml
+   conda activate pyc
 
-This setup is recommended for contributors and users who want access to all functionalities.
+PyTorch comes from PyPI: the CUDA build on Linux, the MPS build on macOS. For a CPU-only or a
+specific CUDA build, reinstall it afterwards as shown in the
+`PyTorch instructions <https://pytorch.org/get-started/locally/>`_. Without conda, the same
+install is ``pip install -e ".[data,tests,conceptarium]"`` from the repository root.
 
-Usage
-^^^^^
+Check the installation
+^^^^^^^^^^^^^^^^^^^^^^
 
-After installation, you can import it in your Python scripts as:
+.. code-block:: bash
 
-.. code-block:: python
+   python -c "import torch_concepts as pyc; print(pyc.__version__)"
 
-   import torch_concepts as pyc
+Datasets are downloaded on first use into ``~/.cache/pyc``; see :doc:`Datasets <using_data>` to
+change the location.

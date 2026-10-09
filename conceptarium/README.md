@@ -16,6 +16,7 @@
 - Configuration system and hierarchy
 - Dataset and model configuration
 - Custom losses and metrics
+- Concept generation
 - Advanced usage patterns
 - Troubleshooting
 
@@ -29,13 +30,15 @@ Clone the <img src="../doc/_static/img/logos/pyc.svg" width="20px" align="center
 
 ```bash
 git clone https://github.com/pyc-team/pytorch_concepts.git
-cd pytorch_concepts/conceptarium
+cd pytorch_concepts
 ```
 
-To install all requirements and avoid conflicts, we recommend installing an [Anaconda](https://www.anaconda.com/) environment using the following command:
+To install all requirements and avoid conflicts, create the [conda](https://docs.conda.io/) environment from the repository root. It installs PyC with the Conceptarium dependencies:
 
 ```bash
 conda env create -f environment.yml
+conda activate pyc
+cd conceptarium
 ```
 
 

@@ -8,7 +8,7 @@
 # Setup:
 #   1. conda env create -f environment_steerling_silicon.yaml
 #   2. conda activate steerling-silicon
-#   3. pip install --no-deps steerling==0.1.2
+#   3. pip install --no-deps steerling==0.2.0
 #   4. ln -sf $CONDA_PREFIX/lib/libomp.dylib \
 #            $CONDA_PREFIX/lib/python3.13/site-packages/torch/lib/libomp.dylib
 #
@@ -71,6 +71,7 @@ dependencies:
     - networkx==3.6.1
     # ── Data / graph utilities ────────────────────────────────────────
     - pgmpy             # probabilistic graphical models (bnlearn dep)
+    - pyro-ppl          # probabilistic programming (Pyro inference backend)
     - bnlearn           # Bayesian networks
     - pyparsing         # parsing (bnlearn / matplotlib dep)
     - sympytorch        # symbolic torch expressions

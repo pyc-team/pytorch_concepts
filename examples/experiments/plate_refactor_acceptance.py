@@ -16,7 +16,7 @@ from torch.distributions import Bernoulli, Normal
 from torch_concepts import seed_everything, ConceptVariable, EmbeddingVariable
 from torch_concepts.distributions import Delta
 from torch_concepts.nn import (
-    ParametricCPD, BayesianNetwork, LearnablePrior,
+    ParametricCPD, BayesianNetwork, DefaultActivation, LearnablePrior,
     DeterministicInference, AncestralSamplingInference,
     RejectionSampling, ImportanceSampling, MutilatedNetworkProposal,
 )
@@ -37,15 +37,15 @@ def build_verification_model():
         ParametricCPD(x, parametrization=LearnablePrior(X)),
         ParametricCPD(
             concepts, parents=[x],
-            parametrization=nn.Sequential(nn.Linear(X, concepts.size), nn.Sigmoid()),
+            parametrization=nn.Sequential(nn.Linear(X, concepts.size), DefaultActivation(concepts, "probs")),
         ),
         ParametricCPD(
             y, parents=[concepts],
-            parametrization=nn.Sequential(nn.Linear(concepts.size, 1), nn.Sigmoid()),
+            parametrization=nn.Sequential(nn.Linear(concepts.size, 1), DefaultActivation(y, "probs")),
         ),
         ParametricCPD(
             y1, parents=[concepts.member("c1")],
-            parametrization=nn.Sequential(nn.Linear(1, 1), nn.Sigmoid()),
+            parametrization=nn.Sequential(nn.Linear(1, 1), DefaultActivation(y1, "probs")),
         ),
     ]
     return BayesianNetwork(variables=[x, concepts, y, y1], factors=factors)
@@ -62,11 +62,11 @@ def build_plate_model(n):
         ParametricCPD(x, parametrization=LearnablePrior(X)),
         ParametricCPD(
             concepts, parents=[x],
-            parametrization=nn.Sequential(nn.Linear(X, n), nn.Sigmoid()),
+            parametrization=nn.Sequential(nn.Linear(X, n), DefaultActivation(concepts, "probs")),
         ),
         ParametricCPD(
             y, parents=[concepts],
-            parametrization=nn.Sequential(nn.Linear(n, 1), nn.Sigmoid()),
+            parametrization=nn.Sequential(nn.Linear(n, 1), DefaultActivation(y, "probs")),
         ),
     ]
     return BayesianNetwork(variables=[x, concepts, y], factors=factors)
@@ -81,14 +81,14 @@ def build_separate_model(n):
     factors += [
         ParametricCPD(
             c, parents=[x],
-            parametrization=nn.Sequential(nn.Linear(X, 1), nn.Sigmoid()),
+            parametrization=nn.Sequential(nn.Linear(X, 1), DefaultActivation(c, "probs")),
         )
         for c in cs
     ]
     factors.append(
         ParametricCPD(
             y, parents=cs,
-            parametrization=nn.Sequential(nn.Linear(n, 1), nn.Sigmoid()),
+            parametrization=nn.Sequential(nn.Linear(n, 1), DefaultActivation(y, "probs")),
         )
     )
     return BayesianNetwork(variables=[x, *cs, y], factors=factors)
@@ -177,18 +177,13 @@ def verify():
     # 9. (post-refactor) Pyro engines, skipped if pyro is absent
     try:
         import pyro  # noqa: F401
-        from torch_concepts.nn import VariationalInference, PyroImportanceSampling
+        from torch_concepts.nn import VariationalInference
         vi = VariationalInference(pgm)
         seed_everything(0)
         y_hi = vi.query(query=["y"], evidence={"x": xt, "c1": ones}).probs["y"]
         seed_everything(0)
         y_lo = vi.query(query=["y"], evidence={"x": xt, "c1": zeros}).probs["y"]
         assert not torch.allclose(y_hi, y_lo), "member evidence ignored by model_fn"
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            pis = PyroImportanceSampling(pgm, n_samples=200)
-            p = pis.query({"y": ones4}, evidence={"c1": ones4}).probabilities
-            assert p.shape == (B4,) and torch.isfinite(p).all()
         print("9. Pyro engines honor member evidence                     OK")
     except ImportError:
         print("9. pyro-ppl not installed                                 SKIPPED")
@@ -204,10 +199,10 @@ def verify():
             ParametricCPD(x2, parametrization=LearnablePrior(X)),
             ParametricCPD(lat, parents=[x2], parametrization={
                 "loc": nn.Linear(X, lat.size),
-                "scale": nn.Sequential(nn.Linear(X, lat.size), nn.Softplus()),
+                "scale": nn.Sequential(nn.Linear(X, lat.size), DefaultActivation(lat, "scale")),
             }),
             ParametricCPD(z, parents=[lat.member("m1")],
-                          parametrization=nn.Sequential(nn.Linear(1, 1), nn.Sigmoid())),
+                          parametrization=nn.Sequential(nn.Linear(1, 1), DefaultActivation(z, "probs"))),
         ],
     )
     neng = DeterministicInference(npgm)

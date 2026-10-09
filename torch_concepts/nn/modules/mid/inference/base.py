@@ -2,21 +2,40 @@
 
 from __future__ import annotations
 
-import inspect
 import math
 import warnings
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 
 from ..distributions import spec_for
+from ..factors.factor import _module_input_names
 from ..graph.probabilistic_model import ProbabilisticModel
 from ..variable import Variable
-from .utils import flatten_event, leading_shape
+from .utils import make_temperature_schedule
 from ...outputs import InferenceOutput, ParamDict
 from .....annotations import Annotations
 from .....tensor import AnnotatedTensor
+
+
+#: How many query signatures the per-engine caches keep (see ``_cache_put``).
+#: Queries normally have a fixed signature, so a handful of entries covers a
+#: whole run; the bound only matters for callers that build query lists
+#: dynamically, where an unbounded dict would grow forever.
+QUERY_CACHE_SIZE = 128
+
+
+def _cache_put(cache: dict, key: tuple, value):
+    """Store ``value`` under ``key``, evicting the oldest entry past the bound.
+
+    Plain dicts keep insertion order, so ``next(iter(cache))`` is the oldest
+    key — FIFO with no bookkeeping and no extra dependency.
+    """
+    if len(cache) >= QUERY_CACHE_SIZE:
+        del cache[next(iter(cache))]
+    cache[key] = value
+    return value
 
 
 class BaseInference(nn.Module):
@@ -38,6 +57,31 @@ class BaseInference(nn.Module):
         ``nn.Module.__setattr__`` registers it as a submodule, the engine shares
         parameters with the model rather than copying them, so one optimizer
         over ``pgm.parameters()`` trains the graph however many engines wrap it.
+    initial_temperature, annealing, annealing_rate, final_temperature
+        Schedule for the relaxed-discrete distributions' temperature; see
+        :func:`~torch_concepts.nn.modules.mid.inference.utils.make_temperature_schedule`.
+        Lives here rather than per-engine: annealing is a property of the run,
+        not of a backend, and a training loop should be able to advance it
+        without knowing which engine it holds (see :meth:`temperature_step`).
+        Engines that never sample keep it and never read it.
+    p_int : float, default 0.0
+        Teacher-forcing rate, applied to any variable the **query** supplies a
+        value for: each leading (batch-like) element independently takes the
+        ground truth with probability ``p_int`` and the engine's own realisation
+        otherwise (see
+        :func:`~torch_concepts.nn.modules.mid.inference.utils.teacher_force`).
+        ``1.0`` always forces, ``0.0`` never does, and a value in between is
+        CEM's **RandInt**: it trains a downstream consumer — a concept
+        bottleneck's mixture, say — to cope with concept values the model did
+        not itself predict, which is what an intervention feeds it.
+
+        Here rather than per-backend for the same reason as the temperature: it
+        is a property of the run. Set it on the *train* engine only, leaving
+        evaluation at ``0.0`` so metrics measure the model unaided.
+
+        The draw is per variable, so granularity follows the graph's layout: with
+        one variable per concept (``plate=False``) it is per-sample per-concept,
+        which is RandInt proper; a plate is forced or not as a whole.
 
     Warns
     -----
@@ -45,21 +89,50 @@ class BaseInference(nn.Module):
         If any root factor's parametrization requires input arguments; such a
         root must be supplied as constant evidence on every ``query`` call.
     """
-    
+
     name: str = "BaseInference"
 
-    def __init__(self, pgm: ProbabilisticModel):
+    def __init__(
+        self,
+        pgm: ProbabilisticModel,
+        initial_temperature: float = 1.0,
+        annealing: Union[str, Callable[[int], float]] = "constant",
+        annealing_rate: float = 0.0,
+        final_temperature: float = 1e-6,
+        p_int: float = 0.0,
+    ):
         super().__init__()
         # NOTE: nn.Module.__setattr__ auto-registers ``pgm`` as a submodule, so
         # the engine shares parameters with the original PGM (no copy).
         self.pgm = pgm
 
+        if not 0.0 <= float(p_int) <= 1.0:
+            raise ValueError(f"p_int must be in [0, 1], got {p_int!r}.")
+        self.p_int = float(p_int)
+
+        # Retained for repr/introspection; the live schedule lives in ``_schedule``.
+        self.initial_temperature = float(initial_temperature)
+        self.annealing = annealing
+        self.annealing_rate = float(annealing_rate)
+        self.final_temperature = float(final_temperature)
+        self._schedule = make_temperature_schedule(
+            initial_temperature, annealing, annealing_rate, final_temperature
+        )
+        self._step: int = 0
+        # A buffer, so it follows `.to(device)` and — being persistent — travels
+        # in `state_dict`: evaluation after a reload must decode at the
+        # temperature training reached, not at the initial one.
+        self.register_buffer(
+            "_temperature", torch.tensor(float(self._schedule(self._step)))
+        )
+
         # Both keyed by a query signature and reused across queries: the label
         # chunks a query expands to (see _output_labels) and the Annotations
         # built from them (see _annotate). Only the tensor *values* change from
         # one query to the next, so all of this Python work is done once.
+        # Bounded FIFO at ``QUERY_CACHE_SIZE`` — see ``_cache_put``.
         self._label_cache: Dict[tuple, List[Tuple[List[str], Variable]]] = {}
-        self._annotation_cache: Dict[tuple, Annotations] = {}
+        self._annotations_cache: Dict[tuple, Annotations] = {}
 
         # Factor-based (not variable-keyed): a ProbabilisticModel keys factors by
         # factor name, and undirected potentials have no ``is_root``. Only root CPDs
@@ -68,10 +141,11 @@ class BaseInference(nn.Module):
             f.name
             for f in pgm.factors.values()
             if getattr(f, "is_root", False)
-            and any(
-                len(inspect.signature(mod.forward).parameters) > 0
-                for mod in f.parametrization.values()
-            )
+            # ``_module_input_names`` unwraps a Sequential and ignores
+            # ``*args``/``**kwargs``: a root prior is ``Sequential(LearnablePrior,
+            # activation)``, whose ``forward(*args, **kwargs)`` would otherwise
+            # count as two parameters and warn about a prior that takes no input.
+            and any(_module_input_names(mod) for mod in f.parametrization.values())
         ]
         if roots_needing_input:
             warnings.warn(
@@ -81,6 +155,46 @@ class BaseInference(nn.Module):
                 UserWarning,
                 stacklevel=2,
             )
+
+    def clear_cache(self) -> None:
+        """Drop both query caches.
+
+        They are pure memoisation of model structure, so clearing only costs
+        the next query its rebuild. Use it after mutating the PGM, or to free
+        the entries a long run of one-off query signatures left behind.
+        """
+        self._label_cache.clear()
+        self._annotations_cache.clear()
+
+    # ------------------------------------------------------------------
+    # Relaxation temperature
+    # ------------------------------------------------------------------
+    # Shared by every engine, because every engine that realises a discrete
+    # variable relaxes it, and the schedule is a property of the *run* rather
+    # than of any one backend. Engines that never sample simply never read it.
+
+    @property
+    def temperature(self) -> torch.Tensor:
+        """Current relaxation temperature of the discrete distributions."""
+        return self._temperature
+
+    def temperature_step(self) -> None:
+        """Advance the schedule by one training step.
+
+        A no-op outside training, so evaluation reads the temperature training
+        reached rather than annealing past it — a model tested at a relaxation
+        it never trained at samples codes its decoder has never seen.
+
+        Updates the buffer **in place**, so callers must not run this between a
+        forward pass and its ``backward``: the temperature is part of the graph
+        autograd is about to walk. Once per optimiser step, after backward, is
+        the contract (see
+        :meth:`~torch_concepts.nn.modules.high.base.learner.BaseLearner.on_train_batch_end`).
+        """
+        if not self.training:
+            return
+        self._step += 1
+        self._temperature.fill_(float(self._schedule(self._step)))
 
     def _require_directed(self) -> None:
         """Guard for engines that need a topological order.
@@ -121,49 +235,61 @@ class BaseInference(nn.Module):
                 )
 
     # ------------------------------------------------------------------
-    # Leading (batch-like) dimensions
+    # Leading dimensions
     # ------------------------------------------------------------------
     # Every engine accepts tensors shaped ``(*leading, *event)`` for any number
     # of leading dimensions — the last axis is the only operating one. These
     # helpers are the single place that split the two, so no engine hard-codes
-    # ``shape[0]`` as "the batch".
+    # anything (e.g., ``shape[0]`` as "the batch").
 
-    def _event_of(self, name: str) -> Tuple[Tuple[int, ...], int]:
-        """It returns the shape and size of a variable given its name.
-        If member of a plate then returns the member shape and size; 
-        otherwise returns the variable shape and size.
+    def _dtype(self) -> torch.dtype:
+        """The floating dtype the model's parameters live in.
+
+        The enumeration engines build tables themselves rather than reading a
+        parametrization's output, so they need somewhere to read the working
+        dtype from; a parameterless model falls back to the global default.
         """
-        var = self.pgm.resolve(name)
-        if name == var.name:
-            return tuple(var.shape), var.size
-        return (var.member_size,), var.member_size
+        try:
+            return next(self.pgm.parameters()).dtype
+        except StopIteration:
+            return torch.get_default_dtype()
 
     def _leading_shape(self, name: str, value: torch.Tensor) -> torch.Size:
-        """Given value's shape, it identifies the 'operating' (event) dimensions
-        of the variable and return the leading dimensions
+        """The batch-like dimensions of ``value``, read as the variable ``name``.
+
+        A member name is read as a single member, whose event is its own block
+        rather than the whole plate's.
         """
-        event, size = self._event_of(name)
-        return leading_shape(event, size, value, f"{self.name}: {name!r}")
+        var = self.pgm.resolve(name)
+        return var.leading_of(value, member=None if name == var.name else name)
 
     def _query_leading_shape(
         self,
         query: Dict[str, Optional[torch.Tensor]],
         evidence: Dict[str, torch.Tensor],
+        default: Optional[int] = None,
     ) -> torch.Size:
-        """It determines the single leading (batch-like) shape that applies to an entire query call, 
+        """It determines the single leading (batch-like) shape that applies to an entire query call,
         by picking one representative tensor.
 
-        If there's any evidence, just take the first (name, value) pair from the dict 
-        and return its leading shape immediately. If there was no evidence, 
+        If there's any evidence, just take the first (name, value) pair from the dict
+        and return its leading shape immediately. If there was no evidence,
         fall through to the query dict and look for the first entry with a non-None tensor value.
-        If neither evidence nor query contains any actual tensor, default to torch.Size([1]).
+        If neither evidence nor query contains any actual tensor, fall back to
+        ``default`` observations (``torch.Size([default])``), or to
+        ``torch.Size([1])`` when no default is given.
+
+        The ``default`` is how an unconditional draw asks for a batch: with no
+        tensor anywhere there is nothing to read a batch size from, so a pure
+        ancestral sample from the priors would otherwise always be a single
+        observation.
         """
         for name, value in evidence.items():
             return self._leading_shape(name, value)
         for name, value in query.items():
             if value is not None:
                 return self._leading_shape(name, value)
-        return torch.Size([1])
+        return torch.Size([1 if default is None else int(default)])
 
     @staticmethod
     def _collapse_leading(
@@ -263,6 +389,8 @@ class BaseInference(nn.Module):
             name: tuple(self._leading_shape(name, t))
             for name, t in all_tensors.items()
         }
+        # TODO: should we move to the standard check used by torch? 
+        # ``torch.broadcast_shapes(*leadings.values())``
         if len(set(leadings.values())) > 1:
             shapes = {name: tuple(t.shape) for name, t in all_tensors.items()}
             raise ValueError(
@@ -304,15 +432,65 @@ class BaseInference(nn.Module):
                 member_evidence.setdefault(var.name, {})[name] = value
         return whole, member_evidence
 
+    def member_evidence(
+        self, evidence: Dict[str, torch.Tensor], dtype: torch.dtype
+    ) -> Dict[str, torch.Tensor]:
+        """Evidence as one block per observed **member**.
+
+        A variable, a whole plate and a subset of a plate's members all
+        collapse to the same thing here: some members have a value, the rest are
+        free. This is :func:`~.utils.unpack_plates`'s companion on the way in — an engine
+        running on an unpacked model addresses everything by member name.
+        """
+        whole, per_owner = self._split_evidence(evidence)
+        blocks: Dict[str, torch.Tensor] = {}
+        for name, value in whole.items():
+            var = self.pgm.variables[name]
+            observed = var.to_member(value.to(dtype))
+            for member in var.members:
+                blocks[member] = var.member_of(observed, member)
+        for owner_name, members in per_owner.items():
+            owner = self.pgm.variables[owner_name]
+            for member, value in members.items():
+                blocks[member] = owner.member(member).as_event(value.to(dtype))
+        return blocks
+
+    def regroup_members(
+        self,
+        per_member: Dict[str, torch.Tensor],
+        member_blocks: Dict[str, torch.Tensor],
+    ) -> Dict[str, ParamDict]:
+        """Per-member results -> the per-*variable* dict :meth:`_assemble_params` wants.
+
+        :func:`~.utils.unpack_plates`'s companion on the way out. A variable's members
+        stack back onto the member axis in member order. On a partially observed
+        plate the observed members contribute their evidence, which *is* their
+        posterior: conditioning makes ``P(x_m | e)`` a point mass at the observed
+        value — and :meth:`_assemble_params` divides a chunk's width evenly
+        across its labels, so a ragged plate would corrupt the annotation. A
+        variable with no free member at all emits nothing, mirroring the rule
+        that a fully-observed queried variable reports no parameters.
+        """
+        computed: Dict[str, ParamDict] = {}
+        for var in self.pgm.variables.values():
+            if not any(m in per_member for m in var.members):
+                continue
+            parts = [
+                per_member[m] if m in per_member else member_blocks[m]
+                for m in var.members
+            ]
+            computed[var.name] = {
+                "probs": torch.stack(parts, dim=var.member_axis)
+            }
+        return computed
+
     # ------------------------------------------------------------------
-    # Output assembly (backend-agnostic)
+    # Output assembly
     # ------------------------------------------------------------------
     # Engines compute per-variable parameter dicts internally, then hand them to
     # these two methods, which produce the quantity-keyed annotated tensors an
-    # :class:`InferenceOutput` exposes. Assembly happens exactly once and the
-    # concatenated tensor is the only storage: a per-variable or per-member view
-    # is recovered by label slicing, which is a view rather than a copy.
-
+    # :class:`InferenceOutput` exposes. 
+    
     def _output_labels(self, query_names) -> List[Tuple[List[str], Variable]]:
         """It returns ``(labels, owning variable)`` chunks for the queried names,
         in order.
@@ -346,8 +524,7 @@ class BaseInference(nn.Module):
             if labels:
                 seen.update(labels)
                 chunks.append((labels, var))
-        self._label_cache[key] = chunks
-        return chunks
+        return _cache_put(self._label_cache, key, chunks)
 
     @staticmethod
     def _label_type(variable: Variable, width: int) -> str:
@@ -380,8 +557,8 @@ class BaseInference(nn.Module):
         here would put an O(total labels) tuple build and hash back on every
         query, cache hit included.
         """
-        annotation = self._annotation_cache.get(key)
-        if annotation is None:
+        annotations = self._annotations_cache.get(key)
+        if annotations is None:
             resolve = self.pgm.resolve
             owners = [resolve(label) for label in labels]
             # A variable spanning several labels (a plate) is registered as a
@@ -391,7 +568,7 @@ class BaseInference(nn.Module):
                 grouped.setdefault(var.name, []).append(label)
             label_set = set(labels)
             groups = {o: m for o, m in grouped.items() if o not in label_set}
-            annotation = Annotations(
+            annotations = Annotations(
                 labels=list(labels),
                 cardinalities=list(widths),
                 types=[
@@ -399,9 +576,20 @@ class BaseInference(nn.Module):
                 ],
                 groups=groups or None,
             )
-            self._annotation_cache[key] = annotation
+            _cache_put(self._annotations_cache, key, annotations)
         data = pieces[0] if len(pieces) == 1 else torch.cat(pieces, dim=-1)
-        return AnnotatedTensor(data, annotation, axis=-1)
+        return AnnotatedTensor(data, annotations, axis=-1)
+
+    @staticmethod
+    def _chunk_of(var, tensor, chunk, param=None) -> torch.Tensor:
+        """The columns of ``tensor`` belonging to ``chunk``, cheapest case first:
+        the whole variable is the tensor itself, one member is a slice, a subset
+        is one gather. Shared by both assemblers."""
+        if chunk == var.members:
+            return tensor
+        if len(chunk) == 1:
+            return var.member_of(tensor, chunk[0], param)
+        return tensor[..., var.flat_columns(chunk)]
 
     def _assemble_params(
         self,
@@ -451,23 +639,17 @@ class BaseInference(nn.Module):
             params = per_variable.get(var.name)
             if params is None:
                 continue  # fully observed, or not computed by this engine
-            if chunk == var.members:
-                # Whole variable (a non-plate, or a plate queried by name):
-                # the factor's stacked output is used as-is — no per-member
-                # slicing and re-concatenation.
-                for quantity, tensor in params.items():
-                    emit(quantity, tensor, chunk)
-            elif len(chunk) == 1:
-                # A single member: a plain column slice, cheaper than a
-                # one-column fancy-index gather.
-                for quantity, tensor in var.select(params, chunk[0]).items():
-                    emit(quantity, tensor, chunk)
+            # The annotated axis is flat, so this is where the member axis is
+            # folded back into the event — the one place the member layout
+            # leaves the engine. A multi-dimensional event (an image) is
+            # flattened all the way to ``(*leading, size)``, the layout its
+            # samples are reported in; ``to_event`` alone would keep its rank.
+            if len(var.shape) > 1:
+                flat = {q: var.to_flat(var.to_member(t, q)) for q, t in params.items()}
             else:
-                # A member subset: gather every column in one indexing op
-                # rather than slicing and re-concatenating one member at a time.
-                idx = var.get_slice(chunk)
-                for quantity, tensor in params.items():
-                    emit(quantity, tensor[..., idx], chunk)
+                flat = {q: var.to_event(t, q) for q, t in params.items()}
+            for quantity, tensor in flat.items():
+                emit(quantity, self._chunk_of(var, tensor, chunk, quantity), chunk)
         return {
             quantity: self._annotate(
                 tensors, labels[quantity], widths[quantity],
@@ -495,16 +677,7 @@ class BaseInference(nn.Module):
             value = per_variable.get(var.name)
             if value is None:
                 continue
-            flat = flatten_event(var, value)
-            if chunk == var.members:
-                # Whole variable: the stacked value is used as-is.
-                piece = flat
-            elif len(chunk) == 1:
-                # A single member: a plain column slice.
-                piece = var.select_value(flat, chunk[0])
-            else:
-                # A member subset: one gather over all its columns.
-                piece = flat[..., var.get_slice(chunk)]
+            piece = self._chunk_of(var, var.to_flat(value), chunk)
             # One piece per chunk; members share member_size so the per-label
             # width is uniform (see :meth:`_assemble_params`).
             width = int(piece.shape[-1]) // len(chunk)
