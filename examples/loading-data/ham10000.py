@@ -29,10 +29,10 @@ from torch_concepts.data.generation.generators import FixedConceptGenerator
 # Dermoscopic criteria, written by hand. The examples in
 # examples/utilization/4_label_free/ replace this with an LLM generator.
 CONCEPTS = [
-    'an asymmetric lesion',
-    'an irregular border',
+    'dermoscopy of an asymmetric lesion',
+    'dermoscopy of an irregular border',
     'more than one colour',
-    'a blue-white veil',
+    'dermoscopy of a blue-white veil',
     'an image of a dog',
     'an image of a cat'
 ]
@@ -79,17 +79,17 @@ def main():
         ),
         annotators=CLIPAnnotator(
             model_name='openai/clip-vit-large-patch14',
-            prompt_template='dermoscopy of {}',
+            prompt_template='{}',
             batch_size=64,
             show_progress=True,
         ),
-        calibrator=SigmoidCalibrator(scale=10.0),
+        calibrator=SigmoidCalibrator(scale=5.0),
     )
     generated = pipeline(dm.dataset)['CLIPAnnotator']
 
     print(f"   Generated: {tuple(generated.shape)}")
     for index, label in enumerate(generated.annotation.labels):
-        print(f"     P({label}) = {generated.tensor[:, index].mean():.2f}")
+        print(f"     Sigmoid score of '{label}' = {generated.tensor[:, index].mean():.2f}")
 
 
 if __name__ == "__main__":
