@@ -80,6 +80,8 @@ Predictors
    HyperlinearConceptEmbeddingToConcept
    MixConceptEmbeddingToConcept
    MixConceptEmbeddings
+   RuleConceptEmbeddingToConcept
+   RuleMemory
 
 Dense Layers
 ------------

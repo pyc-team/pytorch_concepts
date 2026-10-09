@@ -393,7 +393,6 @@ from torch_concepts.nn import (
 #### Special Layers
 ```python
 from torch_concepts.nn import (
-    SelectorLatentToExogenous,          # Memory-augmented selection
     WANDAGraphLearner,       # Learn concept graph structure
 )
 ```
