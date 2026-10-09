@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Optional, Sequence, TYPE_CHECKING
+from typing import TYPE_CHECKING
 
 from torch_concepts.concept_graph import ConceptGraph
 from .base import GraphGenerator, GraphGeneratorSpec
@@ -54,22 +54,6 @@ class GraphGeneratorStatic(GraphGenerator):
     trainable = False
     _sources: dict[str, Callable] = {}
     _name_sources: dict[str, set[str]] = {}
-
-    def __init__(
-        self,
-        name: str,
-        source: Optional[str] = None,
-        refinement: Optional[Callable[[ConceptGraph], ConceptGraph] | Sequence[Callable[[ConceptGraph], ConceptGraph]]] = None,
-        require_dag: bool = True,
-        **kwargs: Any,
-    ):
-        super().__init__(
-            name=name,
-            source=source,
-            refinement=refinement,
-            require_dag=require_dag,
-            **kwargs,
-        )
 
 
 

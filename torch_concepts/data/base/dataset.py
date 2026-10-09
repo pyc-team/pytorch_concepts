@@ -725,15 +725,15 @@ class ConceptDataset(Dataset):
         graph_dataset._subset_rows(training_indices)
         graph_dataset.graph_training_indices = training_indices
 
+        graph_generator._prepare_context(graph_dataset)
         graph = None
         cache_path = None
-        cache_key = None
         if cache and graph_generator.name != "ground_truth":
             cache_key = graph_generator._cache_key(graph_dataset)
             cache_dir = cache_dir or self.root_dir
             os.makedirs(cache_dir, exist_ok=True)
             digest = hashlib.sha256(
-                json.dumps(cache_key).encode("utf-8")
+                json.dumps(cache_key, sort_keys=True).encode("utf-8")
             ).hexdigest()
             cache_path = os.path.join(cache_dir, f"graph_{digest}.pt")
             if os.path.exists(cache_path) and not force:
@@ -754,11 +754,10 @@ class ConceptDataset(Dataset):
 
         if graph is None:
             graph = graph_generator._construct_graph(graph_dataset)
-            if cache_path is not None and cache_key is not None:
+            if cache_path is not None:
                 logger.info("Saving graph to %s", cache_path)
                 torch.save(
                     {
-                        "cache_key": cache_key,
                         "adjacency": graph.data.cpu(),
                         "node_names": list(graph.node_names),
                     },

@@ -17,7 +17,7 @@ import networkx as nx
 import torch
 
 from torch_concepts.concept_graph import ConceptGraph
-from ...utils import _query_pair
+from ...utils import _dfs, _query_pair, contains_cycle
 
 
 def _warn_undirected_edges(adjacency: torch.Tensor, operation: str, policy: str) -> None:
@@ -53,9 +53,10 @@ def refine_llm(
     domain : str, default ""
         Optional domain for pairwise prompts.
     concept_descriptions : dict[str, str], optional
-        Explicit descriptions keyed by node name. When used by a generator,
-        these join the shared generation/refinement context and override
-        dataset defaults. Conflicting explicit entries raise ValueError.
+        Descriptions used when calling this refinement directly. When attached
+        to a generator, replaced by its resolved description context: generator
+        descriptions override dataset defaults. Refinement descriptions are not
+        merged into that context.
     repeats : int, default 1
         Positive number of completions to aggregate by valid-token vote.
 
@@ -86,7 +87,7 @@ def refine_llm(
     ) -> ConceptGraph:
         descriptions = concept_descriptions or {}
         concept_names = list(graph.node_names)
-        adjacency = graph.data.clone()
+        adjacency = graph.data
         for i in range(len(concept_names)):
             for j in range(i + 1, len(concept_names)):
                 if adjacency[i, j] == 0 or adjacency[j, i] == 0:
@@ -121,39 +122,6 @@ def refine_llm(
     )
 
 
-def _dfs(node, adj_matrix, visited, stack, remove):
-    """Visit parents in index order; optionally remove the first cycle edge."""
-    visited[node] = True
-    stack[node] = True
-    for neighbor in range(len(adj_matrix)):
-        if adj_matrix[neighbor][node] != 0:
-            if not visited[neighbor]:
-                if _dfs(neighbor, adj_matrix, visited, stack, remove):
-                    return True
-            elif stack[neighbor]:
-                if remove:
-                    adj_matrix[neighbor][node] = 0
-                return True
-    stack[node] = False
-    return False
-
-
-def contains_cycle(adj_matrix: torch.Tensor) -> bool:
-    """Detect any directed cycle, including self-loops, without modifying input.
-
-    Every nonzero adjacency entry is an edge. Visit all components, tracking
-    both visited nodes and the active recursion path; only an edge to an active
-    node indicates a cycle. Like the upstream DFS, this uses Python recursion.
-    """
-    visited = [False] * len(adj_matrix)
-    stack = [False] * len(adj_matrix)
-    for node in range(len(adj_matrix)):
-        if not visited[node]:
-            if _dfs(node, adj_matrix, visited, stack, False):
-                return True
-    return False
-
-
 def remove_weakest_cycles(graph: ConceptGraph) -> ConceptGraph:
     """Remove minimum-absolute-weight cyclic edges until the graph is a DAG.
 
@@ -177,13 +145,13 @@ def remove_weakest_cycles(graph: ConceptGraph) -> ConceptGraph:
     Reciprocal (-1, -1) entries trigger a warning: PC/GES undirected edges
     are treated as opposite directed edges. Apply refine_llm first to orient them.
     """
-    adjacency = graph.data.detach().clone()
+    adjacency = graph.data.detach()
     _warn_undirected_edges(
         adjacency, "remove_weakest_cycles",
         "directions are removed by minimum absolute weight, with ties resolved "
         "by NetworkX edge iteration order, without causal orientation",
     )
-    while contains_cycle(adjacency):
+    while True:
         network = nx.from_numpy_array(adjacency.cpu().numpy(), create_using=nx.DiGraph)
         components = {
             node: index
@@ -194,6 +162,8 @@ def remove_weakest_cycles(graph: ConceptGraph) -> ConceptGraph:
             edge for edge in network.edges
             if components[edge[0]] == components[edge[1]]
         ]
+        if not cyclic_edges:
+            break
         weakest = min(cyclic_edges, key=lambda edge: abs(float(adjacency[edge])))
         adjacency[weakest] = 0
     return ConceptGraph(adjacency, node_names=list(graph.node_names))
@@ -234,7 +204,7 @@ def dfs_remove_cycles(
     Reciprocal (-1, -1) entries trigger a warning: PC/GES undirected edges
     are treated as opposite directed edges. Apply refine_llm first to orient them.
     """
-    adjacency = graph.data.detach().clone()
+    adjacency = graph.data.detach()
     _warn_undirected_edges(
         adjacency, "dfs_remove_cycles",
         "back-edge directions are removed according to DFS traversal order, "

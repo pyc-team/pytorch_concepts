@@ -1,4 +1,4 @@
-"""Shared pairwise prompts, response voting and invalid-answer retries.
+"""Shared graph checks, DFS traversal and pairwise LLM query utilities.
 
 Used by direct LLM discovery and reciprocal-edge refinement. Backends are
 callables accepting a prompt and completion options, including repeats.
@@ -9,6 +9,8 @@ exceptions propagate instead of being treated as invalid model answers.
 from __future__ import annotations
 
 import warnings
+
+import torch
 from collections.abc import Callable
 from typing import Any
 
@@ -161,3 +163,38 @@ def _most_frequent_token(response: Any, tokens: tuple[str, ...] = _EDGE_TOKENS) 
     highest_count = max(counts.values())
     winners = [token for token, count in counts.items() if count == highest_count]
     return winners[0] if len(winners) == 1 else "none"
+
+
+def is_fully_directed(adjacency: torch.Tensor) -> bool:
+    """Return whether no edge pair has two nonzero endpoints."""
+    nonzero = adjacency != 0
+    return not bool((nonzero & nonzero.T).any())
+
+
+def _dfs(node, adj_matrix, visited, stack, remove):
+    """Visit parents in index order; optionally remove the first cycle edge."""
+    visited[node] = True
+    stack[node] = True
+    for neighbor in range(len(adj_matrix)):
+        if adj_matrix[neighbor][node] != 0:
+            if not visited[neighbor]:
+                if _dfs(neighbor, adj_matrix, visited, stack, remove):
+                    return True
+            elif stack[neighbor]:
+                if remove:
+                    adj_matrix[neighbor][node] = 0
+                return True
+    stack[node] = False
+    return False
+
+
+def contains_cycle(adj_matrix: torch.Tensor) -> bool:
+    """Detect any directed cycle, including self-loops, without modifying input.
+    """
+    visited = [False] * len(adj_matrix)
+    stack = [False] * len(adj_matrix)
+    for node in range(len(adj_matrix)):
+        if not visited[node]:
+            if _dfs(node, adj_matrix, visited, stack, False):
+                return True
+    return False

@@ -129,7 +129,7 @@ class GraphGenerator:
         self._configuration_fields = frozenset(
             {name for name in vars(self) if not name.startswith("_")}
             | self._method_parameters.keys() | {"trainable"}
-        ) - {"graph", "fitted",}
+        ) - {"graph", "fitted", "training"}
 
     def __setattr__(self, name, value):
         if name in object.__getattribute__(self, "__dict__").get("_configuration_fields", ()):
@@ -211,10 +211,9 @@ class GraphGenerator:
         """Build static cache metadata, including descriptions only where consumed.
 
         Dataset contents and callable implementation code are not fingerprinted.
-        Learnable callers also include parameter versions; to_graph uses its own
-        snapshot key with buffer, device and dtype state.
+        Learnable callers use the same tensor-state tracking as to_graph.
+        The caller must resolve descriptions with _prepare_context first.
         """
-        self._prepare_context(dataset)
         key = {
             "source": self.source,
             "name": self.name,
@@ -224,7 +223,7 @@ class GraphGenerator:
             "refinement": self._refinement_cache_key(self._spec.refinement),
         }
         if self.trainable:
-            key["parameter_versions"] = self._parameter_versions()
+            key["tensor_state"] = self._tensor_state()
         return key
 
     @staticmethod
@@ -350,8 +349,8 @@ class GraphGenerator:
         """Materialize source output, refine it, validate it and retain the graph.
 
         Static compute receives a required dataset and returns ConceptGraph.
+        The caller must resolve descriptions with _prepare_context first.
         """
-        self._prepare_context(dataset)
 
         if self.trainable:
             with torch.no_grad():
