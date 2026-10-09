@@ -261,6 +261,8 @@ class CLIPAnnotator(Annotator):
         )
         inputs = {name: value.to(self.device) for name, value in inputs.items()}
         features = self.model.get_text_features(**inputs)
+        # transformers >= 5 returns a model output holding the projected features
+        features = getattr(features, "pooler_output", features)
         return F.normalize(features, dim=-1)
 
     def encode_images(self, images: Sequence[Any]) -> Tensor:
@@ -283,6 +285,8 @@ class CLIPAnnotator(Annotator):
         )
         pixel_values = inputs["pixel_values"].to(self.device)
         features = self.model.get_image_features(pixel_values=pixel_values)
+        # transformers >= 5 returns a model output holding the projected features
+        features = getattr(features, "pooler_output", features)
         return F.normalize(features, dim=-1)
 
     def _progress(self, iterable: Any, desc: str, total: int | None = None) -> Any:
