@@ -33,7 +33,7 @@ The name of the library stands for both
 Install <img src="https://raw.githubusercontent.com/pyc-team/pytorch_concepts/refs/heads/master/doc/_static/img/logos/pyc.svg" width="20px"> PyC from [PyPI](https://pypi.org/project/pytorch-concepts/):
 
 ```bash
-pip install --pre pytorch-concepts[data]
+pip install --pre "pytorch-concepts[data]"
 ```
 
 Use `pip install --pre pytorch-concepts` for core-only (no data dependencies), or see [full installation options](https://pytorch-concepts.readthedocs.io/en/latest/guides/installation.html) for conda setup.

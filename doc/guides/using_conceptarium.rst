@@ -109,9 +109,10 @@ Detailed Guides
    .. code-block:: bash
    
       git clone https://github.com/pyc-team/pytorch_concepts.git
-      cd pytorch_concepts/conceptarium
-      conda env create -f environment.yaml
-      conda activate conceptarium
+      cd pytorch_concepts
+      conda env create -f environment.yml
+      conda activate pyc
+      cd conceptarium
    
    **Basic Usage**
    

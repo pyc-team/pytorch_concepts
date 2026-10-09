@@ -27,11 +27,9 @@ Have questions or want to discuss your ideas? Join our Slack community to connec
    git clone https://github.com/YOUR_USERNAME/pytorch_concepts.git
    cd pytorch_concepts
    git remote add upstream https://github.com/pyc-team/pytorch_concepts.git
-   # create and activate the conda environment (use environment_silicon.yaml on Apple Silicon)
-   conda env create -f conceptarium/environment.yaml
-   conda activate conceptarium
-   # install your local pyc in editable mode
-   pip install -e .
+   # create and activate the conda environment (PyC in editable mode, with all extras)
+   conda env create -f environment.yml
+   conda activate pyc
    ```
 
 2. **Branch from `dev`** — base your work on the latest upstream `dev`:
