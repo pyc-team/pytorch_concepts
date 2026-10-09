@@ -12,6 +12,7 @@ from inspect import Parameter, signature
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from functools import partial
+from pathlib import Path
 from typing import Any, Optional, Sequence
 
 import torch
@@ -81,8 +82,6 @@ class GraphGenerator:
         self.source = self.resolve_source(name, source)
         self.graph: Optional[ConceptGraph] = None
         self.fitted = False
-        self._cache_key = None
-        self._trained_cached_graph = None
         self._concept_descriptions = {}
         self.require_dag = require_dag
         loader = self._source_loaders[self.source]
@@ -207,17 +206,18 @@ class GraphGenerator:
             isinstance(k, str) and isinstance(v, str) for k, v in descriptions.items()
         ):
             raise ValueError("concept_descriptions must be a dictionary of strings.")
-        return names, descriptions
+        return names, {name: descriptions.get(name, "") for name in names}
 
-    def _build_cache_key(self, *, concept_values=None, cache_metadata=None) -> Any:
-        """Build cache identity from all supplied inputs and generator configuration.
+    def _build_cache_key(self, *, cache_metadata=None) -> Any:
+        """Identify configuration, names, descriptions and optional dataset metadata.
 
         Optional cache_metadata is supplied by the caller, independently of context.
-        Input values are fingerprinted; callable implementation code is not.
+        Concept values and callable implementation code are not included.
         Learnable cache keys also track parameter/buffer state.
         The caller must resolve descriptions with _prepare_context first.
         """
         key = {
+            "graph_format": 2,
             "concept_names": list(getattr(self, "_context_names", ()) or ()),
             "source": self.source,
             "name": self.name,
@@ -238,6 +238,8 @@ class GraphGenerator:
         convert = GraphGenerator._cache_parameter
         if value is None or isinstance(value, (str, int, float, bool)):
             return value
+        if isinstance(value, (torch.dtype, torch.device, Path)):
+            return str(value)
         if isinstance(value, dict):
             return {
                 key: convert(item) for key, item in value.items()
@@ -266,6 +268,11 @@ class GraphGenerator:
     def _backend_cache_key(backend) -> dict:
         """Describe a backend by callable/class name, model, prompt and completion options.
         """
+        if isinstance(backend, partial):
+            return {
+                **GraphGenerator._refinement_cache_key(backend),
+                "backend": GraphGenerator._backend_cache_key(backend.func),
+            }
         cls = type(backend)
         module = getattr(backend, "__module__", cls.__module__)
         name = getattr(backend, "__qualname__", cls.__qualname__)
@@ -313,8 +320,6 @@ class GraphGenerator:
         """Discard the materialized graph without changing generator parameters."""
         self.graph = None
         self.fitted = False
-        self._cache_key = None
-        self._trained_cached_graph = None
 
     def _validate_graph(self, graph: ConceptGraph) -> None:
         """Require finite adjacency and, when requested, an acyclic graph."""
@@ -335,21 +340,20 @@ class GraphGenerator:
         self, concept_values, concept_names, concept_descriptions=None, *,
         finalize=True,
     ) -> ConceptGraph:
-        """Compute through the common source contract, then optionally finalize."""
-        names, descriptions = self._validate_inputs(concept_values, concept_names, concept_descriptions)
+        """Compute with validated names/descriptions, then optionally finalize."""
+        names, descriptions = concept_names, concept_descriptions or {}
         compute = self._spec.forward if self.trainable else self._spec.compute
         output = compute(self, concept_values, names, descriptions)
         graph = ConceptGraph(output, node_names=names) if isinstance(output, torch.Tensor) else output
         if not isinstance(graph, ConceptGraph):
             raise TypeError("Source compute must return a Tensor or ConceptGraph.")
         if not torch.is_grad_enabled() and graph.data.requires_grad:
-            graph = ConceptGraph(graph.data.detach(), node_names=names)
+            graph = ConceptGraph(graph.data.detach(), node_names=names, edge_encoding=graph.edge_encoding)
         if graph.node_names != names:
             raise ValueError("Graph nodes must match the concept names and order.")
         if not finalize:
             return graph
-        resolved = {name: descriptions.get(name, "") for name in names}
-        if getattr(self, "_context_names", None) != names or self._concept_descriptions != resolved:
+        if getattr(self, "_context_names", None) != names or self._concept_descriptions != descriptions:
             self._prepare_context(concept_names=names, concept_descriptions=descriptions)
         for refinement in self._resolved_refinements:
             graph = refinement(graph)
@@ -357,6 +361,8 @@ class GraphGenerator:
                 raise TypeError("Refinement must return a ConceptGraph.")
             if graph.node_names != names:
                 raise ValueError("Refinement nodes must match the concept names and order.")
+        if not self.trainable and concept_values is not None and graph.data.device != concept_values.device:
+            graph = graph.to(concept_values.device)
         self._validate_graph(graph)
         self.graph = graph
         self.fitted = True

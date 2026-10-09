@@ -678,8 +678,8 @@ class ConceptDataset(Dataset):
         (by default ``root_dir``) and reused on later calls with matching
         generator options, concept descriptions, dataset metadata and training indices.
         ``force=True`` recomputes and updates the cache.
-        Changes to concept values and descriptions invalidate the cache.
-        Changes to generation/refinement code require ``force=True``.
+        Descriptions affect the cache key. Concept values and implementation
+        code do not; use ``force=True`` after changing either.
 
         Parameters
         ----------
@@ -730,18 +730,17 @@ class ConceptDataset(Dataset):
             **(getattr(self, "label_descriptions", None) or {}),
             **(concept_descriptions or {}),
         }
-        graph_generator._validate_inputs(
+        names, descriptions = graph_generator._validate_inputs(
             graph_dataset.concepts.tensor, graph_dataset.concept_names,
             getattr(graph_dataset, "label_descriptions", None),
         )
         graph_generator._prepare_context(
-            graph_dataset.concept_names, graph_dataset.label_descriptions,
+            names, descriptions,
         )
         graph = None
         cache_path = None
         if cache:
             cache_key = graph_generator._build_cache_key(
-                concept_values=graph_dataset.concepts.tensor,
                 cache_metadata=graph_dataset._graph_cache_metadata(),
             )
             cache_dir = cache_dir or self.root_dir
@@ -768,8 +767,7 @@ class ConceptDataset(Dataset):
 
         if graph is None:
             graph = graph_generator._construct_graph(
-                graph_dataset.concepts.tensor, list(graph_dataset.concept_names),
-                getattr(graph_dataset, "label_descriptions", None),
+                graph_dataset.concepts.tensor, names, descriptions,
             )
             if cache_path is not None:
                 logger.info("Saving graph to %s", cache_path)

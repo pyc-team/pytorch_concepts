@@ -88,6 +88,7 @@ def _compute_causallearn(
     return ConceptGraph(
         _cl_graph_to_adj(cl_graph),
         node_names=concept_names,
+        edge_encoding="endpoints",
     )
 
 

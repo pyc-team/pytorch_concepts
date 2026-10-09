@@ -2,9 +2,9 @@
 
 Call generator(concept_values, concept_names, concept_descriptions). Training
 returns a fresh ConceptGraph with gradients, without refinements or DAG checking.
-Eval caches a refined, validated graph without gradients until inputs, weights or
-configuration change. Each result is an independent copy. DAGMA-CGM
-ignores concept values.
+Eval caches a refined, validated graph without gradients until weights or metadata
+change. Concept values are excluded from the cache. Eval includes validation
+during training. Each result is an independent copy. DAGMA-CGM ignores values.
 
 Node count is a method option, while names and descriptions belong to the call::
 
@@ -84,6 +84,8 @@ class GraphGeneratorLearnable(GraphGenerator, nn.Module):
             if self._spec.weights is None:
                 raise ValueError("The source must provide weights for initialization.")
             initialization(self._spec.weights)
+        self._cache_key = None
+        self._trained_cached_graph = None
         self._freeze_configuration()
 
     @property
@@ -98,26 +100,29 @@ class GraphGeneratorLearnable(GraphGenerator, nn.Module):
     ) -> ConceptGraph:
         """Return a training graph or a cached final graph in eval mode.
 
-        concept_values has shape (samples, concepts). DAGMA-CGM ignores it and
-        uses its learned weights. Training computes with gradients and skips
-        refinements and DAG validation. Eval builds a refined, validated graph
-        without gradients and returns independent copies while the cache key is unchanged.
-        Omitting observations remains supported for sources that do not need them.
-        Names follow column order and must match the number of nodes. Descriptions
-        are shared with refinements; descriptions are supplied at call time.
+        Training computes afresh on every call; optimizer.step() updates weights.
+        Eval (including validation) refines and validates without gradients,
+        caching by weights, buffers, names, descriptions and configuration.
+        Values have shape (samples, nodes) and are excluded from the cache.
+        DAGMA ignores values; sources needing them must manage eval cache reuse.
         """
+        names, descriptions = self._validate_inputs(concept_values, concept_names, concept_descriptions)
         if self.training:
             self._invalidate_cache()
-            return self._construct_graph(concept_values, concept_names, concept_descriptions, finalize=False)
-        names, descriptions = self._validate_inputs(concept_values, concept_names, concept_descriptions)
+            return self._construct_graph(concept_values, names, descriptions, finalize=False)
         self._prepare_context(concept_names=names, concept_descriptions=descriptions)
-        key = self._build_cache_key(concept_values=concept_values)
+        key = self._build_cache_key()
         if self._trained_cached_graph is None or self._cache_key != key:
             with torch.no_grad():
                 graph = self._construct_graph(concept_values, names, descriptions)
             self._trained_cached_graph = graph.clone()
             self._cache_key = key
         return self._trained_cached_graph.clone()
+
+    def _invalidate_cache(self) -> None:
+        super()._invalidate_cache()
+        self._cache_key = None
+        self._trained_cached_graph = None
 
     def _tensor_state(self) -> tuple:
         """Track parameter/buffer identity, version, device and dtype for caching."""
@@ -131,7 +136,7 @@ class GraphGeneratorLearnable(GraphGenerator, nn.Module):
 
 @dataclass(frozen=True, kw_only=True)
 class GraphGeneratorLearnableSpec(GraphGeneratorSpec):
-    """Forward callback, weight tensor and optional tensor initializer."""
+    """Forward, weights and optional initializer."""
 
     forward: Callable
     weights: Optional[torch.Tensor] = None

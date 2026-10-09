@@ -44,10 +44,8 @@ class GraphGeneratorStatic(GraphGenerator):
     -----
     precompute_graph(cache=True) reuses disk results using method, refinement,
     description and dataset metadata.
-    The cache fingerprints values and descriptions, but does not detect changes
-    to generation/refinement code. If you change code while keeping the
-    same configuration and dataset metadata, it may reuse an outdated graph.
-    Pass force=True to recompute the graph and update the disk cache, or
+    Concept values and implementation code are excluded from the cache key.
+    After changing values or code, pass force=True to update the disk cache, or
     cache=False to recompute without reading or writing the disk cache.
     """
 
@@ -58,7 +56,8 @@ class GraphGeneratorStatic(GraphGenerator):
         self, concept_values=None, concept_names=None, concept_descriptions=None,
     ) -> ConceptGraph:
         """Compute, refine and validate a graph from observations and node metadata."""
-        return self._construct_graph(concept_values, concept_names, concept_descriptions)
+        names, descriptions = self._validate_inputs(concept_values, concept_names, concept_descriptions)
+        return self._construct_graph(concept_values, names, descriptions)
 
 
 
