@@ -62,7 +62,7 @@ from .modules.callbacks import LossWeightWarmup
 from .modules.metrics import ConceptMetrics, compute_cace
 
 # Output containers
-from .modules.outputs import ModelOutput, InferenceOutput
+from .modules.outputs import InferenceOutput
 
 # Models (high-level)
 from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
@@ -104,10 +104,8 @@ from .modules.mid.inference.pgmpy.variable_elimination import PgmpyVariableElimi
 # pyro
 from .modules.mid.inference.pyro.variational import VariationalInference
 
-from .modules.mid.intervention import intervention
-
-# Intervention module
-from .modules.low.intervention.intervention import InterventionModule
+# Intervention module and context manager
+from .modules.low.base.intervention import InterventionModule, intervention
 
 # Intervention strategies
 from .modules.low.intervention.strategy.ground_truth import GroundTruthIntervention
@@ -196,7 +194,6 @@ __all__ = [
     "compute_cace",
 
     # Output containers
-    "ModelOutput",
     "InferenceOutput",
 
     # Models (high-level)

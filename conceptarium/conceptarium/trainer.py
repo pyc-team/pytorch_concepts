@@ -16,7 +16,7 @@ from pytorch_lightning.callbacks import (
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.loggers.logger import DummyLogger
 
-from env import PROJECT_NAME, WANDB_ENTITY
+from torch_concepts.env import PROJECT_NAME, WANDB_ENTITY
 from hydra.core.hydra_config import HydraConfig
 from hydra.utils import instantiate
 from conceptarium.hydra import parse_hyperparams

@@ -30,6 +30,15 @@ class TestLinearConceptToConcept(unittest.TestCase):
         output = predictor(concepts=concepts)
         self.assertEqual(output.shape, (4, 5))
 
+    def test_annotations_give_the_widths(self):
+        """Annotations are resolved to their sizes, as counts are."""
+        from torch_concepts import Annotations
+        predictor = LinearConceptToConcept(
+            in_concepts=Annotations(labels=['a', 'b', 'c'], cardinalities=[1, 2, 1]),
+            out_concepts=Annotations(labels=['y'], cardinalities=[1]),
+        )
+        self.assertEqual(predictor(concepts=torch.randn(4, 4)).shape, (4, 1))
+
     def test_gradient_flow(self):
         """Test gradient flow through predictor."""
         predictor = LinearConceptToConcept(

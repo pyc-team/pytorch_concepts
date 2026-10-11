@@ -1,17 +1,17 @@
 [build-system]
-requires = ["setuptools>=64", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "pytorch_concepts"
 description = "Concept-Based Deep Learning Library for PyTorch."
 readme = "README.md"
-license = { text = "Apache 2.0" }
+requires-python = ">=3.10"
+license = "Apache-2.0"
 maintainers = [{ name = "PyC Team", email = "pyc.devteam@gmail.com" }]
 classifiers = [
     "Intended Audience :: Developers",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved",
     "Operating System :: MacOS",
     "Operating System :: Microsoft :: Windows",
     "Operating System :: POSIX",
@@ -40,6 +40,7 @@ data = [
 tests = [
     "pytest-cov",
     "pytest",
+    "pytest-timeout",
 ]
 docs = [
     "matplotlib",
@@ -52,6 +53,11 @@ docs = [
     "sphinx-copybutton",
     "myst-nb",
     "sphinx-hoverxref",
+]
+conceptarium = [
+    "hydra-core",
+    "hydra-list-sweeper",
+    "wandb",
 ]
 
 [tool.setuptools.packages.find]

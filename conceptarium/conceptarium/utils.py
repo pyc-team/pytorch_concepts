@@ -21,7 +21,7 @@ from torch_concepts.data.base import ConceptDataModule
 
 logger = logging.getLogger(__name__)
 
-from env import DATA_ROOT
+from torch_concepts.env import DATA_ROOT
 
 
 def setup_run_env(cfg: DictConfig):

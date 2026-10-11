@@ -25,7 +25,7 @@ from torch_concepts.nn.modules.high.base.learner import BaseLearner
 from torch_concepts.nn.modules.high.base.model import BaseModel
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
-from torch_concepts.nn.modules.outputs import ModelOutput
+from torch_concepts.nn.modules.outputs import InferenceOutput
 
 
 class MockLearner(BaseLearner):
@@ -51,8 +51,8 @@ class FullMockLearner(BaseLearner):
     """
 
     # Borrowed rather than restated, so the split behaviour under test is the real one.
-    default_query = BaseModel.default_query
-    default_evidence = BaseModel.default_evidence
+    prepare_query = BaseModel.prepare_query
+    prepare_evidence = BaseModel.prepare_evidence
 
     def __init__(self, annotations, n_concepts=2, **kwargs):
         super().__init__(**kwargs)
@@ -82,12 +82,16 @@ class FullMockLearner(BaseLearner):
         if query:
             for i, name in enumerate(query.keys()):
                 params[name] = {'logits': logits[:, i:i+1]}
-        return ModelOutput(logits=logits, params=params)
+        return InferenceOutput(logits=logits, params=params)
 
-    def prepare_target(self, target, out=None):
-        if target is None:
-            return None
-        return AnnotatedTensor(target, self.concept_annotations.to_concept_space())
+    def prepare_target(self, batch):
+        return {**batch['inputs'], 'c': batch['concepts']['c']}
+
+
+def _concepts(batch_size, labels=('C1', 'C2')):
+    """Binary concept ground truth, annotated as the dataset's collate builds it."""
+    ann = Annotations(labels=labels, cardinalities=[1] * len(labels)).to_concept_space()
+    return AnnotatedTensor(torch.randint(0, 2, (batch_size, len(labels))).float(), ann, axis=1)
 
 
 class TestBaseLearnerInitialization(unittest.TestCase):
@@ -194,28 +198,25 @@ class TestBaseLearnerMetrics(unittest.TestCase):
         )
         learner = MockLearner(metrics=metrics)
 
-        # Create ModelOutput (2 samples, 2 concepts)
-        out = ModelOutput(
+        # Create InferenceOutput (2 samples, 2 concepts)
+        out = InferenceOutput(
             logits=AnnotatedTensor(torch.tensor([[0.8, 0.7], [0.2, 0.3]]), self.annotations),
-            target=AnnotatedTensor(
-                torch.tensor([[1.0, 1.0], [0.0, 0.0]]),
-                self.annotations.to_concept_space(),
-            ),
+        )
+        target = AnnotatedTensor(
+            torch.tensor([[1.0, 1.0], [0.0, 0.0]]),
+            self.annotations.to_concept_space(),
         )
 
         # Update metrics - should not raise error
-        learner.update_metrics(out, out.target, step='train')
+        learner.update_metrics(out, target, step='train')
 
     def test_update_metrics_with_none(self):
         """Test update_metrics when metrics is None."""
         learner = MockLearner(metrics=None)
         
         # Should not raise error even with None metrics
-        out = ModelOutput(
-            logits=torch.tensor([0.8, 0.2]),
-            target=torch.tensor([1, 0])
-        )
-        learner.update_metrics(out, out.target, step='train')
+        out = InferenceOutput(logits=torch.tensor([0.8, 0.2]))
+        learner.update_metrics(out, torch.tensor([1, 0]), step='train')
 
 
 class TestBaseLearnerUpdateAndLogMetrics(unittest.TestCase):
@@ -236,17 +237,17 @@ class TestBaseLearnerUpdateAndLogMetrics(unittest.TestCase):
         )
         learner = MockLearner(metrics=metrics)
 
-        # Create ModelOutput (2 samples, 2 concepts)
-        out = ModelOutput(
+        # Create InferenceOutput (2 samples, 2 concepts)
+        out = InferenceOutput(
             logits=AnnotatedTensor(torch.tensor([[0.8, 0.7], [0.2, 0.3]]), self.annotations),
-            target=AnnotatedTensor(
-                torch.tensor([[1.0, 1.0], [0.0, 0.0]]),
-                self.annotations.to_concept_space(),
-            ),
+        )
+        target = AnnotatedTensor(
+            torch.tensor([[1.0, 1.0], [0.0, 0.0]]),
+            self.annotations.to_concept_space(),
         )
 
         # Should not raise error
-        learner.update_and_log_metrics(out, out.target, step='train', batch_size=2)
+        learner.update_and_log_metrics(out, target, step='train', batch_size=2)
 
 
 class TestBaseLearnerBatchHandling(unittest.TestCase):
@@ -257,7 +258,7 @@ class TestBaseLearnerBatchHandling(unittest.TestCase):
         learner = MockLearner(n_concepts=2)
         batch = {
             'inputs': {'x': torch.randn(4, 8)},
-            'concepts': {'c': torch.randint(0, 2, (4, 2)).float()}
+            'concepts': {'c': _concepts(4)}
         }
         
         # Should not raise error
@@ -267,7 +268,7 @@ class TestBaseLearnerBatchHandling(unittest.TestCase):
         """Test _check_batch with missing 'inputs' key."""
         learner = MockLearner(n_concepts=2)
         batch = {
-            'concepts': {'c': torch.randint(0, 2, (4, 2)).float()}
+            'concepts': {'c': _concepts(4)}
         }
         
         with self.assertRaises(KeyError) as context:
@@ -285,6 +286,14 @@ class TestBaseLearnerBatchHandling(unittest.TestCase):
             learner._check_batch(batch)
         self.assertIn("concepts", str(context.exception))
 
+    def test_check_batch_rejects_unannotated_concepts(self):
+        learner = MockLearner(n_concepts=2)
+        batch = {'inputs': {'x': torch.randn(4, 8)},
+                 'concepts': {'c': torch.randint(0, 2, (4, 2)).float()}}
+        with self.assertRaises(TypeError) as context:
+            learner._check_batch(batch)
+        self.assertIn("AnnotatedTensor", str(context.exception))
+
     def test_check_batch_not_dict(self):
         """Test _check_batch with non-dict batch."""
         learner = MockLearner(n_concepts=2)
@@ -298,7 +307,7 @@ class TestBaseLearnerBatchHandling(unittest.TestCase):
         """Test unpack_batch returns (inputs, concepts, transforms)."""
         learner = MockLearner(n_concepts=2)
         x = torch.randn(4, 8)
-        c = torch.randint(0, 2, (4, 2)).float()
+        c = _concepts(4)
         batch = {
             'inputs': {'x': x},
             'concepts': {'c': c}
@@ -316,7 +325,7 @@ class TestBaseLearnerBatchHandling(unittest.TestCase):
         mock_scalers = {'c': 'some_scaler'}
         batch = {
             'inputs': {'x': torch.randn(4, 8)},
-            'concepts': {'c': torch.randint(0, 2, (4, 2)).float()},
+            'concepts': {'c': _concepts(4)},
             'scalers': mock_scalers
         }
 
@@ -404,12 +413,9 @@ class TestBaseLearnerUpdateMetricsError(unittest.TestCase):
     def test_update_metrics_invalid_type_is_noop(self):
         """When no split metrics are set, update_metrics is a no-op."""
         learner = MockLearner(n_concepts=2)
-        out = ModelOutput(
-            logits=torch.tensor([0.8, 0.2]),
-            target=torch.tensor([1, 0])
-        )
+        out = InferenceOutput(logits=torch.tensor([0.8, 0.2]))
         # Should not raise — train_metrics is None so nothing happens
-        learner.update_metrics(out, out.target, step='train')
+        learner.update_metrics(out, torch.tensor([1, 0]), step='train')
 
 
 # ======================================================================
@@ -460,7 +466,7 @@ class TestBaseLearnerSharedStep(unittest.TestCase):
         )
         self.batch = {
             'inputs': {'x': torch.randn(8, 3)},
-            'concepts': {'c': torch.randint(0, 2, (8, 2)).float()},
+            'concepts': {'c': _concepts(8)},
         }
 
     # -- helpers to capture Lightning self.log / self.log_dict calls ----
@@ -489,24 +495,21 @@ class TestBaseLearnerSharedStep(unittest.TestCase):
         self.assertEqual(loss.shape, ())
         self.assertIn('train_loss', learner._logged)
 
-    def test_shared_step_hands_the_output_to_prepare_target(self):
-        """`prepare_target` is called with the forward pass it is preparing for,
-        which is what lets a model supervise a variable defined against a
-        prediction (a residual fitted on ``Y - Y_C``)."""
-        learner = FullMockLearner(
-            self.annotations, n_concepts=2,
-            loss=self.loss_fn,
-        )
+    def test_the_loss_receives_what_prepare_target_builds(self):
+        """`prepare_target` sees the whole batch and decides the loss target, so
+        a model can reorganize it — here, adding an entry of its own."""
+        learner = FullMockLearner(self.annotations, n_concepts=2, loss=self.loss_fn)
         self._patch_logging(learner)
-        seen = []
         prepare_target = learner.prepare_target
-        learner.prepare_target = lambda target, out=None: (
-            seen.append(out), prepare_target(target, out))[1]
+        learner.prepare_target = lambda batch: {**prepare_target(batch), 'extra': 1}
+        seen = []
+        forward = learner.loss.forward
+        learner.loss.forward = lambda out, target, model=None: (
+            seen.append(target), forward(out, target, model))[1]
 
         learner.shared_step(self.batch, step='train')
-        self.assertTrue(seen, "prepare_target was never called")
-        for out in seen:
-            self.assertIsInstance(out, ModelOutput)
+        self.assertEqual(seen[0]['extra'], 1)
+        self.assertIn('x', seen[0])
 
     def test_shared_step_no_loss(self):
         """shared_step with loss=None returns None."""

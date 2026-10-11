@@ -221,6 +221,14 @@ class TestConceptDataModuleSetup:
         assert dm.testset is not None
         assert dm.test_len > 0
 
+    def test_setup_test_fits_scalers(self, toy_dataset):
+        """A fresh datamodule passed to `trainer.test` must ship the train-split
+        scalers too, or a model trained in scaled space is fed raw data."""
+        from torch_concepts.data.scalers.standard import StandardScaler
+        dm = ConceptDataModule(dataset=toy_dataset, scalers={'input': StandardScaler()})
+        dm.setup('test')
+        assert 'input' in dm.dataset.scalers
+
     def test_setup_none_stage(self, toy_dataset):
         """Test setup with None stage (prepares all splits)."""
         dm = ConceptDataModule(

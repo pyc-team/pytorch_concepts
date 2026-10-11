@@ -9,7 +9,7 @@ import ast
 
 from omegaconf import OmegaConf
 
-from env import CACHE
+from torch_concepts.env import CACHE
 
 
 def math_eval(node):

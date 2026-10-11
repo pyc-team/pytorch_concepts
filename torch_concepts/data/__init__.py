@@ -33,6 +33,7 @@ from .datasets.mnist_arithmetic import MNISTArithmeticDataset
 from .datasets.dsprites_regression import DSpritesRegressionDataset
 from .datasets.awa2 import AWA2Dataset
 from .datasets.cub import CUBDataset
+from .datasets.ham10000 import HAM10000Dataset
 
 # Re-export datamodules for convenient access
 from .datamodules.bnlearn import BnLearnDataModule
@@ -45,6 +46,7 @@ from .datamodules.mnist_arithmetic import MNISTArithmeticDataModule
 from .datamodules.dsprites_regression import DSpritesRegressionDataModule
 from .datamodules.awa2 import AWA2DataModule
 from .datamodules.cub import CUBDataModule
+from .datamodules.ham10000 import HAM10000DataModule
 
 __all__ = [
     # Submodules
@@ -73,6 +75,7 @@ __all__ = [
     "DSpritesRegressionDataset",
     "AWA2Dataset",
     "CUBDataset",
+    "HAM10000Dataset",
 
     # DataModules
     "BnLearnDataModule",
@@ -85,4 +88,5 @@ __all__ = [
     "DSpritesRegressionDataModule",
     "AWA2DataModule",
     "CUBDataModule",
+    "HAM10000DataModule",
 ]

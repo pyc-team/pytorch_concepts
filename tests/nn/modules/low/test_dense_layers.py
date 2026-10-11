@@ -355,6 +355,17 @@ class TestSelectorEmbeddingEncoder(unittest.TestCase):
         out = sel(x, sampling=False)
         self.assertEqual(out.shape, (4, 5, 32))
 
+    def test_selects_over_memory_slots(self):
+        """Soft selection depends on the input; hard selection returns one memory slot."""
+        sel = SelectorEmbeddingEncoder(in_features=4, out_features=3, n_embeddings=1, memory_size=5)
+        x = torch.randn(2, 4)
+        soft = sel(x, sampling=False)
+        self.assertFalse(torch.allclose(soft[0], soft[1]))
+        memory = sel.memory.weight.view(1, 5, 3)
+        hard = sel(x, sampling=True)
+        for b in range(2):
+            self.assertTrue(any(torch.allclose(hard[b, 0], memory[0, m]) for m in range(5)))
+
     def test_forward_hard_shape(self):
         """Test hard (Gumbel-softmax) selection output shape."""
         sel = SelectorEmbeddingEncoder(

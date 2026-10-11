@@ -28,6 +28,7 @@ Generators
    :template: generation_class.rst
    :nosignatures:
 
+   FixedConceptGenerator
    LLMConceptGenerator
    LiteLLMBackend
 

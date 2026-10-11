@@ -1,7 +1,18 @@
-name: project-template
+# Development environment for PyC: Python, PyTorch and the extras needed to run
+# the tests, the examples and Conceptarium.
+#
+#   conda env create -f environment.yml
+#   conda activate pyc
+#
+# PyTorch comes from PyPI: the CUDA build on Linux, the MPS build on macOS. For a
+# CPU-only or a specific CUDA build, reinstall torch afterwards as shown on
+# https://pytorch.org/get-started/locally/.
+name: pyc
+channels:
+  - conda-forge
+  - nodefaults
 dependencies:
-  - numpy
-  - scipy
-  - scikit-learn
-  - pandas
-  - pyro-ppl
+  - python=3.12
+  - pip
+  - pip:
+      - -e .[data,tests,conceptarium]

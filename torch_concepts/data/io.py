@@ -11,7 +11,7 @@ import urllib.request
 import urllib.error
 import zipfile
 import logging
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from tqdm import tqdm
 
@@ -107,6 +107,7 @@ class DownloadProgressBar(tqdm):
 def download_url(url: str,
                     folder: str,
                     filename: Optional[str] = None,
+                    headers: Optional[Mapping[str, str]] = None,
                     verbose: bool = True):
     r"""Downloads the content of an URL to a specific folder.
 
@@ -115,6 +116,7 @@ def download_url(url: str,
         folder (string): The folder.
         filename (string, optional): The filename. If :obj:`None`, inferred from
             url.
+        headers (mapping, optional): HTTP headers sent with the request.
         verbose (bool, optional): If :obj:`False`, will not show progress bars.
             (default: :obj:`True`)
     """
@@ -130,13 +132,21 @@ def download_url(url: str,
 
     os.makedirs(folder, exist_ok=True)
 
-    # From https://stackoverflow.com/a/53877507
-    with DownloadProgressBar(unit='B',
-                             unit_scale=True,
-                             miniters=1,
-                             desc=url.split('/')[-1],
-                             disable=not verbose) as t:
-        urllib.request.urlretrieve(url, filename=path, reporthook=t.update_to)
+    request = urllib.request.Request(url, headers=dict(headers or {}))
+    with urllib.request.urlopen(request) as response:
+        total = response.headers.get("Content-Length")
+        with DownloadProgressBar(
+            total=int(total) if total is not None else None,
+            unit='B',
+            unit_scale=True,
+            miniters=1,
+            desc=url.split('/')[-1],
+            disable=not verbose,
+        ) as progress:
+            with open(path, "wb") as file:
+                while chunk := response.read(1024 * 1024):
+                    file.write(chunk)
+                    progress.update(len(chunk))
     return path
 
 
@@ -155,32 +165,42 @@ def wget_available() -> bool:
     return _shutil.which("wget") is not None
 
 
-def download_url_wget(url: str, dest: str) -> None:
+def download_url_wget(
+    url: str,
+    dest: str,
+    headers: Optional[Mapping[str, str]] = None,
+) -> None:
     """Download *url* to *dest*.
 
     Uses ``wget --continue`` when available (handles large files and
     network interruptions much better than urllib).  Falls back to a
-    pure-Python streaming download with ``Range`` resume support.
+    pure-Python streaming download with ``Range`` resume support. ``headers``
+    are sent with either implementation when provided.
     """
     if wget_available():
         import subprocess
         print(f"\nDownloading {os.path.basename(dest)} via wget ...")
-        subprocess.run(
-            [
-                "wget",
-                "--continue",          # resume partial downloads
-                "--tries=10",          # retry up to 10 times on error
-                "--retry-connrefused",
-                "--waitretry=5",       # wait 5 s between retries
-                "--show-progress",
-                "-O", dest,
-                url,
-            ],
-            check=True,
-        )
+        command = [
+            "wget",
+            "--continue",          # resume partial downloads
+            "--tries=10",          # retry up to 10 times on error
+            "--retry-connrefused",
+            "--waitretry=5",       # wait 5 s between retries
+            "--show-progress",
+        ]
+        for name, value in (headers or {}).items():
+            if name.lower() == "user-agent":
+                command.extend(["--user-agent", value])
+            else:
+                command.extend(["--header", f"{name}: {value}"])
+        command.extend(["-O", dest, url])
+        subprocess.run(command, check=True)
     else:
         downloaded = os.path.getsize(dest) if os.path.exists(dest) else 0
-        req = urllib.request.Request(url, headers={"Range": f"bytes={downloaded}-"})
+        req = urllib.request.Request(
+            url,
+            headers={**(headers or {}), "Range": f"bytes={downloaded}-"},
+        )
         try:
             r = urllib.request.urlopen(req)
         except urllib.error.HTTPError as e:

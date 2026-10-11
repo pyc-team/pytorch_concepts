@@ -51,3 +51,18 @@ class LossWeightWarmup(pl.Callback):
         weight = self.start + fraction * (self.target - self.start)
         loss.weights[self.index] = weight
         pl_module.log(f"weight_{loss.term_names[self.index]}", weight)
+
+    def on_validation_epoch_start(self, trainer, pl_module) -> None:
+        # Evaluate with the configured weight, so `val_loss` stays comparable
+        # across epochs and a checkpoint or early stop monitoring it is not
+        # biased toward the down-weighted warm-up epochs.
+        if self.target is not None:
+            self._scheduled = pl_module.loss.weights[self.index]
+            pl_module.loss.weights[self.index] = self.target
+
+    def on_validation_epoch_end(self, trainer, pl_module) -> None:
+        if self.target is not None:
+            pl_module.loss.weights[self.index] = self._scheduled
+
+    on_test_epoch_start = on_validation_epoch_start
+    on_test_epoch_end = on_validation_epoch_end

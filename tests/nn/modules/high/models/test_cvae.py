@@ -19,6 +19,7 @@ machinery, but the concepts are *given* to the decoder rather than predicted fro
   generated sample equal to the decoder's output rather than to it plus noise.
 """
 import pytest
+from torch_concepts.tensor import AnnotatedTensor
 import torch
 import torch.nn as nn
 from torch.distributions import MultivariateNormal
@@ -76,8 +77,8 @@ def categorical_annotations():
 
 
 def binary_query(model, batch=5):
-    """A `default_query` over random binary concept values."""
-    return model.default_query(torch.randint(0, 2, (batch, 2)).float())
+    """A `prepare_query` over random binary concept values."""
+    return model.prepare_query({'concepts': {'c': torch.randint(0, 2, (batch, 2)).float()}})
 
 
 class TestConditionalVAE:
@@ -213,8 +214,8 @@ class TestConditionalPrior:
         ignored `c` would be the old fixed one wearing a network."""
         model = build_model(binary_annotations, plate=False)
         x = torch.rand(5, INPUT_SIZE)
-        a = model(query=model.default_query(torch.zeros(5, 2)), input=x)
-        b = model(query=model.default_query(torch.ones(5, 2)), input=x)
+        a = model(query=model.prepare_query({'concepts': {'c': torch.zeros(5, 2)}}), input=x)
+        b = model(query=model.prepare_query({'concepts': {'c': torch.ones(5, 2)}}), input=x)
         assert not torch.allclose(a.params["z"]["loc"], b.params["z"]["loc"])
         assert not torch.allclose(a.params["z"]["scale"], b.params["z"]["scale"])
 
@@ -313,8 +314,8 @@ class TestPriorSwitch:
             binary_annotations, plate=False, conditional_prior=conditional_prior
         )
         x = torch.rand(5, INPUT_SIZE)
-        a = model(query=model.default_query(torch.zeros(5, 2)), input=x)
-        b = model(query=model.default_query(torch.ones(5, 2)), input=x)
+        a = model(query=model.prepare_query({'concepts': {'c': torch.zeros(5, 2)}}), input=x)
+        b = model(query=model.prepare_query({'concepts': {'c': torch.ones(5, 2)}}), input=x)
         # Same image, different condition: q(z | x, c) must move regardless of prior.
         assert not torch.allclose(
             a.guide_params["loc"]["z"], b.guide_params["loc"]["z"]
@@ -388,8 +389,8 @@ class TestGuideSharesOneBackbonePass:
     def test_both_parameters_still_depend_on_the_input(self, binary_annotations):
         model = self._model(binary_annotations, CountingBackbone(INPUT_SIZE, 32))
         c = torch.randint(0, 2, (6, 2)).float()
-        a = model(query=model.default_query(c), input=torch.rand(6, INPUT_SIZE))
-        b = model(query=model.default_query(c), input=torch.rand(6, INPUT_SIZE))
+        a = model(query=model.prepare_query({'concepts': {'c': c}}), input=torch.rand(6, INPUT_SIZE))
+        b = model(query=model.prepare_query({'concepts': {'c': c}}), input=torch.rand(6, INPUT_SIZE))
         # An amortised posterior: a different image gives a different q(z | x, c).
         assert not torch.allclose(a.guide_params["loc"]["z"], b.guide_params["loc"]["z"])
         assert not torch.allclose(
@@ -430,7 +431,7 @@ class TestDeltaObservation:
         model = build_model(binary_annotations, plate=False)
         x = torch.rand(5, INPUT_SIZE)
         out = model(query=binary_query(model), input=x)
-        loss = MSEReconstructionLoss(variable="input")(out)
+        loss = MSEReconstructionLoss(variable="input")(out, {"x": x})
         expected = (out.value["input"] - x).pow(2).sum(-1).mean()
         assert torch.isfinite(loss)
         assert torch.allclose(loss, expected)
@@ -439,25 +440,15 @@ class TestDeltaObservation:
         model = build_model(binary_annotations, plate=False)
         x = torch.rand(5, INPUT_SIZE)
         out = model(query=binary_query(model), input=x)
-        mean = MSEReconstructionLoss(variable="input")(out)
-        total = MSEReconstructionLoss(variable="input", reduction="sum")(out)
+        mean = MSEReconstructionLoss(variable="input")(out, {"x": x})
+        total = MSEReconstructionLoss(variable="input", reduction="sum")(out, {"x": x})
         assert torch.allclose(total, mean * 5)
 
 
 class TestTrainingAndGeneration:
-    def test_default_extra_publishes_the_evidence(self, binary_annotations):
-        """`BaseModel.forward` fills `out.extra` from this hook, and it is the only
-        way `MSEReconstructionLoss` ever sees the observed image."""
-        model = build_model(binary_annotations, plate=False)
-        x = torch.rand(5, INPUT_SIZE)
-        out = model(query=binary_query(model), input=x)
-        assert out.extra is not None
-        assert torch.equal(out.extra["evidence"]["input"], x)
-
     def test_a_full_elbo_step_reaches_every_learnable_part(self, binary_annotations):
         """recon + kl + concept: the reconstruction trains the decoder and the shared
-        embedding, the concept term trains the marginal p(c). A missing `default_extra`
-        fails this at the reconstruction term."""
+        embedding, the concept term trains the marginal p(c)."""
         model = build_model(binary_annotations, plate=False)
         loss_fn = CompositeLoss(
             terms=[
@@ -469,8 +460,10 @@ class TestTrainingAndGeneration:
             weights=[1.0, 1.0, 1.0],
         )
         c = torch.randint(0, 2, (5, 2)).float()
-        out = model(query=model.default_query(c), input=torch.rand(5, INPUT_SIZE))
-        terms = loss_fn.breakdown(out, model.prepare_target(c))
+        x = torch.rand(5, INPUT_SIZE)
+        out = model(query=model.prepare_query({'concepts': {'c': c}}), input=x)
+        c_ann = AnnotatedTensor(c, binary_annotations.to_concept_space(), axis=1)
+        terms = loss_fn.breakdown(out, model.prepare_target({'inputs': {'x': x}, 'concepts': {'c': c_ann}}))
         assert all(torch.isfinite(t) for t in terms.values())
 
         sum(terms.values()).backward()
@@ -491,10 +484,11 @@ class TestTrainingAndGeneration:
         model.log = lambda *a, **kw: None          # no Trainer attached
         model.log_dict = lambda *a, **kw: None
         c = torch.randint(0, 2, (5, 2)).float()
-        batch = {'inputs': {'x': torch.rand(5, INPUT_SIZE)}, 'concepts': {'c': c}}
+        batch = {'inputs': {'x': torch.rand(5, INPUT_SIZE)},
+                 'concepts': {'c': AnnotatedTensor(c, binary_annotations.to_concept_space(), axis=1)}}
 
         for step in ('train', 'val', 'test'):
-            assert torch.equal(model.default_query(c, step)["a"], c[:, :1])
+            assert torch.equal(model.prepare_query({'concepts': {'c': c}}, step)["a"], c[:, :1])
             assert torch.isfinite(model.shared_step(batch, step))
 
     def test_unconditional_generation_through_ancestral_sampling(self, binary_annotations):
@@ -522,7 +516,7 @@ class TestContinuousConcepts:
         )
         model = build_model(annotations, plate=False)
         c = torch.rand(5, 2)
-        out = model(query=model.default_query(c), input=torch.rand(5, INPUT_SIZE))
+        out = model(query=model.prepare_query({'concepts': {'c': c}}), input=torch.rand(5, INPUT_SIZE))
         assert sorted(out.params["h"]) == ["loc", "scale"]
         assert sorted(out.params["a"]) == ["logits"]
         assert bool((out.scale["h"] > 0).all())

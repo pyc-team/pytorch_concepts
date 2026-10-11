@@ -7,13 +7,19 @@ from ...base.intervention import ConceptInterventionStrategy
 
 class DistributionIntervention(ConceptInterventionStrategy):
     """
-    Intervention that replaces predicted concepts with ground truth values.
-
-    Implements do(C=c_true) operations by mixing predicted and ground truth
-    concept values based on a binary mask.
+    Intervention that samples the intervened outputs from a distribution.
 
     Args:
-        ground_truth: Ground truth concept values of shape (batch_size, n_concepts).
+        dist: One distribution shared by all outputs, or a list with one
+            distribution per output (length ``F``).
+
+    Example:
+        >>> import torch
+        >>> from torch_concepts.nn import DistributionIntervention
+        >>>
+        >>> strategy = DistributionIntervention(torch.distributions.Normal(0.0, 1.0))
+        >>> strategy(torch.randn(3, 2)).shape
+        torch.Size([3, 2])
     """
 
     def __init__(self, dist: Union[torch.distributions.Distribution, List[torch.distributions.Distribution]]):

@@ -3,6 +3,8 @@ Example: Using CausallyReliableConceptBottleneckModel
 """
 
 import os
+from functools import partial
+from unittest.mock import patch
 
 from pathlib import Path
 from joblib import parallel_backend
@@ -61,7 +63,9 @@ def main():
     n_samples = 2000
     batch_size = 64
     # BIFReader requests all cores; load in-process to avoid worker crashes.
-    datamodule = BnLearnDataModule(seed=42,
+    # Read CUDA-created caches on CPU; restore torch.load after construction.
+    with patch("torch.load", partial(torch.load, map_location="cpu")):
+        datamodule = BnLearnDataModule(seed=42,
                                     name='asia',
                                     root='data/asia_causally_reliable',
                                     n_gen=n_samples,
@@ -91,7 +95,6 @@ def main():
             refine_llm(
                 llm_backend=backend,
                 domain="medical diagnosis",
-                concept_descriptions=ASIA_LABEL_DESCRIPTIONS,
                 repeats=1,
             ),
             dfs_remove_cycles,

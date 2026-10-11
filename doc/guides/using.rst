@@ -27,7 +27,7 @@ interpretable and causally transparent deep learning models with PyTorch Concept
 
 
 Three Levels of Control and Abstraction
-----------------
+---------------------------------------
 
 |pyc_logo| PyC exposes **three API levels**. They share the same primitives but offer
 increasing amounts of abstraction, and they build on top of one another.
@@ -81,6 +81,17 @@ increasing amounts of abstraction, and they build on top of one another.
     :gutter: 2
     :padding: 0
 
+    .. grid-item-card::  :octicon:`database;1em;sd-text-primary` Datasets
+        :link: using_data
+        :link-type: doc
+        :shadow: lg
+        :class-card: sd-border-primary
+
+        Load a dataset, see what a batch contains, split it, precompute embeddings, and
+        find where data is stored.
+
+        **Best for:** everyone, before training a first model.
+
     .. grid-item-card::  :octicon:`flame;1em;sd-text-primary` Losses
         :link: using_loss
         :link-type: doc
@@ -122,6 +133,7 @@ increasing amounts of abstraction, and they build on top of one another.
    using_low_level
    using_mid_level
    using_high_level
+   using_data
    using_loss
    using_generation
    using_conceptarium
