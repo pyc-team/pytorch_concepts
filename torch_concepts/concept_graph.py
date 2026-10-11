@@ -747,7 +747,10 @@ class ConceptGraph:
         Returns:
             True if graph is a DAG, False otherwise
         """
-        adjacency = self.data.detach().cpu().numpy()
+        adjacency = self.data.detach().cpu()
+        if adjacency.dtype == torch.bfloat16:
+            adjacency = adjacency.float()
+        adjacency = adjacency.numpy()
         graph = nx.from_numpy_array(adjacency, create_using=nx.DiGraph)
         return nx.is_directed_acyclic_graph(graph)
 
@@ -997,10 +1000,10 @@ def get_predecessors(
         if isinstance(node, int) and node_names:
             node = node_names[node]
     else:
-        if isinstance(adj_matrix, ConceptGraph):
+        if isinstance(adj_matrix, ConceptGraph) and node_names is None:
             node_names = adj_matrix.node_names
         G = to_networkx_graph(adj_matrix, node_names=node_names)
-        if isinstance(node, int):
+        if isinstance(node, int) and node_names is not None:
             node = node_names[node]
 
     return list(G.predecessors(node))
@@ -1039,10 +1042,10 @@ def get_successors(
         if isinstance(node, int) and node_names:
             node = node_names[node]
     else:
-        if isinstance(adj_matrix, ConceptGraph):
+        if isinstance(adj_matrix, ConceptGraph) and node_names is None:
             node_names = adj_matrix.node_names
         G = to_networkx_graph(adj_matrix, node_names=node_names)
-        if isinstance(node, int):
+        if isinstance(node, int) and node_names is not None:
             node = node_names[node]
 
     return list(G.successors(node))
