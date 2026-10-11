@@ -93,6 +93,7 @@ class ConceptDataModule(LightningDataModule):
         Seed controlling the ``max_samples`` subsampling and the train/val/test
         **split**, passed to the splitter. If None, both are non-deterministic.
         Default is None.
+
     Attributes
     ----------
     dataset : ConceptDataset
@@ -159,7 +160,7 @@ class ConceptDataModule(LightningDataModule):
         splitter: Optional[object] = None,
         workers: int = 0,
         pin_memory: bool = False,
-        seed: Optional[int] = None,
+        seed: Optional[int] = None
     ):
         super(ConceptDataModule, self).__init__()
         # Subsample the dataset down to `max_samples` rows (all downstream

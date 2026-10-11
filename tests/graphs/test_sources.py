@@ -206,7 +206,10 @@ def test_causallearn_requires_values_and_rejects_unknown_methods():
 def test_causallearn_real_adapter_if_installed(method):
     pytest.importorskip("causallearn")
     values = torch.randint(0, 2, (100, 3), generator=torch.Generator().manual_seed(4)).float()
-    graph = GraphGeneratorStatic(method, require_dag=False)(values, ["b", "a", "target"])
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        graph = GraphGeneratorStatic(method, require_dag=False)(values, ["b", "a", "target"])
+    assert all(w.category is FutureWarning and "length-1 list-like" in str(w.message) for w in caught)
     assert graph.node_names == ["b", "a", "target"]
     assert graph.edge_encoding == "endpoints"
     assert graph.data.shape == (3, 3) and torch.isfinite(graph.data).all()
@@ -233,3 +236,20 @@ def test_default_llm_backend_receives_options_without_network(monkeypatch):
     assert options["model"] == "test/model" and options["api_key"] == "private"
     assert options["temperature"] == .2 and options["max_tokens"] == 50
     assert options["retry_on_rate_limit"] is True
+
+
+@pytest.mark.parametrize("cardinality", [2, 3, 4])
+def test_pc_chisq_handles_discrete_categories_without_warnings(cardinality):
+    pytest.importorskip("causallearn")
+    rng = np.random.default_rng(42)
+    data = rng.integers(0, cardinality, size=(1000, 3))
+    data[:, 1] = data[:, 0]
+    # Nominal category labels must not change the graph.
+    labels = np.array([17, -3, 80, 2])[:cardinality]
+    generator = GraphGeneratorStatic("pc", indep_test="chisq", require_dag=False)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        graph = generator(torch.tensor(data), ["a", "b", "c"])
+        relabeled = generator(torch.tensor(labels[data]), ["a", "b", "c"])
+    assert graph.has_edge("a", "b") or graph.has_edge("b", "a")
+    torch.testing.assert_close(graph.data, relabeled.data)

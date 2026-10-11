@@ -233,7 +233,8 @@ def test_partially_directed_output_is_controlled_by_require_dag(dataset, monkeyp
     assert raw.data[0, 1] != 0 and raw.data[1, 0] != 0
     with pytest.raises(ValueError, match="after refinement"):
         _materialize_graph(GraphGeneratorStatic(method, require_dag=True), dataset)
-    final = _materialize_graph(GraphGeneratorStatic(method, require_dag=True, refinement=[dfs_remove_cycles]), dataset)
+    with pytest.warns(UserWarning, match="partially directed.*without causal orientation"):
+        final = _materialize_graph(GraphGeneratorStatic(method, require_dag=True, refinement=[dfs_remove_cycles]), dataset)
     assert final.is_dag()
 
 

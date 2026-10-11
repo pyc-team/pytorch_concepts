@@ -347,7 +347,11 @@ class ConceptGraph:
         rankdir: str = "TB",
         title: Optional[str] = None,
     ):
-        """Save the graph as a Graphviz-ordered PNG image."""
+        """Save the graph as a Graphviz-ordered PNG image.
+
+        Weighted graphs display only weights greater than 0.01, matching
+        CausalCGM's plot binarization. The stored graph is unchanged.
+        """
         if rankdir not in {"TB", "BT", "LR", "RL"}:
             raise ValueError("rankdir must be one of: TB, BT, LR, RL.")
 
@@ -374,6 +378,8 @@ class ConceptGraph:
             pydot_graph.add_node(pydot.Node(f"n{i}", label=name))
 
         adjacency = self.data.detach().cpu()
+        if self.edge_encoding == "weights":
+            adjacency = adjacency > 0.01
 
         def arrow(value: float) -> str:
             if value == 2:

@@ -80,7 +80,7 @@ def _compute_causallearn(
     data = concept_values.detach().cpu().numpy()
 
     if self.name in _CONSTRAINT_BASED:
-        result = algorithm(data, self.alpha, self.indep_test)
+        result = algorithm(data, alpha=self.alpha, indep_test=self.indep_test)
         cl_graph = result[0] if isinstance(result, tuple) else result.G
     else:
         cl_graph = algorithm(data, score_func=self.score_func)["G"]

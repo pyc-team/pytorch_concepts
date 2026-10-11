@@ -138,7 +138,7 @@ def test_encoding_and_gradients_survive_conversion_and_save(tmp_path, encoding):
     assert loaded.data.dtype == torch.float64
 
 
-@pytest.mark.parametrize("encoding,expected_edges", [("weights", 3), ("endpoints", 2)])
+@pytest.mark.parametrize("encoding,expected_edges", [("weights", 1), ("endpoints", 2)])
 def test_plot_distinguishes_weights_endpoints_and_self_loops(tmp_path, monkeypatch, encoding, expected_edges):
     import io
     import pydot
@@ -157,6 +157,41 @@ def test_plot_distinguishes_weights_endpoints_and_self_loops(tmp_path, monkeypat
     assert len(rendered[0].get_edges()) == expected_edges
     assert any(edge.get_source() == edge.get_destination() for edge in rendered[0].get_edges())
     assert [node.get_label() for node in rendered[0].get_nodes()] == graph.node_names
+
+
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_plot_binarizes_weights_like_causal_cgm_without_changing_graph(tmp_path, monkeypatch, dtype):
+    import io
+    import pydot
+    from PIL import Image
+
+    image = io.BytesIO()
+    Image.new("RGB", (1, 1)).save(image, format="PNG")
+    rendered = []
+
+    def render(dot, **kwargs):
+        rendered.append(dot)
+        return image.getvalue()
+
+    monkeypatch.setattr(pydot.Dot, "create_png", render)
+    adjacency = torch.tensor([
+        [.005, .009, .01],
+        [.011, .02, -.8],
+        [.8, 0., .01],
+    ], dtype=dtype, requires_grad=True)
+    original = adjacency.detach().clone()
+    graph = ConceptGraph(adjacency, ["a", "b", "c"], edge_encoding="weights")
+    result = graph.plot(tmp_path / "weighted")
+
+    assert result.exists() and result.suffix == ".png"
+    assert {(edge.get_source(), edge.get_destination())
+            for edge in rendered[0].get_edges()} == {
+        ("n1", "n0"), ("n1", "n1"), ("n2", "n0"),
+    }
+    assert [node.get_label() for node in rendered[0].get_nodes()] == graph.node_names
+    torch.testing.assert_close(graph.data, original)
+    graph.data.sum().backward()
+    torch.testing.assert_close(adjacency.grad, torch.ones_like(adjacency))
 
 
 @pytest.mark.parametrize("requires_grad", [False, True])

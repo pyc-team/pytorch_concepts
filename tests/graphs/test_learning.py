@@ -8,7 +8,6 @@ from torch_concepts.graphs import GraphGeneratorLearnable
 from torch_concepts.graphs import refine_llm
 from ._helpers import Backend
 from ._helpers import _materialize_graph
-from torch_concepts import Annotations
 from torch_concepts.graphs import GraphGenerator
 from ._helpers import _learnable
 from ._helpers import _seed_weights
@@ -146,17 +145,28 @@ def test_learnable_refinement_and_validation_only_run_in_eval():
 
 
 def test_learnable_generator_trains_as_model_submodule_and_exports(datamodule, tmp_path):
-    import runpy
-    from pathlib import Path
+    class Model(nn.Module):
+        def __init__(self, generator):
+            super().__init__()
+            self.concept_predictor = nn.Linear(2, 2)
+            self.task_predictor = nn.Linear(2, 1)
+            self.graph_generator = generator
 
-    example = Path(__file__).resolve().parents[2] / "examples/utilization/2_model/13_learnable_graph.py"
-    Model = runpy.run_path(str(example))["GraphConceptBottleneck"]
+        def forward(self, inputs):
+            concepts = self.concept_predictor(inputs)
+            nodes = torch.cat((concepts, self.task_predictor(concepts)), dim=1)
+            graph = self.graph_generator(nodes, ["a", "b", "target"])
+            concepts = concepts + concepts @ graph.data[:2, :2]
+            task = self.task_predictor(concepts) + concepts @ graph.data[:2, 2:]
+            return concepts, task, graph
+
+    torch.manual_seed(42)
     generator = _learnable(
         "dagma_cgm", concept_names=["a", "b", "target"], n_tasks=1, threshold=0,
         refinement=[remove_weakest_cycles],
+        initialization=_seed_weights(torch.tensor([[0., .4, .6], [.2, 0., .3], [0., 0., 0.]])),
     )
-    model = Model(2, Annotations(labels=["a", "b", "target"], cardinalities=[1, 1, 1]),
-                  ["target"], generator)
+    model = Model(generator)
     assert "graph_generator.fc1.weight" in model.state_dict()
     before = generator.fc1.weight.detach().clone()
     optimizer = torch.optim.SGD(model.parameters(), lr=.1)
