@@ -70,6 +70,7 @@ class ConceptGraph:
     Args:
         data (Tensor): Dense adjacency matrix of shape (n_nodes, n_nodes)
         node_names (List[str], optional): Node names. If None, generates default names.
+        edge_encoding (str): "weights" (default) or PC/GES "endpoints".
 
     Example:
         >>> import torch
@@ -130,8 +131,15 @@ class ConceptGraph:
         ... )
     """
 
-    def __init__(self, data: Tensor, node_names: Optional[List[str]] = None):
+    def __init__(self, data: Tensor, node_names: Optional[List[str]] = None, *, edge_encoding: str = "weights"):
         """Create new ConceptGraph instance from dense adjacency matrix."""
+        if not isinstance(data, Tensor):
+            raise ValueError("Adjacency must be a Tensor.")
+        if edge_encoding not in {"weights", "endpoints"}:
+            raise ValueError('edge_encoding must be "weights" or "endpoints".')
+        if isinstance(node_names, (str, bytes)):
+            raise ValueError("Node names must be a sequence of unique strings.")
+        self.edge_encoding = edge_encoding
         # Validate shape
         if data.dim() != 2:
             raise ValueError(f"Adjacency matrix must be 2D, got {data.dim()}D")
@@ -159,10 +167,17 @@ class ConceptGraph:
 
     def clone(self) -> "ConceptGraph":
         """Return an independent graph, preserving gradients when present."""
-        return ConceptGraph(self.data.clone(), node_names=list(self.node_names))
+        return ConceptGraph(self.data.clone(), node_names=list(self.node_names), edge_encoding=self.edge_encoding)
+
+    def to(self, device=None, dtype=None) -> "ConceptGraph":
+        """Return a graph on the requested device/dtype, preserving gradients."""
+        return ConceptGraph(
+            self.data.to(device=device, dtype=dtype).clone(),
+            node_names=list(self.node_names), edge_encoding=self.edge_encoding,
+        )
 
     def save(self, path: Union[str, Path]) -> None:
-        """Save CPU adjacency and ordered node names, overwriting the destination.
+        """Save CPU adjacency, ordered names and encoding, overwriting the destination.
 
         Parent directories are created as needed. Load with ConceptGraph.load().
         Only the graph is stored, not generator or training state.
@@ -170,7 +185,7 @@ class ConceptGraph:
         path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(
-            {"adjacency": self.data.detach().cpu(), "node_names": list(self.node_names)},
+            {"adjacency": self.data.detach().cpu(), "node_names": list(self.node_names), "edge_encoding": self.edge_encoding},
             path,
         )
 
@@ -196,7 +211,7 @@ class ConceptGraph:
             isinstance(name, str) for name in payload["node_names"]
         ):
             raise ValueError("Graph file node_names must be a list of strings.")
-        return cls(payload["adjacency"], node_names=payload["node_names"])
+        return cls(payload["adjacency"], node_names=payload["node_names"], edge_encoding=payload.get("edge_encoding", "weights"))
 
     @property
     def edge_index(self) -> Tensor:
@@ -207,6 +222,7 @@ class ConceptGraph:
 
     @edge_index.setter
     def edge_index(self, value: Tensor):
+        self._validate_sparse(value, self.edge_weight, self.n_nodes)
         if self._dense_data is not None:
             self._edge_index, self._edge_weight = _dense_to_sparse_pytorch(self._dense_data)
         self._dense_data = None
@@ -222,14 +238,29 @@ class ConceptGraph:
 
     @edge_weight.setter
     def edge_weight(self, value: Tensor):
+        self._validate_sparse(self.edge_index, value, self.n_nodes)
         if self._dense_data is not None:
             self._edge_index, self._edge_weight = _dense_to_sparse_pytorch(self._dense_data)
         self._dense_data = None
         self._edge_weight = value
         self._nx_graph_cache = None  # invalidate cache
 
+    @staticmethod
+    def _validate_sparse(edge_index, edge_weight, n_nodes):
+        """Check sparse dimensions, devices and unambiguous node indices."""
+        if not isinstance(edge_index, Tensor) or edge_index.ndim != 2 or edge_index.shape[0] != 2 or edge_index.dtype != torch.long:
+            raise ValueError("edge_index must be a long Tensor of shape (2, edges).")
+        if not isinstance(edge_weight, Tensor) or edge_weight.ndim != 1 or edge_weight.numel() != edge_index.shape[1]:
+            raise ValueError("edge_weight must contain one weight per edge.")
+        if edge_index.device != edge_weight.device:
+            raise ValueError("Sparse indices and weights must use the same device.")
+        if bool(((edge_index < 0) | (edge_index >= n_nodes)).any()):
+            raise ValueError("Sparse edge indices must identify existing nodes.")
+        if torch.unique(edge_index, dim=1).shape[1] != edge_index.shape[1]:
+            raise ValueError("Sparse edges must not contain duplicate pairs.")
+
     @classmethod
-    def from_sparse(cls, edge_index: Tensor, edge_weight: Tensor, n_nodes: int, node_names: Optional[List[str]] = None):
+    def from_sparse(cls, edge_index: Tensor, edge_weight: Tensor, n_nodes: int, node_names: Optional[List[str]] = None, *, edge_encoding: str = "weights"):
         """
         Create ConceptGraph directly from sparse format (more efficient).
         
@@ -249,6 +280,13 @@ class ConceptGraph:
             >>> edge_weight = torch.tensor([1.0, 1.0, 1.0])
             >>> graph = ConceptGraph.from_sparse(edge_index, edge_weight, n_nodes=3)
         """
+        if not isinstance(n_nodes, int) or isinstance(n_nodes, bool) or n_nodes < 0:
+            raise ValueError("n_nodes must be a non-negative integer.")
+        cls._validate_sparse(edge_index, edge_weight, n_nodes)
+        if edge_encoding not in {"weights", "endpoints"}:
+            raise ValueError('edge_encoding must be "weights" or "endpoints".')
+        if isinstance(node_names, (str, bytes)):
+            raise ValueError("Node names must be a sequence of unique strings.")
         # Create instance without going through __init__
         instance = cls.__new__(cls)
         instance._n_nodes = n_nodes
@@ -263,8 +301,9 @@ class ConceptGraph:
         instance._node_name_to_index = {name: idx for idx, name in enumerate(instance.node_names)}
 
         instance._dense_data = None
-        instance.edge_index = edge_index
-        instance.edge_weight = edge_weight
+        instance._edge_index = edge_index
+        instance._edge_weight = edge_weight
+        instance.edge_encoding = edge_encoding
 
         # Cache networkx graph for faster repeated access
         instance._nx_graph_cache = None
@@ -287,6 +326,7 @@ class ConceptGraph:
         Returns:
             Dense adjacency matrix of shape (n_nodes, n_nodes)
         """
+        self._check_node_names()
         if self._dense_data is not None:
             return self._dense_data
         # Reconstruct dense matrix from sparse format
@@ -295,7 +335,9 @@ class ConceptGraph:
         return adj
 
     def is_fully_directed(self) -> bool:
-        """Return whether no edge pair has two non-zero endpoints."""
+        """Return whether endpoint encoding has no unresolved edge pairs."""
+        if self.edge_encoding == "weights":
+            return True
         nonzero = self.data != 0
         return not bool((nonzero & nonzero.T).any())
 
@@ -328,8 +370,8 @@ class ConceptGraph:
             label=title or "",
             labelloc="t",
         )
-        for name in self.node_names:
-            pydot_graph.add_node(pydot.Node(name))
+        for i, name in enumerate(self.node_names):
+            pydot_graph.add_node(pydot.Node(f"n{i}", label=name))
 
         adjacency = self.data.detach().cpu()
 
@@ -339,8 +381,16 @@ class ConceptGraph:
             return "normal" if value > 0 else "none"
 
         for i, source in enumerate(self.node_names):
+            source = f"n{i}"
+            if adjacency[i, i] != 0:
+                pydot_graph.add_edge(pydot.Edge(source, source))
+            if self.edge_encoding == "weights":
+                for j in range(self.n_nodes):
+                    if i != j and adjacency[i, j] != 0:
+                        pydot_graph.add_edge(pydot.Edge(source, f"n{j}"))
+                continue
             for j in range(i + 1, len(self.node_names)):
-                target = self.node_names[j]
+                target = f"n{j}"
                 forward = float(adjacency[i, j])
                 backward = float(adjacency[j, i])
                 if forward == 0 and backward == 0:
@@ -377,8 +427,14 @@ class ConceptGraph:
         plt.imsave(output_path, image)
         return output_path
 
+    def _check_node_names(self):
+        """Reject changes that would invalidate the original node mapping."""
+        if self.node_names != list(self._node_name_to_index):
+            raise ValueError("Node names and order cannot change; create a new ConceptGraph.")
+
     def _node_to_index(self, node: Union[str, int]) -> int:
         """Convert node name or index to index."""
+        self._check_node_names()
         if isinstance(node, int):
             if node < 0 or node >= self.n_nodes:
                 raise IndexError(f"Node index {node} out of range [0, {self.n_nodes})")
@@ -472,6 +528,7 @@ class ConceptGraph:
         Returns:
             nx.DiGraph: Cached NetworkX directed graph
         """
+        self._check_node_names()
         if self._nx_graph_cache is None:
             self._nx_graph_cache = self.to_networkx()
         return self._nx_graph_cache
@@ -486,6 +543,7 @@ class ConceptGraph:
         Returns:
             nx.DiGraph: NetworkX directed graph
         """
+        self._check_node_names()
         # If threshold is 0.0 and we have a cache, return it
         if threshold == 0.0 and self._nx_graph_cache is not None:
             return self._nx_graph_cache

@@ -2,8 +2,8 @@
 
 Each public refinement returns a new graph with the same node names and
 order. LLM orientation handles reciprocal edges only; cycle removal acts
-on all nonzero edges. Generators run refinements before validation on every
-call. Cycle removal preserves gradients for retained weights; selecting which
+on all nonzero edges. Static generators refine every call; learnable generators
+refine in eval. Cycle removal preserves gradients for retained weights; selecting which
 edges to remove is discrete.
 """
 
@@ -110,7 +110,7 @@ def refine_llm(
                     adjacency[j, i] = 1.0
                 elif response == "none":
                     adjacency[i, j] = adjacency[j, i] = 0
-        return ConceptGraph(adjacency, node_names=concept_names)
+        return ConceptGraph(adjacency, node_names=concept_names, edge_encoding=graph.edge_encoding)
 
     refinement.__name__ = "refine_llm"
     refinement.__qualname__ = "refine_llm"
@@ -127,7 +127,7 @@ def remove_weakest_cycles(graph: ConceptGraph) -> ConceptGraph:
     """Remove minimum-weight cyclic edges, following CausalCGM's strategy.
 
     Try a topological sort; if a cycle remains, remove the minimum-weight edge
-    belonging to a simple cycle. Include self-loops and break ties
+    inside a cyclic strongly connected component. Include self-loops and break ties
     in row/column order. At most the initial number of edges can be removed.
     Preserve input, node order, device, dtype and gradients of surviving weights.
     """
@@ -136,26 +136,31 @@ def remove_weakest_cycles(graph: ConceptGraph) -> ConceptGraph:
     adjacency = graph.data.clone()
     if not torch.isfinite(adjacency).all():
         raise ValueError("Cycle removal requires finite adjacency values.")
-    _warn_undirected_edges(
-        adjacency, "remove_weakest_cycles",
-        "directions are removed by minimum weight, with ties resolved in "
-        "row/column order, without causal orientation",
-    )
+    if graph.edge_encoding == "endpoints":
+        _warn_undirected_edges(
+            adjacency, "remove_weakest_cycles",
+            "directions are removed by minimum weight, with ties resolved in "
+            "row/column order, without causal orientation",
+        )
     for _ in range(int(torch.count_nonzero(adjacency)) + 1):
-        network = nx.from_numpy_array(adjacency.detach().cpu().numpy(), create_using=nx.DiGraph)
+        scm_tmp = adjacency.detach().cpu().double().numpy().copy()
+        network = nx.from_numpy_array(scm_tmp, create_using=nx.DiGraph)
         try:
             list(nx.topological_sort(network))
-            return ConceptGraph(adjacency, node_names=list(graph.node_names))
+            return ConceptGraph(adjacency, node_names=graph.node_names, edge_encoding=graph.edge_encoding)
         except nx.NetworkXUnfeasible:
-            cycles_edges = set()
-            for cycle in nx.simple_cycles(network):
-                cycles_edges.update(zip(cycle, cycle[1:] + cycle[:1]))
+            cycle_edges = set(nx.selfloop_edges(network))
+            for scc in nx.strongly_connected_components(network):
+                if len(scc) > 1:
+                    for node in scc:
+                        for neighbor in network.successors(node):
+                            if neighbor in scc:
+                                cycle_edges.add((node, neighbor))
 
-            scm_tmp = adjacency.detach().cpu().numpy().astype(float, copy=True)
             scm_tmp[scm_tmp == 0] = float("inf")
             for i in range(scm_tmp.shape[0]):
                 for j in range(scm_tmp.shape[1]):
-                    if (i, j) not in cycles_edges:
+                    if (i, j) not in cycle_edges:
                         scm_tmp[i, j] = float("inf")
 
             if not np.isfinite(scm_tmp).any():
@@ -183,8 +188,8 @@ def dfs_remove_cycles(
     Returns
     -------
     ConceptGraph
-        Detached DAG copy retaining node names/order, device, dtype and surviving
-        edge weights. Self-loops are removed as back-edges.
+        Independent DAG copy retaining names, device, dtype and gradients of
+        surviving weights. Self-loops are removed as back-edges.
 
     Notes
     -----
@@ -201,11 +206,12 @@ def dfs_remove_cycles(
     are treated as opposite directed edges. Apply refine_llm first to orient them.
     """
     adjacency = graph.data.clone()
-    _warn_undirected_edges(
-        adjacency, "dfs_remove_cycles",
-        "back-edge directions are removed according to DFS traversal order, "
-        "without causal orientation",
-    )
+    if graph.edge_encoding == "endpoints":
+        _warn_undirected_edges(
+            adjacency, "dfs_remove_cycles",
+            "back-edge directions are removed according to DFS traversal order, "
+            "without causal orientation",
+        )
     if start_node is None:
         start_node = len(adjacency) - 1
     else:
@@ -227,4 +233,4 @@ def dfs_remove_cycles(
                     stack = [False] * len(adjacency)
                     if _dfs(node, adjacency, visited, stack, True):
                         break
-    return ConceptGraph(adjacency, node_names=list(graph.node_names))
+    return ConceptGraph(adjacency, node_names=graph.node_names, edge_encoding=graph.edge_encoding)

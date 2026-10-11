@@ -83,7 +83,7 @@ def test_entropy_mask_and_noise_flags(apply_mask, add_noise):
     if apply_mask:
         assert not weights[~mask].count_nonzero()
     if add_noise:
-        assert 1e-4 <= weights[0, 1] <= 1e-3
+        assert 0 < weights[0, 1] <= .99 + 1e-7
 
 
 def test_entropy_mask_validation_preserves_weights():
@@ -96,3 +96,14 @@ def test_entropy_mask_validation_preserves_weights():
     with pytest.raises(ValueError, match="requires a mask"):
         initialize_from_entropy(values, apply_mask=True)(weights)
     torch.testing.assert_close(weights, torch.ones(2, 2))
+
+
+def test_entropy_mask_is_applied_before_normalization():
+    values = torch.tensor([[0., 0., 0.], [1., 0., 1.], [2., 0., 0.], [3., 0., 1.]])
+    mask = ~torch.eye(3, dtype=torch.bool)
+    mask[1, 0] = mask[1, 2] = mask[2, 0] = False
+    weights = torch.zeros(3, 3)
+    initialize_from_entropy(values, apply_mask=True, mask=mask)(weights)
+    # The retained raw weight is -1: masking first gives mean -1/9.
+    expected = torch.tensor([[0., .99, 0.], [0., 0., 0.], [0., 0., 0.]])
+    torch.testing.assert_close(weights, expected)

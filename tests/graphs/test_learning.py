@@ -297,7 +297,7 @@ def test_entropy_noise_allows_zero_edges_to_learn():
     values = torch.tensor([[0., 0.], [0., 1.], [1., 0.], [1., 1.]])
     generator = GraphGeneratorLearnable(
         "dagma_cgm", n_concepts=2,
-        initialization=initialize_from_entropy(values, add_noise=True),
+        initialization=initialize_from_entropy(values, add_noise=True), threshold=1.,
     )
     before = generator.fc1.weight.detach().clone()
     graph = generator(torch.zeros(3, 2), ["b", "a"])

@@ -8,6 +8,7 @@ Use a model-specific objective and, if needed, cycle removal during eval.
 
 from __future__ import annotations
 
+import math
 from typing import List, Optional
 from numbers import Integral
 
@@ -120,6 +121,7 @@ def _load_dagma_cgm_source(
     generator.no_out_task = bool(no_out_task)
     generator.edges_to_check = list(edges_to_check or [])
     pair_error = "edges_to_check must contain pairs of valid, distinct node indices."
+    pairs = set()
     for pair in generator.edges_to_check:
         try:
             source, target = pair
@@ -128,12 +130,18 @@ def _load_dagma_cgm_source(
         if any(not isinstance(index, Integral) or isinstance(index, bool)
                or not 0 <= index < generator.n_concepts for index in (source, target)) or source == target:
             raise ValueError(pair_error)
+        key = tuple(sorted((source, target)))
+        if key in pairs:
+            raise ValueError("edges_to_check must not repeat a node pair.")
+        pairs.add(key)
     edge_mask = torch.ones(generator.n_concepts, generator.n_concepts)
     edge_mask.fill_diagonal_(0)
     if no_out_task and generator.task_indices:
         edge_mask[generator.task_indices, :] = 0
     generator.register_buffer("edge_mask", edge_mask)
     generator.threshold = float(threshold)
+    if not math.isfinite(generator.threshold):
+        raise ValueError("threshold must be finite.")
     return GraphGeneratorLearnableSpec(
         forward=_dagma_cgm_forward,
         weights=generator.fc1.weight,
