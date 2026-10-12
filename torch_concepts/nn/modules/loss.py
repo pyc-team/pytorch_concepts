@@ -732,12 +732,12 @@ class ConceptLoss(PyCLoss):
         if self.terms_by_type.get('binary') and binary is not None:
             contributions.append(self._compute_type_loss('binary', {
                 'input': _plain(binary),
-                'target': _plain(target[binary.annotations.labels]).float(),
+                'target': _plain(target[binary.annotations]).float(),
             }))
 
         if self.terms_by_type.get('categorical') and categorical is not None:
             cat_logits, cat_targets, cat_mask = self._prepare_categorical(
-                categorical, target[categorical.annotations.labels]
+                categorical, target[categorical.annotations]
             )
             kwargs = {'input': cat_logits, 'target': cat_targets}
             # Offer the key only when padding actually exists, i.e. the concepts
@@ -750,7 +750,7 @@ class ConceptLoss(PyCLoss):
         if self.terms_by_type.get('continuous') and continuous is not None:
             kwargs = {
                 'input': _plain(continuous),
-                'target': _plain(target[continuous.annotations.labels]),
+                'target': _plain(target[continuous.annotations]),
             }
             if scale is not None:
                 kwargs['scale'] = _plain(scale)

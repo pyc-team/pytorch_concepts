@@ -699,7 +699,7 @@ class BaseModel(nn.Module, ABC):
         """
         # By name, not position: the batch may order (or hold more) concepts.
         if isinstance(ground_truth, AnnotatedTensor):
-            ground_truth = ground_truth[list(self.concept_annotations.labels)].tensor
+            ground_truth = ground_truth[self.concept_annotations].tensor
         raw = ground_truth
         query = {}
         for name, segments in self._query_segments.items():
