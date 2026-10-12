@@ -13,6 +13,10 @@ Configuration can be customized by setting environment variables:
 
 from os import environ as env
 from pathlib import Path
+from dotenv import load_dotenv
+
+# Load local configuration from the repository root, preserving environment overrides.
+load_dotenv(Path(__file__).resolve().parents[1] / ".env", override=False)
 
 # Project name used for Conceptarium's logging
 PROJECT_NAME = "conceptarium"
@@ -54,3 +58,6 @@ if HUGGINGFACEHUB_TOKEN:
 # OpenAI API key for GPT models
 # Set this if you're using OpenAI models for concept generation or evaluation
 OPENAI_API_KEY = env.get("OPENAI_API_KEY", "")
+
+# Groq API key for examples using a Groq LLM backend.
+GROQ_API_KEY = env.get("GROQ_API_KEY", "")

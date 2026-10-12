@@ -1,4 +1,8 @@
 # Byte-compiled / optimized / DLL files
+# Local API keys and environment configuration
+.env
+.env.local
+
 __pycache__/
 *.py[cod]
 *$py.class

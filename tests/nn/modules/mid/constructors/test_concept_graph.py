@@ -200,7 +200,7 @@ class TestConceptGraph(unittest.TestCase):
     def test_is_dag(self):
         """Test DAG checking."""
         self.assertTrue(self.graph.is_dag())
-        self.assertTrue(self.graph.is_directed_acyclic())
+        self.assertTrue(self.graph.is_dag())
         
         # Create a graph with a cycle
         cycle_adj = torch.tensor([

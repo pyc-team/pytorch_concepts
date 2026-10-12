@@ -5,7 +5,10 @@ This module provides the ConceptDataset class, which serves as the foundation
 for all concept-based datasets in the torch_concepts package.
 """
 from abc import abstractmethod
+from copy import copy
 import os
+import hashlib
+import json
 import logging
 import numpy as np
 import pandas as pd
@@ -166,8 +169,11 @@ class ConceptDataset(Dataset):
 
         # Store graph
         self._graph = None
+        self._graph_native = None
+        self._graph_generator = None
         if graph is not None:
-            self.set_graph(graph)  # graph among all concepts
+            self.set_graph(graph)
+            self._graph_native = self._graph
 
         self.scalers = {}  # dict of fitted scalers for input and concepts
 
@@ -444,6 +450,16 @@ class ConceptDataset(Dataset):
         """Adjacency matrix of the causal graph between concepts."""
         return self._graph
 
+    @property
+    def graph_native(self) -> Optional[ConceptGraph]:
+        """Graph supplied by the dataset before graph generation."""
+        return self._graph_native
+
+    @property
+    def graph_generator(self):
+        """Graph generator configured for this dataset."""
+        return self._graph_generator
+
     # Dataset flags #####################################################
 
     @property
@@ -474,7 +490,7 @@ class ConceptDataset(Dataset):
         else:
             raise ValueError("Invalid root directory")
         return root
-        
+
     @property
     @abstractmethod
     def raw_filenames(self) -> List[str]:
@@ -635,6 +651,141 @@ class ConceptDataset(Dataset):
         finally:
             backbone.train(was_training)
         return torch.cat(embeddings_list, dim=0)
+
+    # Graph precomputation #############################################
+    def precompute_graph(
+        self,
+        graph_generator,
+        cache: bool = True,
+        cache_dir: Optional[str] = None,
+        force: bool = False,
+        *,
+        training_indices=None,
+        concept_descriptions: Optional[dict[str, str]] = None,
+    ) -> None:
+        """Precompute a static concept graph and store it as ``graph``.
+
+        Calls ``graph_generator`` on a dataset copy containing only the rows
+        selected by ``training_indices``. Afterwards,
+        ``graph`` holds the resulting ConceptGraph and ``graph_generator`` holds
+        the generator. Dataset rows and ``graph_native`` remain unchanged.
+
+        Call ``datamodule.setup("fit")`` followed by
+        ``datamodule.precompute_graph(...)`` to supply the training split.
+        Direct calls to this method require explicit non-empty training indices.
+
+        With ``cache=True`` (default), the graph is saved under ``cache_dir``
+        (by default ``root_dir``) and reused on later calls with matching
+        generator options, concept descriptions, dataset metadata and training indices.
+        ``force=True`` recomputes and updates the cache.
+        Descriptions affect the cache key. Concept values and implementation
+        code do not; use ``force=True`` after changing either.
+
+        Parameters
+        ----------
+        graph_generator : GraphGeneratorStatic
+            Static generator with optional refinements.
+        concept_descriptions : dict[str, str], optional
+            Override individual dataset descriptions for generation and refinements.
+        cache : bool, default True
+            Persist the graph to disk and reuse it across calls. Pass False
+            to recompute without reading or writing the disk cache.
+        cache_dir : str, optional
+            Directory for the cache file. Defaults to the dataset's
+            ``root_dir``; set it when the data lives on read-only/shared
+            storage and the cache should go elsewhere (e.g. local scratch).
+        force : bool, default False
+            Recompute even if a matching cache file exists, and replace that
+            file when disk caching is enabled.
+        training_indices : iterable of int, required
+            Non-empty sequence of training row indices. The datamodule passes
+            these automatically after ``setup("fit")``. Indices also identify
+            the training split in the cache.
+
+        Raises
+        ------
+        TypeError
+            If graph_generator is learnable.
+        ValueError
+            If training_indices is missing or empty, graph nodes do not match
+            the dataset concept names and order, or final DAG validation fails.
+            For missing or empty indices, call ``datamodule.setup("fit")``
+            before ``datamodule.precompute_graph(...)``.
+        """
+        if getattr(graph_generator, "trainable", False):
+            raise TypeError("Graph precomputation accepts only static generators.")
+        training_indices = (
+            list(training_indices) if training_indices is not None else []
+        )
+        if not training_indices:
+            raise ValueError(
+                'Graph precomputation requires non-empty training indices. Call '
+                'datamodule.setup("fit") before datamodule.precompute_graph(...).'
+            )
+        graph_dataset = copy(self)
+        graph_dataset._subset_rows(training_indices)
+        graph_dataset.graph_training_indices = training_indices
+
+        graph_dataset.label_descriptions = {
+            **(getattr(self, "label_descriptions", None) or {}),
+            **(concept_descriptions or {}),
+        }
+        names, descriptions = graph_generator._validate_inputs(
+            graph_dataset.concepts.tensor, graph_dataset.concept_names,
+            getattr(graph_dataset, "label_descriptions", None),
+        )
+        graph_generator._prepare_context(
+            names, descriptions,
+        )
+        graph = None
+        cache_path = None
+        if cache:
+            cache_key = graph_generator._build_cache_key(
+                cache_metadata=graph_dataset._graph_cache_metadata(),
+            )
+            cache_dir = cache_dir or self.root_dir
+            os.makedirs(cache_dir, exist_ok=True)
+            digest = hashlib.sha256(
+                json.dumps(cache_key, sort_keys=True).encode("utf-8")
+            ).hexdigest()
+            cache_path = os.path.join(cache_dir, f"graph_{digest}.pt")
+            if os.path.exists(cache_path) and not force:
+                graph = ConceptGraph.load(cache_path)
+                graph_generator.graph = graph
+                graph_generator.fitted = True
+                logger.info(
+                    "Loading a pre-existing graph cache from %s for "
+                    "dataset=%s(name=%r), method=%r, source=%r, "
+                    "refinement=%r. If refinement logic, "
+                    "prompting, descriptions, or other hidden behavior changed "
+                    "without changing this cache identity, pass force=True to "
+                    "recompute it.",
+                    cache_path, type(self).__name__, self.name,
+                    graph_generator.name, graph_generator.source,
+                    cache_key['refinement'],
+                )
+
+        if graph is None:
+            graph = graph_generator._construct_graph(
+                graph_dataset.concepts.tensor, names, descriptions,
+            )
+            if cache_path is not None:
+                logger.info("Saving graph to %s", cache_path)
+                graph.save(cache_path)
+        self._graph, self._graph_generator = graph, graph_generator
+
+    def _graph_cache_metadata(self):
+        """Identify this graph precomputation by dataset metadata and row selection."""
+        return {
+            "class": type(self).__qualname__,
+            "name": getattr(self, "name", None),
+            "concept_names": list(self.concept_names),
+            "n_samples": self.n_samples,
+            "is_subset": getattr(self, "is_subset", False),
+            "subset_seed": getattr(self, "subset_seed", None),
+            "seed": getattr(self, "seed", None),
+            "training_indices": getattr(self, "graph_training_indices", None),
+        }
 
     def _subset_rows(self, indices) -> None:
         """Subset every row-aligned source and rebuild selected supervision."""
@@ -842,7 +993,14 @@ class ConceptDataset(Dataset):
         else:
             selected = None
             self._ground_truth_source = None
+        previous_names = list(self.concept_names)
         self.concepts = selected
+        if previous_names != list(self.concept_names):
+            self._graph = None
+            generator = getattr(self, "_graph_generator", None)
+            if generator is not None:
+                generator._invalidate_cache()
+                self._graph_generator = None
         self._ground_truth_annotations = (
             selected.annotations if selected is not None else None
         )
@@ -900,8 +1058,7 @@ class ConceptDataset(Dataset):
         return annotations.subset(sorted_labels)
 
     def set_graph(self, graph: pd.DataFrame):
-        """Set the adjacency matrix of the causal graph between concepts 
-        as a pandas DataFrame.
+        """Set the current graph from an adjacency DataFrame.
         
         If a concept subset was selected via ``concept_names_subset``,
         the graph is automatically subsetted to match the current concepts.
