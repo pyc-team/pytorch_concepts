@@ -26,13 +26,12 @@ def test_dagma_rejects_invalid_n_concepts(count):
         _learnable("dagma_cgm", n_concepts=count)
 
 
-def test_training_graph_keeps_dense_gradients_and_exports_sparse_edges():
+def test_training_graph_keeps_zero_edge_gradients_in_sparse_storage():
     values = torch.tensor([[0., .5], [0., 0.]], requires_grad=True)
     graph = ConceptGraph(values, ["a", "b"])
-    assert graph.data is values
     torch.testing.assert_close(graph.data, values)
     indices, weights = graph.dense_to_sparse()
-    assert indices.shape == (2, 1) and weights.shape == (1,)
+    assert indices.shape == (2, 4) and weights.shape == (4,)
     graph.data.sum().backward()
     torch.testing.assert_close(values.grad, torch.ones_like(values))
     np.testing.assert_array_equal(graph.to_pandas().values, values.detach().numpy())

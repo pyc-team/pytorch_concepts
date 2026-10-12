@@ -68,6 +68,44 @@ def test_sparse_constructor_preserves_gradients_for_zero_weights():
     assert graph.edge_weight[0] == 1
 
 
+@pytest.mark.parametrize("n_nodes", [0, 3])
+def test_dense_training_graph_keeps_zero_pairs_and_their_gradients(n_nodes):
+    adjacency = torch.zeros(n_nodes, n_nodes).T.requires_grad_()
+    graph = ConceptGraph(adjacency)
+    assert graph.edge_index.shape == (2, n_nodes ** 2)
+    assert graph.edge_weight.shape == (n_nodes ** 2,)
+    assert graph.is_dag()
+    assert graph.get_root_nodes() == graph.node_names
+    coefficients = torch.arange(n_nodes ** 2).reshape(n_nodes, n_nodes) + 1
+    (graph.data * coefficients).sum().backward()
+    torch.testing.assert_close(adjacency.grad, coefficients.float())
+    with torch.no_grad():
+        converted = graph.to(dtype=torch.float64).clone()
+    torch.testing.assert_close(converted.edge_index, graph.edge_index)
+    torch.testing.assert_close(converted.edge_weight, graph.edge_weight.double())
+
+
+def test_sparse_clone_and_conversion_preserve_zero_candidates():
+    indices = torch.tensor([[0, 1], [1, 0]])
+    graph = ConceptGraph.from_sparse(indices, torch.zeros(2), 3)
+    converted = graph.clone().to(dtype=torch.float64)
+    torch.testing.assert_close(converted.edge_index, indices)
+    assert converted.edge_weight.shape == (2,)
+    assert converted.n_nodes == 3
+    converted.edge_weight[0] = 1
+    assert graph.edge_weight[0] == 0
+    assert converted.has_edge(0, 1)
+
+
+def test_dense_parameter_in_no_grad_produces_detached_weights():
+    adjacency = torch.nn.Parameter(torch.tensor([[0., .5], [0., 0.]]))
+    with torch.no_grad():
+        graph = ConceptGraph(adjacency)
+    assert not graph.edge_weight.requires_grad
+    assert not graph.data.requires_grad
+    torch.testing.assert_close(graph.data, adjacency)
+
+
 def test_is_dag_matches_networkx_without_modifying_graph():
     import networkx as nx
     from torch_concepts.graphs.utils import contains_cycle
@@ -306,7 +344,7 @@ def test_sparse_constructor_rejects_invalid_names_and_encoding(names, encoding):
 def test_dense_weight_setter_preserves_input_and_new_weight_gradients():
     adjacency = torch.tensor([[0., .5], [0., 0.]], requires_grad=True)
     graph = ConceptGraph(adjacency)
-    weights = torch.tensor([.8], requires_grad=True)
+    weights = torch.tensor([0., .8, 0., 0.], requires_grad=True)
     graph.edge_weight = weights
     graph.data.sum().backward()
     assert adjacency.grad is None
@@ -339,11 +377,11 @@ def test_neighbor_helpers_handle_named_networkx_and_invalid_indices(helper):
 def test_valid_sparse_setters_invalidate_cache_and_preserve_gradients(requires_grad):
     graph = ConceptGraph(torch.tensor([[0., 1.], [0., 0.]], requires_grad=requires_grad), ["a", "b"])
     network = graph.to_networkx()
-    graph.edge_index = torch.tensor([[1], [0]])
+    graph.edge_index = graph.edge_index.flip(0)
     assert graph.to_networkx() is not network
     assert graph.get_successors("b") == ["a"]
     network = graph.to_networkx()
-    weights = torch.tensor([.7], requires_grad=True)
+    weights = (graph.edge_weight.detach() * .7).requires_grad_()
     graph.edge_weight = weights
     assert graph.to_networkx() is not network
     assert graph.get_edge_weight("b", "a") == pytest.approx(.7)

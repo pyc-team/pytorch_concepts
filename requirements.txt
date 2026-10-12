@@ -11,3 +11,4 @@ sympy
 sympytorch
 pyro-ppl
 tqdm
+python-dotenv
