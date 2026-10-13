@@ -446,13 +446,14 @@ class BaseInference(nn.Module):
         blocks: Dict[str, torch.Tensor] = {}
         for name, value in whole.items():
             var = self.pgm.variables[name]
-            observed = var.to_member(value.to(dtype))
+            observed = var.from_event(value.to(dtype))
             for member in var.members:
                 blocks[member] = var.member_of(observed, member)
         for owner_name, members in per_owner.items():
             owner = self.pgm.variables[owner_name]
             for member, value in members.items():
-                blocks[member] = owner.member(member).as_event(value.to(dtype))
+                handle = owner.member(member)
+                blocks[member] = handle.to_event(handle.from_event(value.to(dtype)))
         return blocks
 
     def regroup_members(

@@ -135,7 +135,7 @@ class PyroBaseInference(BaseInference):
                     obs = None if gt is not None else data.get(var.name, None)
                     if obs is not None:
                         # Match the observation to the distribution's event.
-                        obs = var.to_member(obs)
+                        obs = var.from_event(obs)
                     d = (
                         build_distribution(var, params)
                         if obs is not None
@@ -144,7 +144,7 @@ class PyroBaseInference(BaseInference):
                     sample = pyro.sample(var.name, d, obs=obs)
                     if gt is not None:
                         sample = teacher_force(
-                            sample, var.to_member(gt), self.p_int, 1, var.name,
+                            sample, var.from_event(gt), self.p_int, 1, var.name,
                         )
                     # The realisation is already in the member layout the cache
                     # holds. Partial-plate evidence is forced on here.

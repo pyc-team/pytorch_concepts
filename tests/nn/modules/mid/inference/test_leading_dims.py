@@ -13,7 +13,11 @@ import torch.distributions as dist
 import torch.nn as nn
 
 from torch_concepts.distributions.delta import Delta
-from torch_concepts.nn import ImportanceSampling, LearnablePrior, RejectionSampling
+from torch_concepts.nn import (
+    ImportanceSampling, LearnablePrior, MAPForwardInference, PgmpyVariableElimination,
+    RejectionSampling,
+)
+from torch_concepts.nn.modules.low.priors import FixedPrior
 from torch_concepts.nn.modules.mid.factors.cpd import ParametricCPD
 from torch_concepts.nn.modules.mid.factors.potential import ParametricPotential
 from torch_concepts.nn.modules.mid.graph.bayesian_network import BayesianNetwork
@@ -34,12 +38,10 @@ from torch_concepts.nn.modules.mid.variable import ConceptVariable, EmbeddingVar
 
 
 # One, two and three leading dimensions, all holding the same 6 observations, so
-# every case can be compared against the flattened (6,) run.
-# A size-1 leading axis sits in the middle, never last: a tensor ending in
-# ``(..., 1, *event)`` is read with that 1 as the member axis (see
-# ``Variable._fit``), so a trailing singleton leading dim is ambiguous by
-# design and cannot round-trip.
-LEADINGS = [(6,), (2, 3), (3, 1, 2)]
+# every case can be compared against the flattened (6,) run. A size-1 leading
+# axis appears in the middle and last: ``(6, 1, *event)`` is evidence with
+# leading (6, 1), never a member axis (see ``Variable.from_event``).
+LEADINGS = [(6,), (2, 3), (3, 1, 2), (6, 1)]
 
 
 @pytest.fixture
@@ -227,6 +229,55 @@ class TestEstimatorLeadingDims:
             warnings.simplefilter("ignore")
             out = eng.query(query={"c2": torch.rand(*leading, 1).round()}, evidence={})
         assert out.probabilities.shape == leading
+
+
+class TestTrailingSingletonLeading:
+    """Evidence ``(5, 1, 3)`` on a single-member variable has leading ``(5, 1)``.
+
+    Regression: it used to be read as the member layout of 5 observations, so
+    every engine dropped the trailing 1 from its output.
+    """
+
+    @staticmethod
+    def _model():
+        torch.manual_seed(0)
+        x = EmbeddingVariable("x", distribution=Delta, size=3)
+        c = ConceptVariable("c", distribution=dist.Bernoulli, size=1)
+        return BayesianNetwork(variables=[x, c], factors=[
+            ParametricCPD(x, {"value": FixedPrior(torch.zeros(3))}),
+            ParametricCPD(c, {"logits": nn.Linear(3, 1)}, parents=[x]),
+        ])
+
+    @pytest.mark.parametrize("cls", [
+        DeterministicInference, AncestralSamplingInference, MAPForwardInference,
+        BeliefPropagation, PgmpyVariableElimination,
+    ])
+    def test_params_keep_the_singleton(self, cls):
+        model = self._model()
+        x = torch.randn(5, 3)
+        eng = _engine(cls, model)
+        out = eng.query(query=["c"], evidence={"x": x.unsqueeze(1)})
+        param = next(iter(out.params.values())).tensor
+        assert param.shape == (5, 1, 1)
+        if cls in (DeterministicInference, BeliefPropagation, PgmpyVariableElimination):
+            flat = next(iter(eng.query(query=["c"], evidence={"x": x}).params.values()))
+            assert torch.allclose(param.squeeze(1), flat.tensor, atol=1e-6)
+
+    @pytest.mark.parametrize("cls,kwargs", [
+        (RejectionSampling, {"n_samples": 50}),
+        (ImportanceSampling, {"n_samples": 50}),
+    ])
+    def test_probabilities_keep_the_singleton(self, cls, kwargs):
+        model = self._model()
+        if cls is ImportanceSampling:
+            kwargs = {**kwargs, "proposal": MutilatedNetworkProposal(model)}
+        eng = _engine(cls, model, **kwargs)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            out = eng.query(
+                query={"c": torch.ones(5, 1, 1)}, evidence={"x": torch.randn(5, 1, 3)}
+            )
+        assert out.probabilities.shape == (5, 1)
 
 
 class TestAnnotatedOutput:
