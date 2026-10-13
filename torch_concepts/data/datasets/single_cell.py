@@ -8,8 +8,10 @@ import json
 import os
 from collections.abc import Mapping
 from numbers import Real
+from venv import logger
 
 import numpy as np
+import pandas as pd
 import torch
 from scipy.stats import poisson, wishart
 
@@ -76,22 +78,31 @@ def _resolve_generation_config(generation_config):
         if isinstance(n, (bool, np.bool_)) or not isinstance(n, (int, np.integer)) or n < 1:
             raise ValueError(f"Expected {quantity}.n to be a positive integer.")
         config[quantity]["n"] = int(n)
-    baseline_config = config["baseline"]
-    library_config = config["library"]
-    concept_config = config["concept"]
-    if not 0 < baseline_config["lower"] <= baseline_config["upper"]:
+    if not 0 < config["baseline"]["lower"] <= config["baseline"]["upper"]:
         raise ValueError("Expected 0 < baseline.lower <= baseline.upper.")
-    if not 0 <= library_config["std_lower"] <= library_config["std_upper"]:
+    if not 0 <= config["library"]["std_lower"] <= config["library"]["std_upper"]:
         raise ValueError("Expected 0 <= library.std_lower <= library.std_upper.")
     if min(config[factor]["std"] for factor in ("batch", "celltype", "tissue", "concept", "noise")) < 0:
         raise ValueError("Noise and coefficient standard deviations must be nonnegative.")
-    if concept_config["beta_a"] <= 0 or concept_config["beta_b"] <= 0 or concept_config["cov_prior_range"] < 0:
+    if config["concept"]["beta_a"] <= 0 or config["concept"]["beta_b"] <= 0 or config["concept"]["cov_prior_range"] < 0:
         raise ValueError("Beta parameters must be positive and cov_prior_range nonnegative.")
     return config
 
 
-def _generate_single_cell(generation_config=None, seed=42):
-    """Sample counts and concepts using grouped generation settings and a local RNG."""
+def _prepare_exog_noise(exog_noise, n_obs, n_vars):
+    """Normalize optional Poisson quantiles without modifying the caller's array."""
+    if exog_noise is None:
+        return None
+    values = np.array(exog_noise, dtype=float, copy=True)
+    if values.shape != (n_obs, n_vars):
+        raise ValueError("exog_noise must have shape (cells.n, genes.n).")
+    if not np.all(np.isfinite(values) & (values > 0) & (values < 1)):
+        raise ValueError("exog_noise must contain finite quantiles strictly between 0 and 1.")
+    return values
+
+
+def _generate_single_cell(generation_config=None, seed=42, exog_noise=None):
+    """Return counts and concepts using a local RNG."""
     config = _resolve_generation_config(generation_config)
     n_obs = config["cells"]["n"]
     n_vars = config["genes"]["n"]
@@ -99,9 +110,6 @@ def _generate_single_cell(generation_config=None, seed=42):
     n_tissues = config["tissue"]["n"]
     n_celltypes = config["celltype"]["n"]
     n_concepts = config["concept"]["n"]
-    baseline_config = config["baseline"]
-    library_config = config["library"]
-    concept_config = config["concept"]
 
     rng = np.random.default_rng(seed)
     # Sample parameters for batches, tissues, cell types, and concepts
@@ -109,33 +117,47 @@ def _generate_single_cell(generation_config=None, seed=42):
     p_tissue = rng.dirichlet(10 * np.ones(n_tissues)) # probability of sampling each tissue
     p_celltype = rng.dirichlet(np.ones(n_celltypes), size=n_tissues) # probability of sampling each cell type within a tissue
     p_concept = rng.dirichlet(np.ones(n_concepts) / 5, size=n_celltypes) # probability of sampling each concept within a cell type
-    std_libsize = rng.uniform(library_config["std_lower"], library_config["std_upper"], size=n_batches) # standard deviation of library size for each batch
+    # Sample standard deviation of library size for each batch
+    std_libsize = rng.uniform(config["library"]["std_lower"], config["library"]["std_upper"], size=n_batches) # standard deviation of library size for each batch
 
     # Sample effect coefficients for batches, cell types, tissues, and concepts
     batch_effect = rng.normal(0, config["batch"]["std"], size=(n_batches, n_vars)) # batch effect coefficients for each batch and gene
     celltype_effect = rng.normal(0, config["celltype"]["std"], size=(n_celltypes, n_vars)) # cell type effect coefficients for each cell type and gene
     tissue_effect = rng.normal(0, config["tissue"]["std"], size=(n_tissues, n_vars)) # tissue effect coefficients for each tissue and gene
-    concept_effect = rng.normal(0, concept_config["std"], size=(n_concepts, n_vars)) # concept effect coefficients for each concept and gene
+    concept_effect = rng.normal(0, config["concept"]["std"], size=(n_concepts, n_vars)) # concept effect coefficients for each concept and gene
 
-    baseline_expr = rng.uniform(np.log(baseline_config["lower"]), np.log(baseline_config["upper"]), size=n_vars)
+    if config["concept"]["use_dependency"]:
+        cov_prior_range = config["concept"]["cov_prior_range"]
+        scale_matrix_elements = rng.uniform(
+            -cov_prior_range, cov_prior_range, size=(n_concepts * (n_concepts + 1)) // 2
+        )
+        scale_matrix = np.zeros((n_concepts, n_concepts))
+        tril_indices = np.tril_indices_from(scale_matrix)
+        scale_matrix[tril_indices[0], tril_indices[1]] = scale_matrix_elements
+        scale_matrix = scale_matrix @ scale_matrix.T
+        scale_matrix += np.eye(n_concepts) * 1e-6
+        covariance = wishart.rvs(df=n_concepts, scale=scale_matrix, random_state=rng)
+        # SciPy returns a scalar for the one-concept case.
+        if n_concepts == 1:
+            covariance = np.array([[covariance]])
+    else:
+        covariance = np.zeros((n_concepts, n_concepts))
 
-    covariance = np.zeros((n_concepts, n_concepts))
-    if concept_config["use_dependency"]:
-        scale = np.zeros_like(covariance)
-        indices = np.tril_indices_from(scale)
-        cov_prior_range = concept_config["cov_prior_range"]
-        scale[indices] = rng.uniform(-cov_prior_range, cov_prior_range, size=(n_concepts * (n_concepts + 1) // 2))
-        scale = scale @ scale.T + np.eye(n_concepts) * 1e-6
-        covariance = np.atleast_2d(wishart.rvs(df=n_concepts, scale=scale, random_state=rng))
-    
+    # Baseline expression for each variable
+    r, s = np.log(config["baseline"]["lower"]), np.log(config["baseline"]["upper"])
+    baseline_expr = rng.uniform(r, s, size=n_vars)
 
-    if concept_config["zero_inflate"]:
+    if config["concept"]["zero_inflate"]:
         # As in scCBGM, sparsity masks concept coefficients, not observed counts.
-        probability = 1 - rng.beta(concept_config["beta_a"], concept_config["beta_b"], size=n_concepts)
-        concept_effect *= rng.binomial(1, probability[:, None], size=concept_effect.shape)
+        probability = 1 - rng.beta(config["concept"]["beta_a"], config["concept"]["beta_b"], size=n_concepts)
+        mask = np.vstack([rng.binomial(1, probability[i], size=n_vars) for i in range(n_concepts)])
+        concept_effect = concept_effect * mask
 
     inputs = np.empty((n_obs, n_vars), dtype=np.float32)
     concepts = np.empty((n_obs, n_concepts + 3), dtype=np.float32)
+    exog_noise = _prepare_exog_noise(exog_noise, n_obs, n_vars)
+    sample_exog = exog_noise is None
+    exog_mat = np.zeros((n_obs, n_vars)) if sample_exog else exog_noise
     for i in range(n_obs):
 
         # Sample indices for batch, tissue, and cell type for the current observation
@@ -156,10 +178,18 @@ def _generate_single_cell(generation_config=None, seed=42):
 
         # Compute the log Poisson rate for the current observation
         log_rate = (
-            baseline_expr + concept_indicators @ concept_effect + celltype_effect[celltype]
-            + batch_effect[batch] + tissue_effect[tissue] + libsize + noise
+            baseline_expr
+            + np.sum(concept_effect * concept_indicators[:, None], axis=0)
+            + celltype_effect[celltype]
+            + batch_effect[batch]
+            + tissue_effect[tissue]
+            + libsize
+            + noise
         )
-        inputs[i] = poisson.ppf(rng.uniform(0, 1, size=n_vars), np.exp(log_rate))
+        if sample_exog:
+            exog_mat[i, :] = rng.uniform(0, 1, size=n_vars)
+        inputs[i] = poisson.ppf(exog_mat[i, :], np.exp(log_rate))
+        # Context values are class indices, appended after the binary concepts.
         concepts[i] = np.concatenate([concept_indicators, [celltype, tissue, batch]])
     return torch.from_numpy(inputs), torch.from_numpy(concepts)
 
@@ -207,6 +237,11 @@ class SingleCellDataset(ConceptDataset):
     uniform draws in [-cov_prior_range, cov_prior_range] to construct the
     Wishart scale. Unknown quantities or parameter names raise ``ValueError``.
 
+    ``exog_noise`` optionally supplies Poisson quantiles of shape
+    ``(cells.n, genes.n)`` strictly between 0 and 1. If omitted, they are
+    sampled uniformly. They are used only during generation and are distinct
+    from the Gaussian gene noise.
+
     Example::
 
         dataset = SingleCellDataset(
@@ -222,6 +257,7 @@ class SingleCellDataset(ConceptDataset):
         concept_subset: list | None = None,  # subset of concept labels (concept_i, celltype, tissue, batch)
         generation_config: dict | None = None,  # partial counts and distribution parameters grouped by quantity
         label_descriptions: dict | None = None,  # mapping from concept names to descriptions
+        exog_noise=None,  # optional Poisson quantiles, one per cell and gene
     ):
         # If root is not provided, use a local folder automatically
         self.root = os.fspath(root) if root is not None else os.path.join(os.getcwd(), "data", "single_cell")
@@ -229,25 +265,20 @@ class SingleCellDataset(ConceptDataset):
         self.label_descriptions = label_descriptions
         self.generation_config = _resolve_generation_config(generation_config)
         self.n_gen = self.generation_config["cells"]["n"]
+        self._provided_exog_noise = _prepare_exog_noise(
+            exog_noise, self.n_gen, self.generation_config["genes"]["n"]
+        )
 
         # inputs is a torch tensor of gene counts (cells.n, genes.n)
         # concepts is a torch tensor of binary indicators and context class indices
-        inputs, concepts = self.load()
-
-        # Get concept annotations: binary indicators followed by celltype, tissue, batch
-        n_concepts = self.generation_config["concept"]["n"]
-        context_sizes = [self.generation_config[quantity]["n"] for quantity in ("celltype", "tissue", "batch")]
-        annotations = Annotations(
-            labels=[f"concept_{i}" for i in range(n_concepts)] + ["celltype", "tissue", "batch"],
-            cardinalities=[1] * n_concepts + context_sizes,
-            types=["binary"] * n_concepts + ["categorical" if n > 1 else "binary" for n in context_sizes],
-        )
+        inputs, concepts, annotations, graph = self.load()
 
         # Initialize parent class
         super().__init__(
             input_data=inputs,
             concepts=concepts,
             annotations=annotations,
+            graph=graph,
             concept_names_subset=concept_subset,  # subset of concept names
             name="SingleCellDataset",
         )
@@ -262,9 +293,16 @@ class SingleCellDataset(ConceptDataset):
     def processed_filenames(self) -> list[str]:
         """List of processed filenames that will be created during build step."""
         # Include all generation settings in the cache key
-        settings = json.dumps({"generation_config": self.generation_config, "seed": self.seed}, sort_keys=True)
+        exog_key = (
+            hashlib.sha256(self._provided_exog_noise.tobytes()).hexdigest()
+            if self._provided_exog_noise is not None else None
+        )
+        settings = json.dumps({"generation_config": self.generation_config,
+                               "exog_noise": exog_key}, sort_keys=True)
         key = hashlib.sha256(settings.encode()).hexdigest()[:16]
-        return [f"single_cell_N_{self.n_gen}_seed_{self.seed}_{key}.pt"]
+        suffix = f"N_{self.n_gen}_seed_{self.seed}_{key}"
+        return [f"inputs_{suffix}.pt", f"concepts_{suffix}.pt",
+                f"annotations_{suffix}.pt", f"graph_{suffix}.h5"]
 
     def download(self):
         """No download needed; data is generated locally."""
@@ -272,15 +310,37 @@ class SingleCellDataset(ConceptDataset):
 
     def build(self):
         # Generate gene counts and concept values
-        inputs, concepts = _generate_single_cell(generation_config=self.generation_config, seed=self.seed)
+        inputs, concepts = _generate_single_cell(
+            generation_config=self.generation_config, seed=self.seed,
+            exog_noise=self._provided_exog_noise,
+        )
 
-        # Save inputs and concepts together in the processed file
-        os.makedirs(self.root_dir, exist_ok=True)
-        torch.save({"inputs": inputs, "concepts": concepts}, self.processed_paths[0])
+        # Create annotations in the same order as the generated concept columns.
+        n_concepts = self.generation_config["concept"]["n"]
+        context_sizes = [self.generation_config[quantity]["n"] for quantity in ("celltype", "tissue", "batch")]
+        annotations = Annotations(
+            labels=[f"concept_{i}" for i in range(n_concepts)] + ["celltype", "tissue", "batch"],
+            cardinalities=[1] * n_concepts + context_sizes,
+            types=["binary"] * n_concepts + ["categorical" if n > 1 else "binary" for n in context_sizes],
+        )
+
+        # No directed concept graph is defined by this generator.
+        graph = pd.DataFrame()
+
+        # Save each component separately, as in BnLearnDataset.
+        logger.info(f"Saving dataset to {self.root_dir}")
+        torch.save(inputs, self.processed_paths[0])
+        torch.save(concepts, self.processed_paths[1])
+        torch.save(annotations, self.processed_paths[2])
+        graph.to_hdf(self.processed_paths[3], key="graph", mode="w")
 
     def load_raw(self):
         self.maybe_build()
-
-        # Load the generated gene counts and concept values
-        data = torch.load(self.processed_paths[0], weights_only=True)
-        return data["inputs"], data["concepts"]
+        logger.info("Loading raw single cell data.")
+        inputs = torch.load(self.processed_paths[0], weights_only=True)
+        concepts = torch.load(self.processed_paths[1], weights_only=True)
+        annotations = torch.load(self.processed_paths[2], weights_only=False)
+        graph = pd.read_hdf(self.processed_paths[3], "graph")
+        if graph.empty:
+            graph = None
+        return inputs, concepts, annotations, graph

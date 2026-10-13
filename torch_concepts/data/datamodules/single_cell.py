@@ -30,6 +30,7 @@ class SingleCellDataModule(ConceptDataModule):
             For example, {"cells": {"n": 1000}, "batch": {"n": 2, "std": 0.15}}
             generates 1000 cells with two batches and stronger batch effects.
         workers: Number of workers for dataloaders.
+        exog_noise: Optional Poisson quantiles forwarded to SingleCellDataset.
         splitter: Custom train/val/test splitting strategy. If None, uses
             RandomSplitter.
         **kwargs: Additional arguments for ConceptDataModule, such as scalers
@@ -49,6 +50,7 @@ class SingleCellDataModule(ConceptDataModule):
         workers: int = 0,
         splitter=None,
         generation_config: dict | None = None,
+        exog_noise=None,
         **kwargs,
     ):
         dataset = SingleCellDataset(
@@ -57,6 +59,7 @@ class SingleCellDataModule(ConceptDataModule):
             concept_subset=concept_subset,
             label_descriptions=label_descriptions,
             generation_config=generation_config,
+            exog_noise=exog_noise,
         )
         super().__init__(
             dataset=dataset,
