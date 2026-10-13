@@ -320,8 +320,9 @@ class KLDivergenceLoss(PyCLoss):
             off the reported parameter names when omitted, which resolves the
             continuous families; pass it when those names identify no single
             family (every discrete family reports ``probs``/``logits``).
-        free_bits (float): Per-dimension floor in nats.
-            ``0.0`` (default) leaves the term untouched. Above it, a dimension
+        free_bits (float): Per-dimension floor in nats. A family whose event
+            is a whole row (a categorical, a ``MultivariateNormal``) is a single
+            dimension. ``0.0`` (default) leaves the term untouched. Above it, a dimension
             whose batch-mean KL is already under the floor contributes a
             constant, so its gradient vanishes and nothing pushes it further
             onto the prior — the guard against posterior collapse, which a
@@ -360,7 +361,13 @@ class KLDivergenceLoss(PyCLoss):
                     f"({sorted(f.__name__ for f in _KL_FAMILIES.values())}). "
                     "Pass `distribution=` explicitly."
                 )
-            kl = dist.kl_divergence(family(**q), family(**p))
+            q_dist = family(**q)
+            kl = dist.kl_divergence(q_dist, family(**p))
+            if q_dist.event_shape:
+                # One divergence per row (a categorical, a MultivariateNormal):
+                # the variable itself is the dimension, so give it that axis
+                # rather than let the batch be read as one.
+                kl = kl.unsqueeze(-1)
             per_dim = kl.reshape(-1, kl.shape[-1]).mean(0)
             total = total + per_dim.clamp_min(self.free_bits).sum()
         return total

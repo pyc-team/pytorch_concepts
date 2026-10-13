@@ -298,7 +298,12 @@ class Variable(ABC):
         member = tuple(self._member_shape)
         return (self.n_members, *member, *member[len(member) - extra:])
 
-    def _fit(self, tensor: torch.Tensor, trailing: Tuple[int, ...]) -> torch.Tensor:
+    def _fit(
+        self,
+        tensor: torch.Tensor,
+        trailing: Tuple[int, ...],
+        event_layout: bool = False,
+    ) -> torch.Tensor:
         """Reshape ``tensor`` so its last axes are exactly ``trailing``.
 
         Examples:
@@ -307,11 +312,18 @@ class Variable(ABC):
         (12,)       -> (3, 4)         case 3: no leading dim, reshape of the last axis
         (2, 5, 12)  -> (2, 5, 3, 4)   case 3: arbitrary leading dims, reshape of the last axis
         (8, 7)      -> ValueError: cannot read a tensor of shape (8, 7) as (*leading, 3, 4)
+
+        ``event_layout`` says ``tensor`` comes from outside the engine (see
+        :meth:`from_event`). With one member, ``(5, 1, 3)`` then reads as leading
+        ``(5, 1)`` rather than as an already-fitted ``(5,)``.
         """
         n = len(trailing)
         # Already fitted. Strict ``>`` keeps a non-empty leading shape when both
         # readings are possible, which is the convention every engine expects.
-        if tensor.dim() > n and tuple(tensor.shape[-n:]) == trailing:
+        # An event-layout tensor of a single-member variable never carries the
+        # member axis, so there a trailing 1 is a leading dimension instead.
+        fitted = tensor.dim() > n and tuple(tensor.shape[-n:]) == trailing
+        if fitted and not (event_layout and trailing[0] == 1):
             return tensor
         # The event is ranked; only the member axis is missing.
         if trailing[0] == 1 and tensor.dim() >= n - 1 and tuple(tensor.shape[-(n - 1):]) == trailing[1:]:
@@ -361,6 +373,21 @@ class Variable(ABC):
         """Read ``tensor`` into the canonical ``(*leading, n_members, *member_shape)`` layout."""
         return self._fit(tensor, self.param_trailing_shape(param))
 
+    def from_event(self, tensor: torch.Tensor, param: Optional[str] = None) -> torch.Tensor:
+        """Read a tensor produced outside the engine into the member layout.
+
+        Evidence, query targets and a parametrization's outputs come in event
+        layout ``(*leading, *shape)`` — a plate may also come member by member,
+        which is unambiguous with more than one member. :meth:`to_member` would
+        read a single-member ``(5, 1, 3)`` as an already-fitted cache with
+        leading ``(5,)``; here it is leading ``(5, 1)``.
+
+        PLAIN x: shape=(3,)
+        (5, 1, 3)      -> (5, 1, 1, 3)   leading (5, 1)
+        (5, 3)         -> (5, 1, 3)
+        """
+        return self._fit(tensor, self.param_trailing_shape(param), event_layout=True)
+
     def to_event(
         self, tensor: torch.Tensor, param: Optional[str] = None
     ) -> torch.Tensor:
@@ -381,9 +408,9 @@ class Variable(ABC):
     def leading_of(
         self, tensor: torch.Tensor, member: Optional[str] = None
     ) -> torch.Size:
-        """Return the leading shape of ``tensor``."""
+        """Return the leading shape of ``tensor``, read as :meth:`from_event` reads it."""
         trailing = (1 if member is not None else self.n_members, *self._member_shape)
-        fitted = self._fit(tensor, trailing)
+        fitted = self._fit(tensor, trailing, event_layout=True)
         return fitted.shape[: fitted.dim() - len(trailing)]
     
     def as_event(
@@ -544,8 +571,7 @@ class Variable(ABC):
 class ConceptVariable(Variable):
     """An interpretable random variable.
 
-    May be observed, latent, or deterministic (via ``dist.Delta``); the engine
-    decides on a per-call basis whether the variable is observed.
+    May be observed, latent, or deterministic (via ``dist.Delta``).
     """
 
     @property
@@ -556,8 +582,7 @@ class ConceptVariable(Variable):
 class EmbeddingVariable(Variable):
     """A non-interpretable embedding variable.
 
-    May be observed, latent, or deterministic (via ``dist.Delta``); the engine
-    decides on a per-call basis whether the variable is observed.
+    May be observed, latent, or deterministic (via ``dist.Delta``).
     """
 
     @property

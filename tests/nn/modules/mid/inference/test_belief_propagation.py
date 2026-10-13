@@ -114,9 +114,17 @@ def _state_marginal(variable, probs):
     return probs
 
 
-def _assert_marginals_match(fg, out, exact, names, atol=1e-5):
+def _query_each(engine, names, evidence=None):
+    """``{name: probs}``, one query per name: BP answers a single variable."""
+    evidence = evidence or {}
+    return {n: engine.query(query=[n], evidence=evidence).probs[n] for n in names}
+
+
+def _assert_marginals_match(fg, probs, exact, names, atol=1e-5):
+    """``probs`` maps each name to the engine's marginal (``out.probs`` or
+    :func:`_query_each`)."""
     for n in names:
-        bp = _state_marginal(fg.variables[n], out.probs[n])
+        bp = _state_marginal(fg.variables[n], probs[n])
         assert torch.allclose(bp, exact[n], atol=atol), (n, bp, exact[n])
         assert torch.allclose(bp.sum(-1), torch.ones_like(bp.sum(-1)), atol=1e-5)
 
@@ -141,9 +149,9 @@ class TestBPExactOnTrees:
 
     def test_chain_marginals_exact(self):
         fg = self._chain_mrf()
-        out = BeliefPropagation(fg, iters=25).query(query=["a", "b", "c"], evidence={})
+        probs = _query_each(BeliefPropagation(fg, iters=25), ["a", "b", "c"])
         exact = _exact_marginals(fg, ["a", "b", "c"])
-        _assert_marginals_match(fg, out, exact, ["a", "b", "c"])
+        _assert_marginals_match(fg, probs, exact, ["a", "b", "c"])
 
     def test_star_marginals_exact(self):
         torch.manual_seed(1)
@@ -154,16 +162,16 @@ class TestBPExactOnTrees:
             factors.append(_pot([hub, lf], f"e{i}"))
         fg = MarkovNetwork(variables=[hub, *leaves], factors=factors)
         names = ["h", "l0", "l1", "l2"]
-        out = BeliefPropagation(fg, iters=25).query(query=names, evidence={})
+        probs = _query_each(BeliefPropagation(fg, iters=25), names)
         exact = _exact_marginals(fg, names)
-        _assert_marginals_match(fg, out, exact, names)
+        _assert_marginals_match(fg, probs, exact, names)
 
     def test_single_unary_marginal(self):
         a = _bin("a")
         fg = _ConcreteModel(variables=[a], factors=[_pot([a], "ua")])
         out = BeliefPropagation(fg, iters=3).query(query=["a"], evidence={})
         exact = _exact_marginals(fg, ["a"])
-        _assert_marginals_match(fg, out, exact, ["a"])
+        _assert_marginals_match(fg, out.probs, exact, ["a"])
 
 
 class TestBPMatchesDirectedOnDAG:
@@ -173,9 +181,9 @@ class TestBPMatchesDirectedOnDAG:
         cpd_a = ParametricCPD(variable=a, parametrization={"logits": LearnablePrior(1)})
         cpd_b = ParametricCPD(variable=b, parametrization={"logits": nn.Linear(1, 1)}, parents=[a])
         fg = _ConcreteModel(variables=[a, b], factors=[cpd_a, cpd_b])
-        out = BeliefPropagation(fg, iters=15).query(query=["a", "b"], evidence={})
+        probs = _query_each(BeliefPropagation(fg, iters=15), ["a", "b"])
         exact = _exact_marginals(fg, ["a", "b"])
-        _assert_marginals_match(fg, out, exact, ["a", "b"])
+        _assert_marginals_match(fg, probs, exact, ["a", "b"])
 
 
 class TestBPConditionalAndEvidence:
@@ -186,10 +194,10 @@ class TestBPConditionalAndEvidence:
         pot = _pot([a, b], "phi", conditioning=[emb])
         fg = _ConcreteModel(variables=[a, b, emb], factors=[pot])
         e = torch.randn(7, 4)
-        out = BeliefPropagation(fg, iters=10).query(query=["a", "b"], evidence={"emb": e})
-        assert out.probs["a"].shape == (7, 1)
+        probs = _query_each(BeliefPropagation(fg, iters=10), ["a", "b"], {"emb": e})
+        assert probs["a"].shape == (7, 1)
         exact = _exact_marginals(fg, ["a", "b"], conditioning={"emb": e}, batch=7)
-        _assert_marginals_match(fg, out, exact, ["a", "b"])
+        _assert_marginals_match(fg, probs, exact, ["a", "b"])
 
     def test_discrete_evidence_matches_exact_conditional(self):
         torch.manual_seed(4)
@@ -197,13 +205,15 @@ class TestBPConditionalAndEvidence:
         fg = _ConcreteModel(variables=[a, b], factors=[_pot([a], "ua"), _pot([a, b], "ab")])
         out = BeliefPropagation(fg, iters=10).query(query=["a"], evidence={"b": torch.ones(1, 1)})
         exact = _exact_marginals(fg, ["a"], evidence_states={"b": 1})
-        _assert_marginals_match(fg, out, exact, ["a"])
+        _assert_marginals_match(fg, out.probs, exact, ["a"])
 
     def test_observed_variable_emits_no_params(self):
         a, b = _bin("a"), _bin("b")
         fg = _ConcreteModel(variables=[a, b], factors=[_pot([a, b], "ab")])
-        out = BeliefPropagation(fg, iters=5).query(query=["a", "b"], evidence={"b": torch.ones(1, 1)})
+        eng = BeliefPropagation(fg, iters=5)
+        out = eng.query(query=["b"], evidence={"b": torch.ones(1, 1)})
         assert "b" not in out.variables
+        out = eng.query(query=["a"], evidence={"b": torch.ones(1, 1)})
         assert set(out.variables) == {"a"}
 
 
@@ -266,8 +276,8 @@ class TestBPVectorisedLayout:
                      _pot([a, b], "ab"), _pot([b, c], "bc")],
         )
         names = ["a", "b", "c"]
-        out = BeliefPropagation(fg, iters=30).query(query=names, evidence={})
-        _assert_marginals_match(fg, out, _exact_marginals(fg, names), names)
+        probs = _query_each(BeliefPropagation(fg, iters=30), names)
+        _assert_marginals_match(fg, probs, _exact_marginals(fg, names), names)
 
     def test_factors_sharing_a_signature_are_batched_exactly(self):
         """Four identical-signature pairwise factors land in one bucket."""
@@ -277,8 +287,8 @@ class TestBPVectorisedLayout:
         factors = [_pot([hub, lf], f"e{i}") for i, lf in enumerate(leaves)]
         fg = MarkovNetwork(variables=[hub, *leaves], factors=factors)
         names = ["h", *[lf.name for lf in leaves]]
-        out = BeliefPropagation(fg, iters=30).query(query=names, evidence={})
-        _assert_marginals_match(fg, out, _exact_marginals(fg, names), names)
+        probs = _query_each(BeliefPropagation(fg, iters=30), names)
+        _assert_marginals_match(fg, probs, _exact_marginals(fg, names), names)
 
     def test_mixed_signatures_and_arities_exact(self):
         """Three buckets at once: (2,(2,2)), (2,(2,3)) and (3,(2,2,3))."""
@@ -294,9 +304,9 @@ class TestBPVectorisedLayout:
         # dict-based reference only in the sense of running; exactness is
         # asserted on the tree tests above. Here we only require a normalised,
         # finite answer over every padded state axis.
-        out = BeliefPropagation(fg, iters=30, damping=0.5).query(query=names, evidence={})
+        out = _query_each(BeliefPropagation(fg, iters=30, damping=0.5), names)
         for n in names:
-            probs = _state_marginal(fg.variables[n], out.probs[n])
+            probs = _state_marginal(fg.variables[n], out[n])
             assert torch.isfinite(probs).all()
             assert torch.allclose(probs.sum(-1), torch.ones(1), atol=1e-5)
 
@@ -309,8 +319,8 @@ class TestBPVectorisedLayout:
             factors=[_pot([a], "ua1"), _pot([a], "ua2"), _pot([b], "ub")],
         )
         names = ["a", "b"]
-        out = BeliefPropagation(fg, iters=5).query(query=names, evidence={})
-        _assert_marginals_match(fg, out, _exact_marginals(fg, names), names)
+        probs = _query_each(BeliefPropagation(fg, iters=5), names)
+        _assert_marginals_match(fg, probs, _exact_marginals(fg, names), names)
 
     def test_leading_dims_preserved(self):
         """Two leading dimensions survive the flat message layout."""
@@ -322,7 +332,7 @@ class TestBPVectorisedLayout:
             factors=[_pot([a, b], "phi", conditioning=[emb])],
         )
         out = BeliefPropagation(fg, iters=8).query(
-            query=["a", "b"], evidence={"emb": torch.randn(2, 5, 3)}
+            query=["a"], evidence={"emb": torch.randn(2, 5, 3)}
         )
         assert out.probs["a"].shape == (2, 5, 1)
 
@@ -377,8 +387,8 @@ class TestBPStochasticParametrization:
         )
         fg.eval()
         eng = BeliefPropagation(fg, iters=8)
-        first = eng.query(query=["a", "b", "c"], evidence={}).probs["b"]
-        second = eng.query(query=["a", "b", "c"], evidence={}).probs["b"]
+        first = eng.query(query=["b"], evidence={}).probs["b"]
+        second = eng.query(query=["b"], evidence={}).probs["b"]
         assert torch.equal(first, second)
 
     def test_train_mode_is_stochastic_but_unbiased_around_eval(self):
@@ -421,13 +431,13 @@ class TestBPKnobs:
     def test_knobs_reach_the_same_fixed_point(self, kwargs):
         fg = self._chain()
         names = ["a", "b", "c"]
-        out = BeliefPropagation(fg, iters=60, **kwargs).query(query=names, evidence={})
-        _assert_marginals_match(fg, out, _exact_marginals(fg, names), names, atol=1e-4)
+        probs = _query_each(BeliefPropagation(fg, iters=60, **kwargs), names)
+        _assert_marginals_match(fg, probs, _exact_marginals(fg, names), names, atol=1e-4)
 
     def test_tol_stops_early_without_changing_the_answer(self):
         fg = self._chain()
         names = ["a", "b", "c"]
-        loose = BeliefPropagation(fg, iters=200, tol=1e-7).query(query=names, evidence={})
+        loose = _query_each(BeliefPropagation(fg, iters=200, tol=1e-7), names)
         exact = _exact_marginals(fg, names)
         _assert_marginals_match(fg, loose, exact, names, atol=1e-4)
 
@@ -436,10 +446,10 @@ class TestBPKnobs:
         run is a no-op rather than a probability-space average."""
         fg = self._chain()
         names = ["a", "b", "c"]
-        a = BeliefPropagation(fg, iters=80, damping=0.0).query(query=names, evidence={})
-        b = BeliefPropagation(fg, iters=80, damping=0.7).query(query=names, evidence={})
+        a = _query_each(BeliefPropagation(fg, iters=80, damping=0.0), names)
+        b = _query_each(BeliefPropagation(fg, iters=80, damping=0.7), names)
         for n in names:
-            assert torch.allclose(a.probs[n], b.probs[n], atol=1e-4)
+            assert torch.allclose(a[n], b[n], atol=1e-4)
 
 
 class TestBPErrors:
@@ -543,78 +553,77 @@ class TestBPPlateMembers:
             for i, (_, m) in enumerate(free)
         }
 
-    def _member_probs(self, fg, out, owner_name, member):
-        """The engine's marginal for one member, widened to a state distribution."""
+    def _member_probs(self, fg, probs, owner_name, member):
+        """The engine's marginal for one member (``probs`` from
+        :func:`_query_each`), widened to a state distribution."""
         owner = fg.variables[owner_name]
-        return _state_marginal(
-            owner.member(member), out.probs[member]
-        )
+        return _state_marginal(owner.member(member), probs[member])
 
     # -- test-time queries --------------------------------------------------
     def test_no_evidence_matches_exact(self):
         fg = self._two_plate_bn()
-        out = BeliefPropagation(fg, iters=30).query(query=["root", "g", "h"], evidence={})
+        members = fg.variables["g"].members + fg.variables["h"].members
+        probs = _query_each(BeliefPropagation(fg, iters=30), members)
         exact = self._exact_member_marginals(fg, {})
         for owner in ("g", "h"):
             for member in fg.variables[owner].members:
-                bp = self._member_probs(fg, out, owner, member)
+                bp = self._member_probs(fg, probs, owner, member)
                 assert torch.allclose(bp, exact[member], atol=1e-5), (member, bp, exact[member])
 
     def test_partial_plate_evidence_matches_exact(self):
         """Observe one member of each plate; the rest must be marginalised."""
         fg = self._two_plate_bn()
-        out = BeliefPropagation(fg, iters=30).query(
-            query=["root", "g", "h"],
-            evidence={"g1": torch.ones(1, 1), "h3": torch.zeros(1, 1)},
+        evidence = {"g1": torch.ones(1, 1), "h3": torch.zeros(1, 1)}
+        probs = _query_each(
+            BeliefPropagation(fg, iters=30), ["g1", "g2", "h1", "h2", "h3"], evidence
         )
         exact = self._exact_member_marginals(fg, {"g1": 1, "h3": 0})
         for owner, member in [("g", "g2"), ("h", "h1"), ("h", "h2")]:
-            bp = self._member_probs(fg, out, owner, member)
+            bp = self._member_probs(fg, probs, owner, member)
             assert torch.allclose(bp, exact[member], atol=1e-5), (member, bp, exact[member])
         # An observed member reports its evidence: conditioning makes it a point mass.
-        g = fg.variables["g"]
-        assert torch.allclose(out.probs["g1"], torch.ones(1, 1))
-        h = fg.variables["h"]
-        assert torch.allclose(out.probs["h3"], torch.zeros(1, 1))
+        assert torch.allclose(probs["g1"], torch.ones(1, 1))
+        assert torch.allclose(probs["h3"], torch.zeros(1, 1))
 
     def test_evidence_on_a_member_moves_the_other_plate(self):
         """Both plates hang off ``root``, so conditioning one must move the other."""
         fg = self._two_plate_bn()
         eng = BeliefPropagation(fg, iters=30)
-        free = eng.query(query=["h"], evidence={}).probs["h"]
-        clamped = eng.query(query=["h"], evidence={"g1": torch.ones(1, 1)}).probs["h"]
+        free = eng.query(query=["h1"], evidence={}).probs["h1"]
+        clamped = eng.query(query=["h1"], evidence={"g1": torch.ones(1, 1)}).probs["h1"]
         assert not torch.allclose(free, clamped, atol=1e-4)
 
     def test_whole_plate_evidence_still_works(self):
         fg = self._two_plate_bn()
-        out = BeliefPropagation(fg, iters=25).query(
-            query=["root", "h"], evidence={"g": torch.tensor([[1.0, 0.0]])}
-        )
+        eng = BeliefPropagation(fg, iters=25)
+        evidence = {"g": torch.tensor([[1.0, 0.0]])}
+        probs = _query_each(eng, fg.variables["h"].members, evidence)
         exact = self._exact_member_marginals(fg, {"g1": 1, "g2": 0})
         for member in fg.variables["h"].members:
-            bp = self._member_probs(fg, out, "h", member)
+            bp = self._member_probs(fg, probs, "h", member)
             assert torch.allclose(bp, exact[member], atol=1e-5), member
-        assert "g" not in out.variables          # fully observed -> no parameters
+        # fully observed -> no parameters
+        assert not eng.query(query=["g1"], evidence=evidence).variables
 
     def test_two_members_of_the_same_plate_observed(self):
         fg = self._two_plate_bn()
         out = BeliefPropagation(fg, iters=25).query(
-            query=["h"], evidence={"h1": torch.ones(1, 1), "h2": torch.zeros(1, 1)}
+            query=["h3"], evidence={"h1": torch.ones(1, 1), "h2": torch.zeros(1, 1)}
         )
         exact = self._exact_member_marginals(fg, {"h1": 1, "h2": 0})
-        bp = self._member_probs(fg, out, "h", "h3")
+        bp = self._member_probs(fg, out.probs, "h", "h3")
         assert torch.allclose(bp, exact["h3"], atol=1e-5)
 
     def test_batched_partial_evidence(self):
         fg = self._two_plate_bn()
         ev = torch.tensor([[0.0]] * 4 + [[1.0]] * 4)
-        out = BeliefPropagation(fg, iters=15).query(query=["g", "h"], evidence={"g1": ev})
-        assert out.probs["g"].shape == (8, 2)
-        assert out.probs["h"].shape == (8, 3)
+        probs = _query_each(BeliefPropagation(fg, iters=15), ["g2", "h1"], {"g1": ev})
+        assert probs["g2"].shape == (8, 1)
+        assert probs["h1"].shape == (8, 1)
         # Rows conditioned differently must get different answers.
-        assert not torch.allclose(out.probs["h"][0], out.probs["h"][7], atol=1e-4)
+        assert not torch.allclose(probs["h1"][0], probs["h1"][7], atol=1e-4)
         # ...and rows conditioned the same must agree.
-        assert torch.allclose(out.probs["h"][0], out.probs["h"][3], atol=1e-6)
+        assert torch.allclose(probs["h1"][0], probs["h1"][3], atol=1e-6)
 
     def test_single_member_query_slices_the_plate(self):
         fg = self._two_plate_bn()
@@ -631,10 +640,10 @@ class TestBPPlateMembers:
     # -- training -----------------------------------------------------------
     def test_gradients_reach_every_cpd_under_partial_evidence(self):
         fg = self._two_plate_bn()
-        out = BeliefPropagation(fg, iters=8).query(
-            query=["g", "h"], evidence={"h1": torch.ones(1, 1)}
+        probs = _query_each(
+            BeliefPropagation(fg, iters=8), ["g1", "g2", "h2", "h3"], {"h1": torch.ones(1, 1)}
         )
-        (out.probs["g"].tensor.pow(2).sum() + out.probs["h"].tensor.pow(2).sum()).backward()
+        sum(p.tensor.pow(2).sum() for p in probs.values()).backward()
         grads = [p.grad for p in fg.parameters() if p.grad is not None]
         assert len(grads) == len(list(fg.parameters()))
         assert all(torch.isfinite(g).all() for g in grads)
@@ -650,17 +659,8 @@ class TestBPPlateMembers:
         opt = torch.optim.Adam(fg.parameters(), lr=0.1)
 
         def losses():
-            out = eng.query(query=["g", "h"], evidence=evidence)
-            return sum(
-                _binary_ce(
-                    out.probs[m], target
-                )
-                for owner, m, target in [
-                    ("g", "g2", targets["g2"]),
-                    ("h", "h2", targets["h2"]),
-                    ("h", "h3", targets["h3"]),
-                ]
-            )
+            probs = _query_each(eng, list(targets), evidence)
+            return sum(_binary_ce(probs[m], target) for m, target in targets.items())
 
         first = losses().item()
         for _ in range(200):
@@ -670,10 +670,10 @@ class TestBPPlateMembers:
             opt.step()
         assert loss.item() < first * 0.5
 
-        out = eng.query(query=["g", "h"], evidence=evidence)
-        assert out.probs["g2"][0].item() > 0.9
-        assert out.probs["h2"][0].item() > 0.9
-        assert out.probs["h3"][0].item() < 0.1
+        probs = _query_each(eng, list(targets), evidence)
+        assert probs["g2"][0].item() > 0.9
+        assert probs["h2"][0].item() > 0.9
+        assert probs["h3"][0].item() < 0.1
 
     # -- categorical plates (needs build_distribution's per-member split) ----
     def _mixed_plate_bn(self, seed=32):
@@ -705,35 +705,30 @@ class TestBPPlateMembers:
         the flattened build got wrong.
         """
         fg = self._mixed_plate_bn()
-        out = BeliefPropagation(fg, iters=30).query(query=["h"], evidence={})
         h = fg.variables["h"]
+        probs = _query_each(BeliefPropagation(fg, iters=30), h.members)
         for member in h.members:
-            block = out.probs[member]
+            block = probs[member]
             assert block.shape == (1, 3)
             assert torch.allclose(block.sum(-1), torch.ones(1), atol=1e-5), member
         exact = self._exact_member_marginals(fg, {})
         for member in h.members:
-            assert torch.allclose(
-                out.probs[member], exact[member], atol=1e-5
-            ), member
+            assert torch.allclose(probs[member], exact[member], atol=1e-5), member
 
     def test_categorical_plate_partial_evidence(self):
         fg = self._mixed_plate_bn()
-        out = BeliefPropagation(fg, iters=30).query(
-            query=["g", "h"],
-            evidence={"h1": torch.tensor([[0.0, 0.0, 1.0]]), "g1": torch.ones(1, 1)},
+        probs = _query_each(
+            BeliefPropagation(fg, iters=30), ["g2", "h1", "h2"],
+            {"h1": torch.tensor([[0.0, 0.0, 1.0]]), "g1": torch.ones(1, 1)},
         )
         exact = self._exact_member_marginals(fg, {"h1": 2, "g1": 1})
-        h, g = fg.variables["h"], fg.variables["g"]
-        assert torch.allclose(out.probs["h2"], exact["h2"], atol=1e-5)
+        g = fg.variables["g"]
+        assert torch.allclose(probs["h2"], exact["h2"], atol=1e-5)
         assert torch.allclose(
-            _state_marginal(g.member("g2"), out.probs["g2"]),
-            exact["g2"], atol=1e-5,
+            _state_marginal(g.member("g2"), probs["g2"]), exact["g2"], atol=1e-5,
         )
         # observed members echo their evidence
-        assert torch.allclose(
-            out.probs["h1"], torch.tensor([[0.0, 0.0, 1.0]])
-        )
+        assert torch.allclose(probs["h1"], torch.tensor([[0.0, 0.0, 1.0]]))
 
     def test_categorical_plate_trains(self):
         fg = self._mixed_plate_bn(seed=33)
@@ -745,7 +740,7 @@ class TestBPPlateMembers:
         opt = torch.optim.Adam(fg.parameters(), lr=0.1)
 
         def loss_fn():
-            out = eng.query(query=["h"], evidence=evidence)
+            out = eng.query(query=["h2"], evidence=evidence)
             return torch.nn.functional.nll_loss(
                 out.probs["h2"].log(), target
             )
@@ -757,5 +752,119 @@ class TestBPPlateMembers:
             loss.backward()
             opt.step()
         assert loss.item() < first * 0.5
-        out = eng.query(query=["h"], evidence=evidence)
+        out = eng.query(query=["h2"], evidence=evidence)
         assert out.probs["h2"][0][2].item() > 0.9
+
+
+class TestBPSingleVariableQuery:
+    """BP's beliefs are single-variable marginals, so a query names one variable
+    (or one plate member); several — named, or packed in a plate — raise."""
+
+    def _pair(self):
+        a, b = _bin("a"), _bin("b")
+        return _ConcreteModel(variables=[a, b], factors=[_pot([a, b], "ab")])
+
+    def test_several_names_raise(self):
+        with pytest.raises(ValueError, match="2 variables"):
+            BeliefPropagation(self._pair()).query(query=["a", "b"], evidence={})
+
+    def test_several_valued_names_raise(self):
+        query = {"a": torch.ones(1, 1), "b": torch.ones(1, 1)}
+        with pytest.raises(ValueError, match="PgmpyVariableElimination"):
+            BeliefPropagation(self._pair()).query(query=query, evidence={})
+
+    def test_plate_with_several_members_raises(self):
+        fg = TestBPPlateMembers()._two_plate_bn()
+        with pytest.raises(ValueError, match="3 variables"):
+            BeliefPropagation(fg).query(query=["h"], evidence={})
+
+    def test_one_member_is_one_variable(self):
+        fg = TestBPPlateMembers()._two_plate_bn()
+        out = BeliefPropagation(fg).query(query=["h2"], evidence={})
+        assert out.probs.annotations.labels == ["h2"]
+
+
+class TestBPQueryProbability:
+    """A value in the query is a target: ``out.probabilities`` is ``P(Q=q | E)``,
+    as for the sampling estimators."""
+
+    def _star(self):
+        """A categorical hub with two binary leaves — a tree, so BP is exact."""
+        torch.manual_seed(40)
+        hub, a, b = _cat("h", 3), _bin("a"), _bin("b")
+        return MarkovNetwork(
+            variables=[hub, a, b],
+            factors=[_pot([hub], "uh"), _pot([hub, a], "ha"), _pot([hub, b], "hb")],
+        )
+
+    def test_binary_target_reads_the_exact_conditional(self):
+        fg = self._star()
+        target = torch.tensor([[1.0], [0.0]])     # rows ask for different values
+        out = BeliefPropagation(fg, iters=20).query(
+            query={"a": target}, evidence={"b": torch.ones(2, 1)}
+        )
+        exact = _exact_marginals(fg, ["h", "a"], evidence_states={"b": 1})["a"][0]
+        assert out.probabilities.shape == (2,)
+        assert torch.allclose(out.probabilities, exact[[1, 0]], atol=1e-5)
+
+    def test_categorical_target_reads_the_exact_conditional(self):
+        fg = self._star()
+        target = torch.tensor([[1.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
+        out = BeliefPropagation(fg, iters=20).query(
+            query={"h": target}, evidence={"a": torch.zeros(2, 1)}
+        )
+        exact = _exact_marginals(fg, ["h", "b"], evidence_states={"a": 0})["h"][0]
+        assert torch.allclose(out.probabilities, exact[[0, 2]], atol=1e-5)
+
+    def test_marginals_are_still_reported(self):
+        fg = self._star()
+        eng = BeliefPropagation(fg, iters=20)
+        valued = eng.query(query={"a": torch.ones(1, 1)}, evidence={})
+        plain = eng.query(query=["a"], evidence={})
+        assert torch.allclose(valued.probs["a"], plain.probs["a"])
+        assert plain.probabilities is None
+
+    def test_plate_member_target(self):
+        fg = TestBPPlateMembers()._two_plate_bn()
+        out = BeliefPropagation(fg, iters=25).query(
+            query={"h2": torch.zeros(1, 1)}, evidence={"g1": torch.ones(1, 1)}
+        )
+        exact = TestBPPlateMembers()._exact_member_marginals(fg, {"g1": 1})
+        assert torch.allclose(out.probabilities, exact["h2"][:, 0], atol=1e-5)
+
+    def test_leading_dims(self):
+        fg = self._star()
+        target = torch.rand(2, 3, 1).round()
+        out = BeliefPropagation(fg, iters=10).query(
+            query={"a": target}, evidence={"b": torch.ones(2, 3, 1)}
+        )
+        assert out.probabilities.shape == (2, 3)
+
+    def test_gradients_flow_through_the_probability(self):
+        fg = self._star()
+        out = BeliefPropagation(fg, iters=10).query(
+            query={"a": torch.ones(4, 1)}, evidence={"b": torch.ones(4, 1)}
+        )
+        out.probabilities.log().sum().backward()
+        grads = [p.grad for p in fg.parameters() if p.grad is not None]
+        assert grads and any(g.abs().sum() > 0 for g in grads)
+
+    @pytest.mark.parametrize("name,target,match", [
+        ("a", torch.full((1, 1), 0.5), "0 or 1"),
+        ("h", torch.tensor([[0.5, 0.5, 0.0]]), "one-hot"),
+    ])
+    def test_invalid_target_raises(self, name, target, match):
+        with pytest.raises(ValueError, match=match):
+            BeliefPropagation(self._star()).query(query={name: target}, evidence={})
+
+    def test_target_also_in_evidence_raises(self):
+        one = torch.ones(1, 1)
+        with pytest.raises(ValueError, match="both query and evidence"):
+            BeliefPropagation(self._star()).query(query={"a": one}, evidence={"a": one})
+
+    def test_continuous_target_raises(self):
+        a = _bin("a")
+        emb = ConceptVariable("emb", distribution=dist.Normal, size=2)
+        fg = _ConcreteModel(variables=[a, emb], factors=[_pot([a], "ua", conditioning=[emb])])
+        with pytest.raises(ValueError, match="not discretely enumerable"):
+            BeliefPropagation(fg).query(query={"emb": torch.randn(1, 2)}, evidence={})

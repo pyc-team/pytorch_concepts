@@ -9,7 +9,9 @@ import torch
 from ...graph.probabilistic_model import ProbabilisticModel
 from ...variable import Variable
 from ....outputs import InferenceOutput
-from ..utils import enumerable_cardinality, factor_table, unpack_plates
+from ..utils import (
+    enumerable_cardinality, factor_table, query_targets, unpack_plates,
+)
 from .base import TorchBaseInference
 
 
@@ -134,11 +136,29 @@ class BeliefPropagation(TorchBaseInference):
         query: Union[List[str], Dict[str, Optional[torch.Tensor]]],
         evidence: Dict[str, torch.Tensor],
     ) -> InferenceOutput:
-        """Run loopy BP and return per-variable marginals."""
+        """Run loopy BP and return the queried variable's marginal (and, if the
+        query carries a value, its probability in ``out.probabilities``)."""
         
         query = self._normalize_query(query)
         self._validate_containers(query, evidence)
         query_names = list(query)
+
+        # One variable per query: a plate counts once per member, since BP
+        # unpacks it into one node each.
+        resolve = self.pgm.resolve
+        n_vars = sum(
+            1 if name != resolve(name).name else len(resolve(name).members)
+            for name in query_names
+        )
+        if n_vars > 1:
+            raise ValueError(
+                f"{self.name}: query {query_names} names {n_vars} variables, but "
+                "BeliefPropagation computes the marginal of a single variable. Query "
+                "one variable (or plate member) at a time. For the joint of several, "
+                "use PgmpyVariableElimination (exact, in `out.probabilities`) or the "
+                "chain rule P(a, b | e) = P(a | e) * P(b | a, e): two queries, the "
+                "second with `a` as evidence."
+            )
 
         tensors = list(evidence.values()) + [v for v in query.values() if v is not None]
         leading = self._query_leading_shape(query, evidence)
@@ -150,6 +170,7 @@ class BeliefPropagation(TorchBaseInference):
         # enumeration is per member. Local, never a submodule — see unpack_plates.
         model = unpack_plates(self.pgm)
         member_blocks = self.member_evidence(evidence, dtype)
+        targets = query_targets(self, query, member_blocks, model, dtype)
 
         # Active = free variables that participate in some factor. Model order,
         # so the node axis is deterministic across queries.
@@ -180,10 +201,16 @@ class BeliefPropagation(TorchBaseInference):
             n.name: self._marginal(n, belief[..., i, : cards[i]])
             for i, n in enumerate(nodes)
         }
+        probabilities = None
+        if targets is not None:
+            # A single variable, so its target is a single member block.
+            (member, target), = targets.items()
+            probabilities = self._probability_at(marginals[member], target)
         return InferenceOutput(
             params=self._assemble_params(
                 self.regroup_members(marginals, member_blocks), query_names
-            )
+            ),
+            probabilities=probabilities,
         )
 
     # ---------------------------------------------------------------- compile
@@ -387,3 +414,14 @@ class BeliefPropagation(TorchBaseInference):
         if enumerable_cardinality(variable) == 2 and variable.size == 1:
             return probs[..., 1:2]
         return probs
+
+    @staticmethod
+    def _probability_at(marginal: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        """``P(x = target)`` from a :meth:`_marginal`, shaped ``(*leading,)``.
+
+        A binary marginal is the width-1 ``P(x=1)``, matched by a 0/1 target; a
+        categorical one the full distribution, matched by a one-hot target.
+        """
+        if target.shape[-1] == 1:
+            return (target * marginal + (1 - target) * (1 - marginal)).squeeze(-1)
+        return (target * marginal).sum(-1)
