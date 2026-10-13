@@ -255,8 +255,8 @@ class TestCategoricalLatent:
         x_obs = torch.randn(5, 4)
         out = vi.query(query={"x": x_obs, "z": None, "y": torch.ones(5, 1)}, evidence={})
 
-        model_probs = torch.softmax(torch.as_tensor(out.params["z"]["logits"]), -1)
-        guide_probs = torch.softmax(torch.as_tensor(out.guide_params["z"]["logits"]), -1)
+        model_probs = torch.softmax(out.params["z"]["logits"].tensor, -1)
+        guide_probs = torch.softmax(out.guide_params["z"]["logits"].tensor, -1)
         assert torch.allclose(model_probs, PRIOR.expand(5, 3), atol=1e-6)
         assert torch.allclose(guide_probs, torch.softmax(head(x_obs), -1), atol=1e-6)
 
@@ -265,7 +265,7 @@ class TestCategoricalLatent:
         prior = LearnablePrior(3)
         vi = VariationalInference(pgm, latents={"z": ParametricCPD(variable=z, parametrization={"logits": prior})})
         out = vi.query(query={"x": torch.randn(5, 4), "z": None, "y": torch.ones(5, 1)}, evidence={})
-        guide_probs = torch.softmax(torch.as_tensor(out.guide_params["z"]["logits"]), -1)
+        guide_probs = torch.softmax(out.guide_params["z"]["logits"].tensor, -1)
         assert torch.allclose(guide_probs, torch.softmax(prior(), -1).expand(5, 3), atol=1e-6)
 
     def test_plate_normalises_each_member(self):
@@ -277,10 +277,10 @@ class TestCategoricalLatent:
         out = vi.query(query={"x": x_obs, "z": None, "y": torch.ones(5, 1)}, evidence={})
 
         def per_member(logits):
-            return torch.softmax(torch.as_tensor(logits).reshape(5, 2, 3), -1)
+            return torch.softmax(logits.reshape(5, 2, 3), -1)
 
-        assert torch.allclose(per_member(out.params["z"]["logits"]), PRIOR.expand(5, 2, 3), atol=1e-6)
-        assert torch.allclose(per_member(out.guide_params["z"]["logits"]), per_member(head(x_obs)), atol=1e-6)
+        assert torch.allclose(per_member(out.params["z"]["logits"].tensor), PRIOR.expand(5, 2, 3), atol=1e-6)
+        assert torch.allclose(per_member(out.guide_params["z"]["logits"].tensor), per_member(head(x_obs)), atol=1e-6)
 
     def test_bernoulli_logits_are_unchanged(self):
         pgm, x, c, y = _make_latent_pgm()
@@ -288,7 +288,7 @@ class TestCategoricalLatent:
         vi = VariationalInference(pgm, latents={"c": ParametricCPD(variable=c, parametrization={"logits": head}, parents=[x])})
         x_obs = torch.randn(5, 4)
         out = vi.query(query={"x": x_obs, "c": None, "y": torch.ones(5, 1)}, evidence={})
-        assert torch.allclose(torch.as_tensor(out.guide_params["c"]["logits"]), head(x_obs), atol=1e-6)
+        assert torch.allclose(out.guide_params["c"]["logits"].tensor, head(x_obs), atol=1e-6)
 
 
 # ===========================================================================

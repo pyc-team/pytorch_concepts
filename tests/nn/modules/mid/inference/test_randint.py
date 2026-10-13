@@ -170,5 +170,5 @@ class TestCategoricalTarget:
         out = VariationalInference(pgm, p_int=p_int).query(
             query={"c": gt}, evidence={"x": inputs}
         )
-        reported = torch.softmax(torch.as_tensor(out.params["c"]["logits"]), -1)
+        reported = torch.softmax(out.params["c"]["logits"].tensor, -1)
         assert torch.allclose(reported, torch.softmax(head(inputs), -1), atol=1e-6)
