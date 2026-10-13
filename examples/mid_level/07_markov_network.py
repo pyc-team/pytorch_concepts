@@ -2,89 +2,115 @@
 Markov Network
 ==============
 
-In an undirected model, concepts are coupled by potentials instead of being
-linked by causal arrows, so evidence on one concept informs the others in any
-direction. Here two binary concepts ``a`` and ``b`` depend on an observed input
-``x`` and on a shared hidden cause: even given ``x``, knowing ``a`` changes the
-odds of ``b``. A model that predicts each concept from the input alone cannot
-use this; a single potential over ``a``, ``b`` and ``x`` can.
+In an undirected model, variables are coupled by potentials instead of being
+linked by directed edges. 
+Here three binary neurons: ``N1`` and ``N2`` fire at random, and
+``N3`` computes ``N1 AND N2``, with 2.5% noise. A single potential over all
+three learns the gate.
 
-``BeliefPropagation`` computes marginals by message passing. The model is
-trained on the likelihood of the joint ``p(a, b | x) = p(a | x) p(b | a, x)``,
-where both factors are queries, the second with ``a`` as evidence. (Fitting
-``p(a | x)`` and ``p(b | x)`` separately would not identify the coupling.)
+The model is trained by **pseudo-likelihood**: each variable is predicted from
+all the others, ``p(N1 | N2, N3) * p(N2 | N1, N3) * p(N3 | N1, N2)``. Each factor is
+one ``BeliefPropagation`` query, and a value in the query makes the engine
+report its probability in ``out.probabilities``. (Fitting each marginal
+``p(N3)`` on its own would not identify the gate.)
+
+The trained model is then queried by belief propagation
+and by exact variable elimination.
 """
 
 # %%
 import torch
-from torch.distributions import Bernoulli, Normal
+from torch.distributions import Bernoulli
 
-from torch_concepts import ConceptVariable, EmbeddingVariable, seed_everything
-from torch_concepts.nn import BeliefPropagation, MarkovNetwork, ParametricPotential
+from torch_concepts import ConceptVariable, seed_everything
+from torch_concepts.nn import (
+    BeliefPropagation,
+    MarkovNetwork,
+    ParametricPotential,
+    PgmpyVariableElimination,
+)
 
 seed_everything(42)
 
 # %%
 # Data
 # ----
-x = torch.randn(4000, 2)
-hidden = torch.randn(4000, 1)  # not observed; shared by both concepts
-a = (x[:, :1] + hidden > 0).float()
-b = (x[:, 1:] + hidden > 0).float()
-x_train, x_test = x[:3000], x[3000:]
-a_train, a_test = a[:3000], a[3000:]
-b_train, b_test = b[:3000], b[3000:]
+n1 = torch.bernoulli(torch.full((1000, 1), 0.5))
+n2 = torch.bernoulli(torch.full((1000, 1), 0.5))
+flip = torch.rand(1000, 1) < 0.025
+n3 = torch.where(flip, 1 - n1 * n2, n1 * n2)
+data = {"N1": n1, "N2": n2, "N3": n3}
 
 # %%
 # Model
 # -----
-# One potential over all three variables: an energy network scores every
-# configuration of ``a`` and ``b`` given ``x``. The observed input is a
-# variable of the network like any other, held fixed by evidence.
-x_var = EmbeddingVariable("x", distribution=Normal, size=2)
-a_var = ConceptVariable("a", distribution=Bernoulli)
-b_var = ConceptVariable("b", distribution=Bernoulli)
-energy = torch.nn.Sequential(
-    torch.nn.Linear(1 + 1 + 2, 64),
-    torch.nn.ReLU(),
-    torch.nn.Linear(64, 1),
-)
+# A unary potential on each input neuron, and one potential over all three
+# that scores every configuration of the gate.
+N1 = ConceptVariable("N1", distribution=Bernoulli)
+N2 = ConceptVariable("N2", distribution=Bernoulli)
+N3 = ConceptVariable("N3", distribution=Bernoulli)
 model = MarkovNetwork(
-    variables=[x_var, a_var, b_var],
-    factors=[ParametricPotential(scope=[a_var, b_var, x_var], parametrization=energy)],
+    variables=[N1, N2, N3],
+    factors=[
+        ParametricPotential(scope=[N1], parametrization=torch.nn.Linear(1, 1, bias=False)),
+        ParametricPotential(scope=[N2], parametrization=torch.nn.Linear(1, 1, bias=False)),
+        ParametricPotential(
+            scope=[N1, N2, N3],
+            parametrization=torch.nn.Sequential(
+                torch.nn.Linear(3, 10), torch.nn.LeakyReLU(0.1), torch.nn.Linear(10, 1)
+            ),
+        ),
+    ],
 )
-engine = BeliefPropagation(model, iters=5)
+engine = BeliefPropagation(model, iters=10)
 
 # %%
 # Training
 # --------
-optimizer = torch.optim.AdamW(model.parameters(), lr=0.01)
-bce = torch.nn.functional.binary_cross_entropy
+# The negative pseudo-log-likelihood: one query per variable, the others as
+# evidence, the observed value as the query's target.
+names = ["N1", "N2", "N3"]
+optimizer = torch.optim.Adam(model.parameters(), lr=0.1)
 for epoch in range(500):
     optimizer.zero_grad()
-    p_a = engine.query(["a"], evidence={"x": x_train}).probs["a"]
-    p_b_given_a = engine.query(["b"], evidence={"x": x_train, "a": a_train}).probs["b"]
-    loss = bce(p_a, a_train) + bce(p_b_given_a, b_train)
+    loss = 0.0
+    for name in names:
+        others = {other: data[other] for other in names if other != name}
+        p = engine.query({name: data[name]}, evidence=others).probabilities
+        loss = loss - p.log().mean()
     loss.backward()
     optimizer.step()
     if epoch % 100 == 0:
         print(f"epoch {epoch:3d} | loss {loss.item():.3f}")
 
 # %%
-# Evaluation
-# ----------
-# Evidence on ``a`` sharpens the prediction of ``b``.
-with torch.no_grad():
-    p_b = engine.query(["b"], evidence={"x": x_test}).probs["b"]
-    p_b_given_a = engine.query(["b"], evidence={"x": x_test, "a": a_test}).probs["b"]
-accuracy = ((p_b > 0.5).float() == b_test).float().mean()
-accuracy_given_a = ((p_b_given_a > 0.5).float() == b_test).float().mean()
-print(f"accuracy on b, given x:       {accuracy:.3f}")
-print(f"accuracy on b, given x and a: {accuracy_given_a:.3f}")
+# Queries
+# -------
+# First qurey: ``P(N3=1 | N1, N2)``
+# Second query: ``P(N1=1, N2=1 | N3=1)``
 
-# Where x says little (both inputs near 0), b follows a, in the model as in the data.
-near = (x_test.abs() < 0.5).all(dim=-1, keepdim=True)
-for value in (1.0, 0.0):
-    rows = near & (a_test == value)
-    model_p, data_p = p_b_given_a[rows].mean(), b_test[rows].mean()
-    print(f"P(b=1 | a={value:.0f}, x near 0): model {model_p:.2f}, data {data_p:.2f}")
+# First query using loopy BP
+Probs = engine(query={'N3':torch.Tensor([1,1,1,1])}, evidence={"N1":torch.Tensor([0,0,1,1]), "N2":torch.Tensor([0,1,0,1])}).probabilities
+Probs = [x.item() for x in list(Probs)]
+print("P(N3 | N1, N2)", Probs)
+
+# Second query using BP. This engine cannot estimate conditionals with multiple variables in the query.
+# Therefore, we apply the chain rule.
+p_N1_given_N3 = engine(query={'N1':torch.Tensor([1])}, evidence={"N3":torch.Tensor([1])}).probabilities.item()
+p_N2_given_N3_N1 = engine(query={'N2':torch.Tensor([1])}, evidence={"N3":torch.Tensor([1]),'N1':torch.Tensor([1])}).probabilities.item()
+print("P(N1=1, N2=2 | N3=1)", p_N1_given_N3 * p_N2_given_N3_N1)
+
+# Now the variable elimination engine
+engine = PgmpyVariableElimination(model)
+
+# First query
+Probs = engine(query={'N3':torch.Tensor([1,1,1,1])}, evidence={"N1":torch.Tensor([0,0,1,1]), "N2":torch.Tensor([0,1,0,1])}).probabilities
+Probs = [x.item() for x in list(Probs)]
+print("P(N3 | N1, N2)", Probs)
+
+# Second query
+Probs = engine(query={'N1':torch.Tensor([1]), 'N2':torch.Tensor([1])}, evidence={"N3":torch.Tensor([1])}).probabilities.item()
+print("P(N1=1, N2=2 | N3=1)", Probs)
+
+
+# %%
