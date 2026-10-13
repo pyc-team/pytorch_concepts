@@ -10,11 +10,12 @@ Entry points:
 - :data:`_PARAM_NAMES` — canonical param names per distribution family.
 - :func:`_peel` — strip ``Independent``/masked/expanded wrappers.
 - :func:`dist_to_params` — convert a Pyro distribution to a param dict.
-- :func:`trace_to_params` — harvest param dicts from all sites in a trace.
+- :func:`trace_to_params` — harvest each traced variable's params, under its
+  CPD's parameter names.
 """
 from __future__ import annotations
 
-from typing import Dict, Optional, Tuple
+from typing import Dict, Tuple
 
 import torch
 import torch.distributions as td
@@ -103,55 +104,25 @@ def build_relaxed_pyro_distribution(
     return d.to_event(n_event)
 
 
-# Canonical parameter names emitted in InferenceOutput.params /
-# InferenceOutput.guide_params, keyed by distribution family.
+# Parameter names reported per family, as ``torch.distributions`` names them.
 #
-# Discrete families are handled separately by ``_discrete_prob_key`` because
-# they accept either ``probs`` or ``logits`` and we want to preserve whichever
-# key was actually used at construction time.
+# A discrete family reports both ``probs`` and ``logits``, each read off the
+# distribution: a traced distribution no longer says which one it was built
+# from, so :func:`trace_to_params` keeps the one its CPD was written with.
+# The relaxed entries also match Pyro's relaxed families and their
+# straight-through variants, which subclass them. A relaxed site's
+# ``temperature`` is not reported: it is an engine knob
+# (``engine.temperature``), not a per-column parameter.
+_PROBS_AND_LOGITS = ("probs", "logits")
 _PARAM_NAMES: Dict[type, Tuple[str, ...]] = {
     td.Normal: ("loc", "scale"),
     td.MultivariateNormal: ("loc", "scale_tril"),
+    td.Bernoulli: _PROBS_AND_LOGITS,
+    td.Categorical: _PROBS_AND_LOGITS,
+    td.OneHotCategorical: _PROBS_AND_LOGITS,
+    td.RelaxedBernoulli: _PROBS_AND_LOGITS,
+    td.RelaxedOneHotCategorical: _PROBS_AND_LOGITS,
 }
-
-# Families whose primary parameter is either ``probs`` or ``logits``.
-_DISCRETE_FAMILIES: Tuple[type, ...] = (
-    td.Bernoulli, td.Categorical, td.OneHotCategorical,
-)
-
-# Relaxed surrogates that also carry a ``temperature`` parameter. Resolved
-# lazily so importing this module does not require Pyro to be installed.
-def _relaxed_discrete_families() -> Tuple[type, ...]:
-    # Reached only during inference, after a Pyro engine was constructed, so
-    # Pyro is guaranteed importable here.
-    #
-    # The base (non-straight-through) classes on purpose: the ``*StraightThrough``
-    # variants subclass them, so this covers a variable declared either way.
-    # Listing only the straight-through ones would let a soft concept site fall
-    # through to the generic branch and report no ``probs`` at all — which
-    # surfaces far downstream as a metric or concept loss that cannot find its
-    # parameter.
-    import pyro.distributions as pyro_dist
-    return (
-        pyro_dist.RelaxedBernoulli,
-        pyro_dist.RelaxedOneHotCategorical,
-    )
-
-
-def _discrete_prob_key(d) -> str:
-    """Return ``'probs'`` or ``'logits'`` reflecting how *d* was constructed.
-
-    Checks ``_param`` to determine the original parametrization of plain
-    discrete distributions (``td.Bernoulli``, ``td.Categorical``,
-    ``td.OneHotCategorical``). Works because ``torch.distributions`` stores
-    the directly-passed tensor in ``_param``.
-    """
-    source = d if hasattr(d, "_param") else getattr(d, "base_dist", d)
-    param = getattr(source, "_param", None)
-    if param is None:
-        return "probs"  # safe fallback
-    probs_attr = getattr(source, "probs", None)
-    return "probs" if (probs_attr is not None and param is probs_attr) else "logits"
 
 
 def _peel(d: pyro_dist.Distribution) -> pyro_dist.Distribution:
@@ -182,37 +153,12 @@ def _peel(d: pyro_dist.Distribution) -> pyro_dist.Distribution:
 
 
 def dist_to_params(d: pyro_dist.Distribution) -> ParamDict:
-    """Return the canonical named-parameter dict of a Pyro distribution
-    (e.g. ``{'probs': ...}`` or ``{'logits': ...}`` or ``{'loc': ..., 'scale': ...}``),
-    peeling ``Independent`` / masked / expanded wrappers first.
-
-    For **plain discrete** families (observed sites, created by
-    ``build_distribution``) the returned key (``'probs'`` or ``'logits'``)
-    reflects whichever parametrization was used at construction time.
-
-    For **relaxed discrete** families (latent/guide sites, created by
-    ``build_relaxed_pyro_distribution``) the key is always ``'probs'`` because
-    Pyro's ``LogitRelaxedBernoulli`` always stores logits internally and
-    Pyro reconstructs distribution objects during tracing (losing any
-    construction-time tag). Callers that need the user's original key should
-    post-process using the CPD's ``parametrization.keys()``; see
-    :meth:`VariationalInference._align_param_keys`.
+    """The named parameters of a Pyro distribution, wrappers peeled off:
+    ``{'loc': ..., 'scale': ...}``, ``{'value': ...}``, and for a discrete family
+    both ``{'probs': ..., 'logits': ...}`` (see :data:`_PARAM_NAMES`). Empty for
+    a family it does not know.
     """
     base = _peel(d)
-
-    # Relaxed discrete (STE): extract probs. The internal representation is
-    # always logits (LogitRelaxedBernoulli), but .probs is available as a
-    # property (sigmoid of stored logits). The relaxation ``temperature`` is
-    # deliberately not reported: it is a scalar knob of the engine (readable as
-    # ``engine.temperature``), not a per-column distribution parameter, so it has
-    # no place on the annotated event axis of the output.
-    if isinstance(base, _relaxed_discrete_families()):
-        return {"probs": base.probs}
-
-    # Plain discrete: probs or logits, detected via _param.
-    if isinstance(base, _DISCRETE_FAMILIES):
-        key = _discrete_prob_key(base)
-        return {key: getattr(base, key)}
 
     # Delta: a deterministic node (an embedding, a concept bottleneck context).
     # Latent sites carry Pyro's Delta and observed ones PyC's, which name the
@@ -220,31 +166,27 @@ def dist_to_params(d: pyro_dist.Distribution) -> ParamDict:
     if type(base).__name__ == "Delta":
         return {"value": base.mean}
 
-    # All other families: fixed param names.
-    names: Optional[Tuple[str, ...]] = None
-    for k, v in _PARAM_NAMES.items():
-        if isinstance(base, k):
-            names = v
-            break
-    if names is None:
-        return {}
-    return {n: getattr(base, n) for n in names}
+    for family, names in _PARAM_NAMES.items():
+        if isinstance(base, family):
+            return {name: getattr(base, name) for name in names}
+    return {}
 
 
-def trace_to_params(trace) -> Dict[str, ParamDict]:
-    """Use a Pyro trace to collect ``dist_to_params`` for every stochastic
-    (non-deterministic) sample site, keyed by site name.
+def trace_to_params(trace, cpds) -> Dict[str, ParamDict]:
+    """Each traced variable's parameters, under the names its CPD uses.
 
-    The ``trace`` argument accepts a ``poutine.Trace`` node dict
-    (``trace.nodes``) or anything with the same structure.
+    ``cpds`` maps site names to the CPDs that produced them (``pgm.factors``
+    for the model, ``pgm.guides`` for the guide). A site with no CPD there —
+    the batch plate, another engine's guide — is skipped. A CPD's
+    ``parametrization`` keys are its family's parameter names, so filtering by
+    them is what picks ``probs`` or ``logits`` for a discrete site.
     """
-    out: Dict[str, ParamDict] = {}
-    for name, node in trace.nodes.items():
-        if node["type"] != "sample":
-            continue
-        if node.get("infer", {}).get("_deterministic", False):
-            continue
-        pd_ = dist_to_params(node["fn"])
-        if pd_:
-            out[name] = pd_
-    return out
+    return {
+        name: {
+            key: value
+            for key, value in dist_to_params(node["fn"]).items()
+            if key in cpds[name].parametrization
+        }
+        for name, node in trace.nodes.items()
+        if node["type"] == "sample" and name in cpds
+    }

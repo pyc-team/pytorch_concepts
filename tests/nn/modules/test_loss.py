@@ -11,10 +11,12 @@ import math
 import pytest
 import unittest
 import torch
+import torch.distributions as dist
 from torch import nn
 from torch_concepts.nn.modules.loss import (ConceptLoss, WeightedConceptLoss,
                                             DepthWeightedConceptLoss, L1LogitRegularizer,
-                                            MSEReconstructionLoss, ConceptSubset)
+                                            MSEReconstructionLoss, ConceptSubset,
+                                            KLDivergenceLoss)
 from torch_concepts.nn.modules.outputs import InferenceOutput
 from torch_concepts.annotations import Annotations
 from torch_concepts.tensor import AnnotatedTensor
@@ -1369,3 +1371,74 @@ class TestMSEReconstructionLoss:
         with pytest.raises(KeyError, match="neither a reported quantity"):
             MSEReconstructionLoss(variable="input")(out, {"x": torch.randn(4, 3)})
 
+
+
+def _kl_output(guide, prior, kind):
+    """A one-latent output ``z``: the guide's parameters and the prior's."""
+    width = next(iter(guide.values())).shape[-1]
+    annotations = Annotations(labels=["z"], cardinalities=[width], types=[kind])
+
+    def wrap(params):
+        return {q: AnnotatedTensor(t, annotations, axis=-1) for q, t in params.items()}
+
+    return InferenceOutput(params=wrap(prior), guide_params=wrap(guide))
+
+
+class TestKLDivergenceLoss:
+    """The divergence is averaged over the batch whatever the family's event.
+
+    A categorical or a ``MultivariateNormal`` scores a whole row at once, so its
+    divergence has no per-dimension axis; the batch must not be read as one.
+    """
+
+    def test_categorical_is_the_batch_mean(self):
+        torch.manual_seed(0)
+        q, p = torch.randn(8, 3), torch.randn(8, 3)
+        loss = KLDivergenceLoss(["z"], distribution=dist.OneHotCategorical)(
+            _kl_output({"logits": q}, {"logits": p}, "categorical"))
+        expected = dist.kl_divergence(
+            dist.OneHotCategorical(logits=q), dist.OneHotCategorical(logits=p)).mean()
+        assert torch.allclose(loss, expected)
+
+    def test_categorical_does_not_grow_with_the_batch(self):
+        torch.manual_seed(0)
+        q, p = torch.randn(4, 3), torch.randn(4, 3)
+        kl = KLDivergenceLoss(["z"], distribution=dist.OneHotCategorical)
+        single = kl(_kl_output({"logits": q}, {"logits": p}, "categorical"))
+        doubled = kl(_kl_output({"logits": q.repeat(2, 1)}, {"logits": p.repeat(2, 1)}, "categorical"))
+        assert torch.allclose(single, doubled)
+
+    def test_free_bits_floor_a_categorical_once(self):
+        """One floor for the variable, not one per batch row."""
+        same = torch.zeros(4, 3)
+        loss = KLDivergenceLoss(["z"], distribution=dist.OneHotCategorical, free_bits=0.5)(
+            _kl_output({"logits": same}, {"logits": same}, "categorical"))
+        assert float(loss) == pytest.approx(0.5)
+
+    def test_multivariate_normal_is_the_batch_mean(self):
+        torch.manual_seed(0)
+        loc = torch.randn(8, 2)
+        tril = 0.5 * torch.eye(2).expand(8, 2, 2)
+        loss = KLDivergenceLoss(["z"])(_kl_output(
+            {"loc": loc, "scale_tril": tril},
+            {"loc": torch.zeros(8, 2), "scale_tril": torch.eye(2).expand(8, 2, 2)},
+            "continuous",
+        ))
+        expected = dist.kl_divergence(
+            dist.MultivariateNormal(loc, scale_tril=tril),
+            dist.MultivariateNormal(torch.zeros(8, 2), scale_tril=torch.eye(2).expand(8, 2, 2)),
+        ).mean()
+        assert torch.allclose(loss, expected)
+
+    def test_normal_is_summed_over_its_dimensions(self):
+        torch.manual_seed(0)
+        loc, scale = torch.randn(8, 3), torch.rand(8, 3) + 0.5
+        loss = KLDivergenceLoss(["z"])(_kl_output(
+            {"loc": loc, "scale": scale},
+            {"loc": torch.zeros(8, 3), "scale": torch.ones(8, 3)},
+            "continuous",
+        ))
+        expected = dist.kl_divergence(
+            dist.Normal(loc, scale), dist.Normal(torch.zeros(8, 3), torch.ones(8, 3))
+        ).mean(0).sum()
+        assert torch.allclose(loss, expected)

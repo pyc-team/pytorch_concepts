@@ -14,7 +14,6 @@ import warnings
 from typing import Callable, Dict, List, Optional, Union
 
 import torch
-import torch.nn as nn
 
 from ...graph.bayesian_network import BayesianNetwork
 from ...factors.cpd import ParametricCPD
@@ -60,6 +59,11 @@ class VariationalInference(PyroBaseInference):
         Below ``1.0`` those variables become latent sites blended with the
         ground truth after the draw, which is how a generative concept model
         gets CEM's RandInt. Set it on the *train* engine only.
+
+        It applies to **every** value in ``query``, whatever the variable: an
+        input passed there is replaced by a model draw just like a concept. Pass
+        inputs (and anything else that must always stay observed) as
+        ``evidence``, which is never forced.
     """
 
     name = "VariationalInference"
@@ -117,9 +121,12 @@ class VariationalInference(PyroBaseInference):
                 "behave as expected."
             )
         _notice(
-            f"{self.name}: Contract — pass all variables in `query`: observed "
-            "variables with tensor values, latent variables absent or set to None. "
-            "`evidence` is still accepted and merged (`query` values take priority)."
+            f"{self.name}: Contract — pass every variable you want reported in "
+            "`query`: targets with tensor values, latent variables absent or set to "
+            "None. Inputs and anything else that must always stay observed go in "
+            "`evidence`: below p_int=1.0 every `query` value is teacher-forced, i.e. "
+            "replaced by the model's own draw in a 1 - p_int share of the rows. "
+            "Both are merged for conditioning (`query` values take priority)."
         )
 
     def __repr__(self) -> str:
@@ -141,8 +148,11 @@ class VariationalInference(PyroBaseInference):
         pgm: BayesianNetwork,
         latents: Dict[str, ParametricCPD],
     ) -> List[str]:
+        # Guides live on the PGM, which several engines may share (a train and
+        # an eval engine, typically). Each engine therefore only *adds* its own:
+        # replacing the dict would silently strip another engine of its guides,
+        # leaving it sampling its latents from the prior.
         if not latents:
-            pgm.guides = nn.ModuleDict()
             return []
 
         if not isinstance(latents, dict):
@@ -188,8 +198,14 @@ class VariationalInference(PyroBaseInference):
                         f"{p.name!r} is a different Variable instance than the one "
                         "registered in the PGM. Pass the same object."
                     )
+            if lat_name in pgm.guides and pgm.guides[lat_name] is not cpd:
+                raise ValueError(
+                    f"{cls.__name__}: latent {lat_name!r} already has a different "
+                    "guide on this PGM, registered by another engine. Engines "
+                    "sharing a PGM share its guides: pass the same ParametricCPD."
+                )
 
-        pgm.guides = nn.ModuleDict(latents)
+        pgm.guides.update(latents)
         return list(latents.keys())
 
     # ------------------------------------------------------------------
@@ -216,39 +232,6 @@ class VariationalInference(PyroBaseInference):
                 data[name] = val
         return data
 
-    def _align_param_keys(
-        self,
-        params: Dict[str, Dict[str, torch.Tensor]],
-        use_guides: bool = False,
-    ) -> Dict[str, Dict[str, torch.Tensor]]:
-        """Relabel ``'probs'`` ↔ ``'logits'`` to match each CPD's original key.
-
-        ``dist_to_params`` always extracts ``probs`` from relaxed discrete
-        distributions (since Pyro's internal representation is logits and
-        Pyro reconstructs distribution objects during tracing). This method
-        converts the extracted key back to what the user originally wrote in
-        their ``parametrization`` dict, so ``guide_params['Y']`` contains
-        ``'logits'`` when the guide CPD was built with ``{'logits': ...}``.
-        """
-        aligned = {}
-        for name, pdict in params.items():
-            cpd = (self.pgm.guides[name] if use_guides and name in self.pgm.guides
-                   else self.pgm.factors[name] if not use_guides else None)
-            if cpd is None:
-                aligned[name] = pdict
-                continue
-            cpd_keys = set(cpd.parametrization.keys())
-            pdict = dict(pdict)  # shallow copy — don't mutate caller's dict
-            if "logits" in cpd_keys and "probs" in pdict and "logits" not in pdict:
-                probs = pdict.pop("probs")
-                pdict["logits"] = torch.log(probs.clamp(min=1e-8)) - torch.log(
-                    (1.0 - probs).clamp(min=1e-8)
-                )
-            elif "probs" in cpd_keys and "logits" in pdict and "probs" not in pdict:
-                pdict["probs"] = torch.sigmoid(pdict.pop("logits"))
-            aligned[name] = pdict
-        return aligned
-
     # ------------------------------------------------------------------
     def query(
         self,
@@ -262,6 +245,10 @@ class VariationalInference(PyroBaseInference):
         conditioning (obs-scored); member evidence is **value forcing** — the
         member's column is forced on the plate value and propagates to descendants,
         contributing no likelihood of its own.
+
+        ``query`` values are *targets*: below ``p_int=1.0`` each one is
+        teacher-forced (see ``p_int``). ``evidence`` values are always observed,
+        so that is where inputs belong.
 
         Tensors may carry any number of leading (batch-like) dimensions. Pyro
         plates are tied to a single batch dimension, so those are collapsed into
@@ -322,23 +309,19 @@ class VariationalInference(PyroBaseInference):
             if self.p_int < 1.0 else {}
         )
 
-        if self.pgm.has_guides:
+        if latent_names:
             guide_fn = lambda: self.guide_fn(data, temperature, latent_names, layer_kwargs, member_evidence)
             guide_tr = poutine.trace(guide_fn).get_trace()
             model_fn = lambda: self.model_fn(data, temperature, latent_names, layer_kwargs=layer_kwargs, member_evidence=member_evidence, teacher_forced=teacher_forced)
             replayed = poutine.replay(model_fn, trace=guide_tr)
             model_tr = poutine.trace(replayed).get_trace()
-            guide_params = self._align_param_keys(
-                trace_to_params(guide_tr), use_guides=True
-            )
+            guide_params = trace_to_params(guide_tr, self.pgm.guides)
         else:
             model_fn = lambda: self.model_fn(data, temperature, latent_names, layer_kwargs=layer_kwargs, member_evidence=member_evidence, teacher_forced=teacher_forced)
             model_tr = poutine.trace(model_fn).get_trace()
             guide_params = {}
 
-        model_params = self._align_param_keys(
-            trace_to_params(model_tr), use_guides=False
-        )
+        model_params = trace_to_params(model_tr, self.pgm.factors)
         # Every traced site is reported, not just the queried names: under this
         # engine's contract the *latents* are precisely the variables absent from
         # ``query``, and their model-side parameters are what a KL term needs.

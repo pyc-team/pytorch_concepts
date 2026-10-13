@@ -544,8 +544,7 @@ class Variable(ABC):
 class ConceptVariable(Variable):
     """An interpretable random variable.
 
-    May be observed, latent, or deterministic (via ``dist.Delta``); the engine
-    decides on a per-call basis whether the variable is observed.
+    May be observed, latent, or deterministic (via ``dist.Delta``).
     """
 
     @property
@@ -556,8 +555,7 @@ class ConceptVariable(Variable):
 class EmbeddingVariable(Variable):
     """A non-interpretable embedding variable.
 
-    May be observed, latent, or deterministic (via ``dist.Delta``); the engine
-    decides on a per-call basis whether the variable is observed.
+    May be observed, latent, or deterministic (via ``dist.Delta``).
     """
 
     @property

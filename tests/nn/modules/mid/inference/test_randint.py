@@ -143,3 +143,32 @@ class TestValidation:
     def test_rate_outside_the_unit_interval_is_rejected(self, bad):
         with pytest.raises(ValueError, match="p_int"):
             VariationalInference(_model(), p_int=bad)
+
+
+class TestCategoricalTarget:
+    @pytest.mark.parametrize("p_int", [1.0, 0.5, 0.0])
+    def test_logits_name_the_cpds_distribution_at_every_rate(self, p_int):
+        """Below ``p_int=1`` a forced variable is a *sampled* site, whose
+        parameters Pyro hands back without the key the CPD used. A categorical
+        written with ``logits`` must still report its own: a softmax of the
+        reported row recovers the head's probabilities, which a Bernoulli-style
+        ``log p - log(1 - p)`` would not.
+        """
+        torch.manual_seed(0)
+        x = EmbeddingVariable("x", distribution=Delta, size=SIZE)
+        c = ConceptVariable("c", distribution=dist.OneHotCategorical, size=3)
+        head = nn.Linear(SIZE, 3)
+        pgm = BayesianNetwork(
+            variables=[x, c],
+            factors=[
+                ParametricCPD(variable=x, parametrization={"value": FixedPrior(torch.zeros(SIZE))}),
+                ParametricCPD(variable=c, parametrization={"logits": head}, parents=[x]),
+            ],
+        )
+        inputs = torch.randn(8, SIZE)
+        gt = torch.eye(3)[torch.arange(8) % 3]
+        out = VariationalInference(pgm, p_int=p_int).query(
+            query={"c": gt}, evidence={"x": inputs}
+        )
+        reported = torch.softmax(torch.as_tensor(out.params["c"]["logits"]), -1)
+        assert torch.allclose(reported, torch.softmax(head(inputs), -1), atol=1e-6)

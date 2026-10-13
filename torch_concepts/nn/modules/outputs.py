@@ -191,7 +191,7 @@ class InferenceOutput:
         ``params``. Filled only by engines that actually draw samples.
     probabilities : torch.Tensor or None
         ``(*leading,)`` estimate of ``P(query | evidence)`` for a fully realised
-        query batch. Filled only by the sampling estimators.
+        query batch.
 
     Examples
     --------

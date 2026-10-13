@@ -1,13 +1,14 @@
 """Tests for VariationalInference (Pyro backend).
 
 Covers: construction, latents validation, query() output structure
-(out.params / out.guide_params), _align_param_keys, latent_names,
-guide_conditioning, and step().
+(out.params / out.guide_params), latent_names,
+guide_conditioning, step(), categorical latents, and engines sharing a PGM.
 """
 import pytest
 import torch
 import torch.nn as nn
 import torch.distributions as dist
+from pyro.distributions import RelaxedOneHotCategoricalStraightThrough
 
 from torch_concepts.nn.modules.mid.variable import ConceptVariable
 from torch_concepts.nn.modules.mid.factors.cpd import ParametricCPD
@@ -29,6 +30,26 @@ def _make_simple_pgm():
     cpd_x = ParametricCPD(variable=x, parametrization={"value": FixedPrior(torch.zeros(4))})
     cpd_c = ParametricCPD(variable=c, parametrization=nn.Sequential(nn.Linear(4, 2), nn.Sigmoid()), parents=[x])
     return BayesianNetwork(variables=[x, c], factors=[cpd_x, cpd_c]), x, c
+
+
+#: Probabilities of the categorical latent's prior, per member.
+PRIOR = torch.tensor([0.5, 0.3, 0.2])
+
+
+def _make_categorical_latent_pgm(family=dist.OneHotCategorical, members=None):
+    """x (delta root) -> z (categorical, latent) -> y (bernoulli, observed).
+
+    ``z``'s prior is written as ``logits`` and is ``PRIOR`` for every member, so
+    a reported parameter can be checked against a known distribution.
+    """
+    n_members = 1 if members is None else len(members)
+    x = ConceptVariable("x", distribution=Delta, size=4)
+    z = ConceptVariable("z", distribution=family, size=3, members=members)
+    y = ConceptVariable("y", distribution=dist.Bernoulli, size=1)
+    cpd_x = ParametricCPD(variable=x, parametrization={"value": FixedPrior(torch.zeros(4))})
+    cpd_z = ParametricCPD(variable=z, parametrization={"logits": FixedPrior(PRIOR.log().repeat(n_members))})
+    cpd_y = ParametricCPD(variable=y, parametrization=nn.Sequential(nn.Linear(3 * n_members, 1), nn.Sigmoid()), parents=[z])
+    return BayesianNetwork(variables=[x, z, y], factors=[cpd_x, cpd_z, cpd_y]), x, z
 
 
 def _make_latent_pgm():
@@ -206,3 +227,105 @@ class TestVariationalStep:
         for _ in range(500):
             vi.temperature_step()
         assert float(vi.temperature) == pytest.approx(0.1)
+
+
+# ===========================================================================
+# 6. Categorical latents
+# ===========================================================================
+
+class TestCategoricalLatent:
+    """A sampled categorical site reports its parameters under the CPD's key.
+
+    Pyro rebuilds a relaxed site's distribution while tracing, so the key the
+    CPD was written with is lost. A CPD written with ``logits`` must get a
+    categorical's logits back (a softmax recovers its probabilities), not a
+    Bernoulli's ``log p - log(1 - p)``, which names a different distribution.
+    """
+
+    @pytest.mark.parametrize("family", [
+        dist.OneHotCategorical,
+        dist.RelaxedOneHotCategorical,
+        RelaxedOneHotCategoricalStraightThrough,
+    ])
+    def test_logits_name_the_cpds_distribution(self, family):
+        pgm, x, z = _make_categorical_latent_pgm(family)
+        head = nn.Linear(4, 3)
+        guide_z = ParametricCPD(variable=z, parametrization={"logits": head}, parents=[x])
+        vi = VariationalInference(pgm, latents={"z": guide_z})
+        x_obs = torch.randn(5, 4)
+        out = vi.query(query={"x": x_obs, "z": None, "y": torch.ones(5, 1)}, evidence={})
+
+        model_probs = torch.softmax(torch.as_tensor(out.params["z"]["logits"]), -1)
+        guide_probs = torch.softmax(torch.as_tensor(out.guide_params["z"]["logits"]), -1)
+        assert torch.allclose(model_probs, PRIOR.expand(5, 3), atol=1e-6)
+        assert torch.allclose(guide_probs, torch.softmax(head(x_obs), -1), atol=1e-6)
+
+    def test_root_guide(self):
+        pgm, x, z = _make_categorical_latent_pgm()
+        prior = LearnablePrior(3)
+        vi = VariationalInference(pgm, latents={"z": ParametricCPD(variable=z, parametrization={"logits": prior})})
+        out = vi.query(query={"x": torch.randn(5, 4), "z": None, "y": torch.ones(5, 1)}, evidence={})
+        guide_probs = torch.softmax(torch.as_tensor(out.guide_params["z"]["logits"]), -1)
+        assert torch.allclose(guide_probs, torch.softmax(prior(), -1).expand(5, 3), atol=1e-6)
+
+    def test_plate_normalises_each_member(self):
+        pgm, x, z = _make_categorical_latent_pgm(members=["z0", "z1"])
+        head = nn.Linear(4, 6)
+        guide_z = ParametricCPD(variable=z, parametrization={"logits": head}, parents=[x])
+        vi = VariationalInference(pgm, latents={"z": guide_z})
+        x_obs = torch.randn(5, 4)
+        out = vi.query(query={"x": x_obs, "z": None, "y": torch.ones(5, 1)}, evidence={})
+
+        def per_member(logits):
+            return torch.softmax(torch.as_tensor(logits).reshape(5, 2, 3), -1)
+
+        assert torch.allclose(per_member(out.params["z"]["logits"]), PRIOR.expand(5, 2, 3), atol=1e-6)
+        assert torch.allclose(per_member(out.guide_params["z"]["logits"]), per_member(head(x_obs)), atol=1e-6)
+
+    def test_bernoulli_logits_are_unchanged(self):
+        pgm, x, c, y = _make_latent_pgm()
+        head = nn.Linear(4, 2)
+        vi = VariationalInference(pgm, latents={"c": ParametricCPD(variable=c, parametrization={"logits": head}, parents=[x])})
+        x_obs = torch.randn(5, 4)
+        out = vi.query(query={"x": x_obs, "c": None, "y": torch.ones(5, 1)}, evidence={})
+        assert torch.allclose(torch.as_tensor(out.guide_params["c"]["logits"]), head(x_obs), atol=1e-6)
+
+
+# ===========================================================================
+# 7. Engines sharing a PGM
+# ===========================================================================
+
+class TestSharedPGM:
+    """Guides live on the PGM, so a train and an eval engine share them."""
+
+    @staticmethod
+    def _guide(x, c):
+        return ParametricCPD(variable=c, parametrization={"probs": nn.Sequential(nn.Linear(4, 2), nn.Sigmoid())}, parents=[x])
+
+    @staticmethod
+    def _query(vi):
+        return vi.query(query={"x": torch.randn(3, 4), "c": None, "y": torch.ones(3, 1)}, evidence={})
+
+    def test_an_engine_without_latents_keeps_the_others_guides(self):
+        pgm, x, c, y = _make_latent_pgm()
+        train = VariationalInference(pgm, latents={"c": self._guide(x, c)})
+        VariationalInference(pgm)
+        assert set(self._query(train).guide_params["c"]) == {"probs"}
+
+    def test_an_engine_without_latents_runs_no_guide(self):
+        pgm, x, c, y = _make_latent_pgm()
+        VariationalInference(pgm, latents={"c": self._guide(x, c)})
+        assert self._query(VariationalInference(pgm)).guide_params == {}
+
+    def test_the_same_guide_can_be_shared(self):
+        pgm, x, c, y = _make_latent_pgm()
+        guide_c = self._guide(x, c)
+        VariationalInference(pgm, latents={"c": guide_c})
+        VariationalInference(pgm, latents={"c": guide_c})
+        assert pgm.guides["c"] is guide_c
+
+    def test_a_different_guide_for_the_same_latent_is_rejected(self):
+        pgm, x, c, y = _make_latent_pgm()
+        VariationalInference(pgm, latents={"c": self._guide(x, c)})
+        with pytest.raises(ValueError, match="already has a different guide"):
+            VariationalInference(pgm, latents={"c": self._guide(x, c)})
