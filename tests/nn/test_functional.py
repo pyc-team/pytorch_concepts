@@ -1255,21 +1255,64 @@ class TestReplaceExpandCols(unittest.TestCase):
 
 
 class TestLogicRuleEvalMemoryIdxs(unittest.TestCase):
-    """Test logic_rule_eval with non-None memory_idxs (line 359)."""
+    """Rule indices select one rule independently for each sample and task."""
 
-    def test_memory_idxs_branch(self):
-        """Passing memory_idxs exercises the else branch at line 357-359."""
-        batch_size, memory_size, n_concepts, n_tasks = 2, 3, 4, 1
-        concept_weights = torch.randn(batch_size, memory_size, n_concepts, n_tasks, 3)
-        concept_weights = torch.softmax(concept_weights, dim=-1)
-        c_pred = torch.rand(batch_size, n_concepts)
-        # memory_idxs can be any tensor; the branch only checks is-not-None
-        memory_idxs = torch.zeros(batch_size, n_tasks, dtype=torch.long)
+    def setUp(self):
+        roles = torch.eye(3)
+        self.weights = roles.reshape(1, 3, 1, 1, 3).repeat(2, 1, 2, 2, 1)
+        self.concepts = torch.tensor([[0.2, 0.4], [0.7, 0.8]])
+        self.indices = torch.tensor([[0, 1], [2, 0]])
 
-        result = CF.logic_rule_eval(concept_weights, c_pred, memory_idxs=memory_idxs)
-        # shape is (batch_size, n_tasks, memory_size); concept_weights keeps its
-        # memory dimension through broadcasting
-        self.assertEqual(result.shape, (batch_size, n_tasks, memory_size))
+    def test_selects_rule_per_sample_and_task(self):
+        all_rules = CF.logic_rule_eval(self.weights, self.concepts)
+        expected = all_rules.gather(2, self.indices.unsqueeze(-1))
+        result = CF.logic_rule_eval(
+            self.weights, self.concepts, memory_idxs=self.indices
+        )
+        self.assertEqual(result.shape, (2, 2, 1))
+        torch.testing.assert_close(result, expected)
+
+    def test_different_indices_change_predictions(self):
+        positive = CF.logic_rule_eval(
+            self.weights, self.concepts,
+            memory_idxs=torch.zeros(2, 2, dtype=torch.long),
+        )
+        negative = CF.logic_rule_eval(
+            self.weights, self.concepts,
+            memory_idxs=torch.ones(2, 2, dtype=torch.long),
+        )
+        expected_positive = (self.concepts * 0.999).prod(dim=1)
+        expected_negative = ((1 - self.concepts) * 0.999).prod(dim=1)
+        torch.testing.assert_close(
+            positive, expected_positive[:, None, None].expand(2, 2, 1)
+        )
+        torch.testing.assert_close(
+            negative, expected_negative[:, None, None].expand(2, 2, 1)
+        )
+        self.assertFalse(torch.allclose(positive, negative))
+
+    def test_selection_preserves_gradients(self):
+        weights = self.weights.clone().requires_grad_()
+        concepts = self.concepts.clone().requires_grad_()
+        selected = CF.logic_rule_eval(weights, concepts, self.indices)
+        actual = torch.autograd.grad(selected.sum(), (weights, concepts))
+        all_rules = CF.logic_rule_eval(weights, concepts)
+        expected = torch.autograd.grad(
+            all_rules.gather(2, self.indices.unsqueeze(-1)).sum(),
+            (weights, concepts),
+        )
+        for actual_grad, expected_grad in zip(actual, expected):
+            torch.testing.assert_close(actual_grad, expected_grad)
+
+    def test_single_rule_selection(self):
+        weights = self.weights[:1, :1, :, :1]
+        concepts = self.concepts[:1]
+        result = CF.logic_rule_eval(weights, concepts, torch.tensor([[0]]))
+        torch.testing.assert_close(result, CF.logic_rule_eval(weights, concepts))
+
+    def test_invalid_index_shape(self):
+        with self.assertRaisesRegex(ValueError, "memory_idxs"):
+            CF.logic_rule_eval(self.weights, self.concepts, torch.tensor([0, 1]))
 
 
 class TestEdgeTypeInvalidCombination(unittest.TestCase):
