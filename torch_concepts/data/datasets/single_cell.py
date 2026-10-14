@@ -123,285 +123,131 @@ def _cell_names(data):
     return [f"cell_{i}" for i in data["cell_indices"].tolist()]
 
 
-def model(
-    generation_config=None, seed=42, exog_noise=None, *, model_parameters=None,
-    concepts=None, generation_data=None,
-):
-    """Run the complete generative model and return inputs, concepts and data.
+def _compute_model_parameters(config, rng):
+    """Sample only the global model parameters."""
+    n_genes = config["genes"]["n"]
+    n_batches = config["batch"]["n"]
+    n_tissues = config["tissue"]["n"]
+    n_celltypes = config["celltype"]["n"]
+    n_concepts = config["original_concept"]["n"]
+    # Sample probabilities for batches, tissues, cell types, and concepts
+    p_batch = rng.dirichlet(10 * np.ones(n_batches)) # probability of sampling each batch
+    p_tissue = rng.dirichlet(10 * np.ones(n_tissues)) # probability of sampling each tissue
+    p_celltype = rng.dirichlet(np.ones(n_celltypes), size=n_tissues) # probability of sampling each cell type within a tissue
+    p_concept = rng.dirichlet(np.ones(n_concepts) / 5, size=n_celltypes) # probability of sampling each concept within a cell type
+    # Sample standard deviation of library size for each batch
+    std_libsize = rng.uniform(config["library"]["std_lower"], config["library"]["std_upper"], size=n_batches)
 
-    Sample global coefficients, effects and probabilities, then per-cell
-    concepts, library offsets and noise, and finally Poisson gene counts.
-    ``model_parameters`` can supply a complete fixed model instead of drawing it.
-    ``concepts`` optionally assigns values before evaluating gene expression.
-    Sampling and count evaluation happen in a single pass over the cells.
+    # Sample effect coefficients for batches, cell types, tissues, and concepts
+    batch_effect = rng.normal(0, config["batch"]["std"], size=(n_batches, n_genes)) # batch effect coefficients for each batch and gene
+    celltype_effect = rng.normal(0, config["celltype"]["std"], size=(n_celltypes, n_genes)) # cell type effect coefficients for each cell type and gene
+    tissue_effect = rng.normal(0, config["tissue"]["std"], size=(n_tissues, n_genes)) # tissue effect coefficients for each tissue and gene
+    concept_effect = rng.normal(0, config["original_concept"]["std"], size=(n_concepts, n_genes)) # concept effect coefficients for each concept and gene
 
-    ``model_parameters`` defines the mechanism shared by all cells: gene baselines,
-    concept/context effects, sampling probabilities, concept-logit covariance
-    and batch-specific library-offset standard deviations. These quantities
-    are drawn once for a dataset and can be reused to generate new cells.
+    if config["original_concept"]["use_dependency"]:
+        cov_prior_range = config["original_concept"]["cov_prior_range"]
+        scale_matrix_elements = rng.uniform(
+            -cov_prior_range, cov_prior_range, size=(n_concepts * (n_concepts + 1)) // 2
+        )
+        scale_matrix = np.zeros((n_concepts, n_concepts))
+        tril_indices = np.tril_indices_from(scale_matrix)
+        scale_matrix[tril_indices[0], tril_indices[1]] = scale_matrix_elements
+        scale_matrix = scale_matrix @ scale_matrix.T
+        scale_matrix += np.eye(n_concepts) * 1e-6
+        covariance = wishart.rvs(df=n_concepts, scale=scale_matrix, random_state=rng)
+        # SciPy returns a scalar for the one-concept case.
+        if n_concepts == 1:
+            covariance = np.array([[covariance]])
+    else:
+        covariance = np.zeros((n_concepts, n_concepts))
 
-    Per-cell quantities are separated by their role in this model.
-    ``concepts`` contains the binary indicators and categorical context
-    (celltype, tissue and batch) exposed for supervision and intervention.
-    ``cell_background`` contains the realized background variation held fixed
-    during those interventions: library log offsets, Gaussian gene noise
-    and Poisson quantiles. It is not a collection of every per-cell quantity.
-    This separation expresses the intended intervention targets, rather than
-    whether a quantity is continuous, categorical or specific to a cell.
-    For example,
-    ``model_parameters['std_libsize'][batch]`` defines a distribution, whereas
-    ``cell_background['libsize'][cell]`` is a draw from that distribution. New cells
-    receive new states; interventions reuse them while assigning new concepts.
-    Neither cell_background nor model_parameters contains the concept supervision matrix.
+    # Baseline expression for each variable
+    r, s = np.log(config["baseline"]["lower"]), np.log(config["baseline"]["upper"])
+    baseline_expr = rng.uniform(r, s, size=n_genes)
 
-    ``cell_indices`` preserves original cell indices after row selection.
-    It supports named DataFrame alignment without storing redundant names:
-    cell names are derived from these indices, and gene, concept and category
-    names are derived from their configured counts.
+    if config["original_concept"]["zero_inflate"]:
+        # As in scCBGM, sparsity masks concept coefficients, not observed counts.
+        probability = 1 - rng.beta(config["original_concept"]["beta_a"], config["original_concept"]["beta_b"], size=n_concepts)
+        mask = np.vstack([rng.binomial(1, probability[i], size=n_genes) for i in range(n_concepts)])
+        concept_effect = concept_effect * mask
 
-    ``generation_data`` reuses saved model parameters and cell background without
-    sampling. Pass the complete concept matrix separately as ``concepts``;
-    configuration, model_parameters and exogenous-noise arguments must then
-    be omitted. ``seed`` is unused in this case. Use
-    :func:`generate_dataset` for partial parameter overrides of saved data.
+    model_parameters = {
+        "baseline_expr": baseline_expr,
+        "concept_effect": concept_effect,
+        "celltype_effect": celltype_effect,
+        "tissue_effect": tissue_effect,
+        "batch_effect": batch_effect,
+        "p_batch": p_batch,
+        "p_tissue": p_tissue,
+        "p_celltype": p_celltype,
+        "p_concept": p_concept,
+        "std_libsize": std_libsize,
+        "covariance": covariance,
+    }
+    return {name: torch.as_tensor(value, dtype=torch.float64) for name, value in model_parameters.items()}
 
-    Returns ``(inputs, concepts, generation_data)``. The generation data
-    contains ``generation_config``, ``model_parameters``, ``cell_background`` and
-    ``cell_indices``. Concepts and seed are not duplicated in it.
-    Its values are independent of the supplied data, and inputs and concepts
-    are float32 tensors. Counts are computed from float64 parameters/noises.
+
+def model(model_parameters, concepts=None, *, n_cells=None, cell_background=None, rng=None, std_noise=0.01, exog_noise=None):
+    """Compute concepts, background and counts in one loop over cells.
+
+    Sample missing concepts and background; otherwise reuse supplied values.
+    Original concept columns accept real values; celltype, tissue and batch
+    are categorical class indices. Missing entries are sampled.
+    Return ``(inputs, concepts, cell_background)``. Counts and concepts are
+    float32; background retains float64 precision.
     """
-    sample_cells = generation_data is None
-    if sample_cells:
-        config = _resolve_generation_config(generation_config)
-        n_cells = config["cells"]["n"]
-        n_genes = config["genes"]["n"]
-        n_batches = config["batch"]["n"]
-        n_tissues = config["tissue"]["n"]
-        n_celltypes = config["celltype"]["n"]
-        n_concepts = config["original_concept"]["n"]
-        rng = np.random.default_rng(seed)
-        if model_parameters is None:
-            # Sample probabilities for batches, tissues, cell types, and concepts
-            p_batch = rng.dirichlet(10 * np.ones(n_batches)) # probability of sampling each batch
-            p_tissue = rng.dirichlet(10 * np.ones(n_tissues)) # probability of sampling each tissue
-            p_celltype = rng.dirichlet(np.ones(n_celltypes), size=n_tissues) # probability of sampling each cell type within a tissue
-            p_concept = rng.dirichlet(np.ones(n_concepts) / 5, size=n_celltypes) # probability of sampling each concept within a cell type
-            # Sample standard deviation of library size for each batch
-            std_libsize = rng.uniform(config["library"]["std_lower"], config["library"]["std_upper"], size=n_batches)
-
-            # Sample effect coefficients for batches, cell types, tissues, and concepts
-            batch_effect = rng.normal(0, config["batch"]["std"], size=(n_batches, n_genes)) # batch effect coefficients for each batch and gene
-            celltype_effect = rng.normal(0, config["celltype"]["std"], size=(n_celltypes, n_genes)) # cell type effect coefficients for each cell type and gene
-            tissue_effect = rng.normal(0, config["tissue"]["std"], size=(n_tissues, n_genes)) # tissue effect coefficients for each tissue and gene
-            concept_effect = rng.normal(0, config["original_concept"]["std"], size=(n_concepts, n_genes)) # concept effect coefficients for each concept and gene
-
-            if config["original_concept"]["use_dependency"]:
-                cov_prior_range = config["original_concept"]["cov_prior_range"]
-                scale_matrix_elements = rng.uniform(
-                    -cov_prior_range, cov_prior_range, size=(n_concepts * (n_concepts + 1)) // 2
-                )
-                scale_matrix = np.zeros((n_concepts, n_concepts))
-                tril_indices = np.tril_indices_from(scale_matrix)
-                scale_matrix[tril_indices[0], tril_indices[1]] = scale_matrix_elements
-                scale_matrix = scale_matrix @ scale_matrix.T
-                scale_matrix += np.eye(n_concepts) * 1e-6
-                covariance = wishart.rvs(df=n_concepts, scale=scale_matrix, random_state=rng)
-                # SciPy returns a scalar for the one-concept case.
-                if n_concepts == 1:
-                    covariance = np.array([[covariance]])
-            else:
-                covariance = np.zeros((n_concepts, n_concepts))
-
-            # Baseline expression for each variable
-            r, s = np.log(config["baseline"]["lower"]), np.log(config["baseline"]["upper"])
-            baseline_expr = rng.uniform(r, s, size=n_genes)
-
-            if config["original_concept"]["zero_inflate"]:
-                # As in scCBGM, sparsity masks concept coefficients, not observed counts.
-                probability = 1 - rng.beta(config["original_concept"]["beta_a"], config["original_concept"]["beta_b"], size=n_concepts)
-                mask = np.vstack([rng.binomial(1, probability[i], size=n_genes) for i in range(n_concepts)])
-                concept_effect = concept_effect * mask
-
-            model_parameters = {
-                "baseline_expr": baseline_expr,
-                "concept_effect": concept_effect,
-                "celltype_effect": celltype_effect,
-                "tissue_effect": tissue_effect,
-                "batch_effect": batch_effect,
-                "p_batch": p_batch,
-                "p_tissue": p_tissue,
-                "p_celltype": p_celltype,
-                "p_concept": p_concept,
-                "std_libsize": std_libsize,
-                "covariance": covariance,
-            }
-        model_parameters = {name: torch.as_tensor(value, dtype=torch.float64).detach().cpu().clone()
-                      for name, value in model_parameters.items()}
-        shapes = {
-            "baseline_expr": (n_genes,), "concept_effect": (n_concepts, n_genes),
-            "celltype_effect": (n_celltypes, n_genes), "tissue_effect": (n_tissues, n_genes),
-            "batch_effect": (n_batches, n_genes), "p_batch": (n_batches,), "p_tissue": (n_tissues,),
-            "p_celltype": (n_tissues, n_celltypes), "p_concept": (n_celltypes, n_concepts),
-            "std_libsize": (n_batches,), "covariance": (n_concepts, n_concepts),
+    params = {name: value.numpy() for name, value in model_parameters.items()}
+    values = (np.full((n_cells, len(params["concept_effect"]) + 3), np.nan, dtype=np.float32)
+              if concepts is None else concepts.numpy().astype(np.float32, copy=True))
+    n_cells, n_genes = len(values), len(params["baseline_expr"])
+    sample_concepts = np.isnan(values).any()
+    sample_background = cell_background is None
+    if sample_concepts or sample_background:
+        rng = np.random.default_rng(42) if rng is None else rng
+    if sample_background:
+        cell_background = {
+            "bernoulli_prob": torch.empty((n_cells, len(params["concept_effect"])), dtype=torch.float64),
+            "libsize": torch.empty(n_cells, dtype=torch.float64),
+            "noise": torch.empty((n_cells, n_genes), dtype=torch.float64),
+            "exog_noise": (torch.empty((n_cells, n_genes), dtype=torch.float64)
+                           if exog_noise is None else torch.from_numpy(exog_noise.copy())),
         }
-        if set(model_parameters) != set(shapes) or any(
-            tuple(value.shape) != shapes[name] or not value.isfinite().all()
-            for name, value in model_parameters.items()
-        ):
-            raise ValueError("model_parameters must be complete, finite and match generation_config dimensions.")
-        sample_exog = exog_noise is None
-        exog_noise = _prepare_exog_noise(exog_noise, n_cells, n_genes)
-        generation_data = {
-            "generation_config": config,
-            "model_parameters": model_parameters,
-            "cell_background": {
-                "libsize": torch.empty(n_cells, dtype=torch.float64),
-                "noise": torch.empty((n_cells, n_genes), dtype=torch.float64),
-                "exog_noise": (torch.empty((n_cells, n_genes), dtype=torch.float64)
-                               if sample_exog else torch.from_numpy(exog_noise)),
-            },
-            "cell_indices": torch.arange(n_cells),
-        }
-    elif generation_config is not None or exog_noise is not None or model_parameters is not None:
-        raise ValueError("Configuration, model_parameters and exog_noise cannot override saved generation_data in model.")
-    generation_data = deepcopy(generation_data) if not sample_cells else generation_data
-    n_cells = len(generation_data["cell_indices"])
-    names = _concept_names(generation_data)
-    if not sample_cells:
-        if concepts is None or (
-            isinstance(concepts, (Mapping, pd.DataFrame)) and set(concepts) != set(names)
-        ) or (
-            not isinstance(concepts, (Mapping, pd.DataFrame))
-            and tuple(torch.as_tensor(concepts).shape) != (n_cells, len(names))
-        ):
-            raise ValueError("Reusing generation_data requires all concepts, including celltype, tissue and batch.")
-    values_tensor = torch.zeros((n_cells, len(names)), dtype=torch.float32)
-    override_columns = []
-    if concepts is not None:
-        values_tensor = _update_concepts(generation_data, values_tensor, concepts)
-        override_columns = ([names.index(name) for name in concepts]
-                            if isinstance(concepts, (Mapping, pd.DataFrame))
-                            else list(range(torch.as_tensor(concepts).shape[1])))
-    params = {name: value.numpy() for name, value in generation_data["model_parameters"].items()}
-    cell_background = {name: value.numpy() for name, value in generation_data["cell_background"].items()}
-    concepts = values_tensor
-    values = concepts.numpy()
-    inputs = np.empty(cell_background["noise"].shape, dtype=np.float32)
-    for i in range(len(inputs)):
-        if sample_cells:
+    background = {name: value.numpy() for name, value in cell_background.items()}
+    inputs = np.empty((n_cells, n_genes), dtype=np.float32)
+    for i in range(n_cells):
+        if sample_concepts:
             batch = rng.multinomial(1, params["p_batch"]).argmax()
             tissue = rng.multinomial(1, params["p_tissue"]).argmax()
             celltype = rng.multinomial(1, params["p_celltype"][tissue]).argmax()
+            values[i, -3:] = np.where(np.isnan(values[i, -3:]), [celltype, tissue, batch], values[i, -3:])
+        celltype, tissue, batch = values[i, -3:].astype(int)
+        if sample_concepts or sample_background:
             probability = params["p_concept"][celltype]
             mean = np.log((probability + 1e-8) / (1 - probability + 1e-8))
             logits = np.clip(rng.multivariate_normal(mean, params["covariance"]), -8, 8)
             bernoulli_prob = 1 / (1 + np.exp(-logits))
-            indicators = rng.binomial(1, bernoulli_prob)
-            cell_background["libsize"][i] = rng.normal(0, params["std_libsize"][batch])
-            cell_background["noise"][i] = rng.normal(0, config["noise"]["std"], size=n_genes)
-            if sample_exog:
-                cell_background["exog_noise"][i] = rng.uniform(0, 1, size=n_genes)
-            sampled = np.concatenate([indicators, [celltype, tissue, batch]])
-            # Assign overrides after sampling to preserve the original RNG
-            # sequence and cell-level noise, including context interventions.
-            sampled[override_columns] = values[i, override_columns]
-            values[i] = sampled
-
-        celltype, tissue, batch = values[i, -3:].astype(int)
-        log_rate = (
+            if sample_concepts:
+                indicators = rng.binomial(1, bernoulli_prob)
+                values[i, :-3] = np.where(np.isnan(values[i, :-3]), indicators, values[i, :-3])
+        if sample_background:
+            background["bernoulli_prob"][i] = bernoulli_prob
+            background["libsize"][i] = rng.normal(0, params["std_libsize"][batch])
+            background["noise"][i] = rng.normal(0, std_noise, size=n_genes)
+            if exog_noise is None:
+                background["exog_noise"][i] = rng.uniform(0, 1, size=n_genes)
+        log_lambda = (
             params["baseline_expr"]
             + np.sum(params["concept_effect"] * values[i, :-3, None], axis=0)
             + params["celltype_effect"][celltype]
             + params["batch_effect"][batch]
             + params["tissue_effect"][tissue]
-            + cell_background["libsize"][i]
-            + cell_background["noise"][i]
+            + background["libsize"][i]
+            + background["noise"][i]
         )
-        inputs[i] = poisson.ppf(cell_background["exog_noise"][i], np.exp(log_rate))
-    return torch.from_numpy(inputs), concepts, generation_data
+        inputs[i] = poisson.ppf(background["exog_noise"][i], np.exp(log_lambda))
+    return torch.from_numpy(inputs), torch.from_numpy(values).float(), cell_background
 
 
-def _update_generation_data(data, model_parameters=None):
-    """Copy generation data and override selected global parameters."""
-    data = deepcopy(data)
-    for name, value in (model_parameters or {}).items():
-        if name not in data["model_parameters"]:
-            raise ValueError(f"Unknown parameter: {name!r}.")
-        value = torch.as_tensor(value, dtype=torch.float64).detach().cpu()
-        if value.shape != data["model_parameters"][name].shape or not value.isfinite().all():
-            raise ValueError(f"Invalid shape or nonfinite values for parameter {name!r}.")
-        data["model_parameters"][name] = value.clone()
-    return data
-
-
-def _update_concepts(data, concepts, changes):
-    """Assign concept changes while preserving the original full column order."""
-    names = _concept_names(data)
-    values = concepts.double().clone()
-    concepts = changes
-    if isinstance(concepts, Mapping):
-        for name, value in concepts.items():
-            if name not in names:
-                raise ValueError(f"Unknown concept: {name!r}.")
-            value = torch.as_tensor(value, dtype=torch.float64).detach().cpu()
-            if value.ndim > 1 or (value.ndim == 1 and len(value) != len(values)):
-                raise ValueError(f"Concept {name!r} must be a scalar or a value per cell.")
-            values[:, names.index(name)] = value
-    else:
-        if isinstance(concepts, pd.DataFrame):
-            if not concepts.index.is_unique or not concepts.columns.is_unique:
-                raise ValueError("Concepts must have unique cell and column names.")
-            columns = names[:-3] if set(concepts.columns) == set(names[:-3]) else names
-            cell_names = _cell_names(data)
-            if set(concepts.columns) != set(columns) or set(concepts.index) != set(cell_names):
-                raise ValueError("Concepts must match the dataset cell and concept names.")
-            concepts = concepts.loc[cell_names, columns].to_numpy()
-        replacement = torch.as_tensor(concepts, dtype=torch.float64).detach().cpu()
-        if replacement.shape not in (values.shape, (len(values), len(names) - 3)):
-            raise ValueError("concepts must have shape (cells, binary concepts) or (cells, all concepts).")
-        values[:, :replacement.shape[1]] = replacement
-    binary = values[:, :-3]
-    if not torch.all((binary == 0) | (binary == 1)):
-        raise ValueError("Binary concepts must contain only 0 or 1.")
-    for column, name in enumerate(_CONTEXT_NAMES, start=len(names) - 3):
-        v = values[:, column]
-        if not torch.all((v == v.floor()) & (v >= 0) & (v < data["generation_config"][name]["n"])):
-            raise ValueError(f"Invalid class indices for concept {name!r}.")
-    return values.float()
-
-
-def generate_dataset(
-    generation_config=None, seed=42, exog_noise=None, *, generation_data=None,
-    concepts=None, model_parameters=None,
-):
-    """Return ``(inputs, concepts, generation_data)`` for single-cell data.
-
-    Without ``generation_data``, call :func:`model` to generate parameters,
-    concepts, cell background and counts using the configured distributions.
-    ``model_parameters`` can supply a complete fixed model instead.
-
-    With saved ``generation_data``, reuse the same cells and noise;
-    ``generation_config`` and ``exog_noise`` must be omitted, and ``seed``
-    is unused. ``model_parameters`` can override selected global parameters.
-    Pass all concepts, including celltype, tissue and batch, separately as
-    ``concepts``: a full matrix, DataFrame or mapping of all column names.
-
-    When sampling fresh cells, ``concepts`` also accepts partial named overrides,
-    a DataFrame,
-    or a tensor/array in raw column order (binary concepts, then celltype,
-    tissue, batch). A matrix of only the binary concepts is also accepted.
-    DataFrame rows and columns are aligned by name. Inputs are float32
-    counts and concepts are float32 indicators/class indices.
-
-    The returned generation data is independent of the supplied data.
-    """
-    if generation_data is None:
-        return model(generation_config, seed, exog_noise, model_parameters=model_parameters, concepts=concepts)
-    if generation_config is not None or exog_noise is not None:
-        raise ValueError("generation_config and exog_noise cannot override saved generation_data.")
-    data = _update_generation_data(generation_data, model_parameters)
-    return model(generation_data=data, concepts=concepts)
 
 
 class SingleCellDataset(ConceptDataset):
@@ -462,9 +308,10 @@ class SingleCellDataset(ConceptDataset):
       ``p_concept`` (cell types, concepts), ``std_libsize`` (batches), and
       ``covariance`` (concepts, concepts).
     * ``cell_background``: ``libsize`` log offsets (cells), Gaussian ``noise``
-      and Poisson quantiles ``exog_noise``
-      (cells, genes). These record the realized background variation
-      held fixed during concept interventions.
+      and Poisson quantiles ``exog_noise`` (cells, genes), and
+      ``bernoulli_prob`` (cells, original concepts), the probabilities used
+      before sampling or overriding concept values. These values are held
+      fixed during concept interventions.
     * ``cell_indices``: original integer cell indices in the current row
       order. Cell identifiers (cell_0, ...) are reconstructed from these
       indices. Gene, concept and category names follow their configured
@@ -473,8 +320,7 @@ class SingleCellDataset(ConceptDataset):
 
     Concepts are saved in their own cache file, and the seed is available as
     ``dataset.seed``. Neither is duplicated in ``generation_data``.
-    ``get_concepts()`` reads all native concepts, independently of the subset
-    or order selected for training.
+    ``dataset.concepts`` exposes the concepts selected for training.
 
     ``cell_background`` does not contain every cell-level quantity. The separation
     follows each quantity's role in the model: ``concepts`` contains the
@@ -493,12 +339,19 @@ class SingleCellDataset(ConceptDataset):
     during concept interventions. Treating library scale as an intervention
     target instead would require exposing it as a concept in the model.
 
+    After real-valued interventions, original concept annotations still
+    describe their binary sampling type. They do not assert that intervened
+    values are 0 or 1; consumers selecting losses or metrics by type should
+    account for the real-valued targets.
+
     Floating-point parameters, probabilities and noises retain float64
     precision to reconstruct the original counts or generate interventions
     using the same cell-level noise. Row subsampling also subsets
     ``concepts``, ``cell_background`` and ``cell_indices`` in memory; the cache file
-    retains the complete generated dataset. ``load_raw()`` still returns
-    only inputs, concepts, annotations, and graph.
+    retains the complete generated dataset. Missing processed files trigger
+    a full rebuild from configuration and seed; interventions are recreated
+    with ``generate_from_dataset``. ``load_raw()`` still returns only inputs,
+    concepts, annotations, and graph.
     Use ``generate_from_dataset(concepts=...)`` to change selected concepts
     while preserving the same cell-level noise.
 
@@ -533,6 +386,9 @@ class SingleCellDataset(ConceptDataset):
         # inputs is a torch tensor of gene counts (cells.n, genes.n)
         # concepts is a torch tensor of binary indicators and context class indices
         inputs, concepts, annotations, graph = self.load()
+        # Keep the complete matrix for generation, including concepts omitted
+        # from training supervision. Rows follow the in-memory dataset order.
+        self._generation_concepts = concepts
         self.generation_data = self.load_generation_data()
 
         # Initialize parent class
@@ -566,17 +422,19 @@ class SingleCellDataset(ConceptDataset):
         pass
 
     def build(self):
-        # Generate gene counts and concept values
-        if os.path.isfile(self.generation_data_path):
-            inputs, concepts, generation_data = generate_dataset(
-                generation_data=torch.load(self.generation_data_path, weights_only=True),
-                concepts=torch.load(self.processed_paths[1], weights_only=True),
-            )
-        else:
-            inputs, concepts, generation_data = generate_dataset(
-                generation_config=self.generation_config, seed=self.seed,
-                exog_noise=self._provided_exog_noise,
-            )
+        """Generate the complete dataset from configuration and seed."""
+        rng = np.random.default_rng(self.seed)
+        parameters = _compute_model_parameters(self.generation_config, rng)
+        inputs, concepts, background = model(
+            parameters, n_cells=self.n_gen, rng=rng, std_noise=self.generation_config["noise"]["std"],
+            exog_noise=self._provided_exog_noise,
+        )
+        generation_data = {
+            "generation_config": self.generation_config,
+            "model_parameters": parameters,
+            "cell_background": background,
+            "cell_indices": torch.arange(len(concepts)),
+        }
 
         # Create annotations in the same order as the generated concept columns.
         n_concepts = self.generation_config["original_concept"]["n"]
@@ -602,6 +460,7 @@ class SingleCellDataset(ConceptDataset):
         """Read generation metadata from the cache, before any row selection."""
         self.maybe_build()
         return torch.load(self.generation_data_path, weights_only=True)
+
     def get_generation_config(self) -> dict:
         """Copy the distribution settings for constructing another dataset."""
         config = deepcopy(self.generation_config)
@@ -612,25 +471,14 @@ class SingleCellDataset(ConceptDataset):
         """Copy the global coefficients and probabilities shared by all cells."""
         return deepcopy(self.generation_data["model_parameters"])
 
-    def get_concepts(self) -> pd.DataFrame:
-        """Copy all native concept values, indexed by cell and column names.
-
-        Includes binary concepts and celltype, tissue, batch, independently
-        of the subset or order selected for training.
-        """
-        self.maybe_build()
-        # Read all native columns, including those excluded from supervision.
-        # Memory mapping avoids loading the cell background to recover row indices.
-        data = torch.load(self.generation_data_path, weights_only=True, mmap=True)
-        concepts = torch.load(self.processed_paths[1], weights_only=True)
-        frame = pd.DataFrame(concepts.numpy(), index=_cell_names(data), columns=_concept_names(data))
-        return frame.loc[_cell_names(self.generation_data)].copy()
-
     def get_cell_background(self) -> dict:
         """Copy the background variation held fixed during concept interventions.
 
-        Includes library log offsets, Gaussian gene noise and Poisson quantiles.
-        Per-cell variables exposed as concepts are retrieved by ``get_concepts()``.
+        Includes Bernoulli probabilities, library log offsets, Gaussian gene
+        noise and Poisson quantiles. Bernoulli probabilities describe the
+        original sampling; they are not recomputed for interventions and
+        are not used to calculate the intervened counts.
+        Selected concept supervision is available as ``dataset.concepts``.
         """
         return deepcopy(self.generation_data["cell_background"])
 
@@ -643,30 +491,76 @@ class SingleCellDataset(ConceptDataset):
     def generate_from_dataset(self, *, concepts=None, model_parameters=None, n_cells=None, seed=None, root=None):
         """Create another SingleCellDataset using this dataset's configuration.
 
-        With no sampling arguments, copy the same cells and their states exactly.
-        ``concepts`` and ``model_parameters`` optionally override selected values;
+        Supply at least one of concepts, model_parameters, n_cells or seed.
+        Original concepts accept finite real values, given as named overrides,
+        a DataFrame aligned by cell and column names, or a matrix in raw column
+        order (original concepts only, or original concepts plus context).
+        Parameter overrides must keep the existing shapes; unknown names
+        and nonfinite values are rejected.
+        ``concepts`` and ``model_parameters`` override selected values;
         for example, ``dataset.generate_from_dataset(concepts={'concept_0': 1})``.
 
         Passing ``n_cells`` or ``seed`` draws new cells and states from the
-        same global model parameters. The original settings, concept selection
-        and descriptions are copied. ``root`` defaults to this dataset's
+        same global model parameters. Context is sampled before applying
+        partial overrides: replacing tissue does not resample celltype from
+        the new tissue's distribution. Bernoulli probabilities for new cells
+        use the final celltype. With existing cells, the saved probabilities
+        remain a record of their original sampling and do not affect counts.
+        The original settings, concept selection and descriptions are copied.
+        ``root`` defaults to this dataset's
         cache directory. Variants are stored in a subdirectory identified
         by their generated contents, so distinct interventions remain separate.
         """
-        data = _update_generation_data(self.generation_data, model_parameters=model_parameters)
-        output_seed = self.seed if seed is None else seed
-        original_concepts = torch.from_numpy(self.get_concepts().to_numpy())
-        data["generation_config"] = self.get_generation_config()
-        if n_cells is not None or seed is not None:
-            config = self.get_generation_config()
-            if n_cells is not None:
-                config["cells"]["n"] = n_cells
-            _, original_concepts, data = model(config, output_seed, model_parameters=data["model_parameters"])
+        if n_cells is None and seed is None and not model_parameters and (concepts is None or len(concepts) == 0):
+            raise ValueError("Provide at least one change: concepts, model_parameters, n_cells or seed.")
+        new_generation_data = self.get_generation_data()
+        config = new_generation_data["generation_config"]
+        fresh = n_cells is not None or seed is not None
+        if fresh:
+            config["cells"]["n"] = len(self) if n_cells is None else n_cells
+            config = new_generation_data["generation_config"] = _resolve_generation_config(config)
+            new_generation_data["cell_indices"] = torch.arange(config["cells"]["n"])
+            new_generation_data["cell_background"] = None
+
+        names = _concept_names(new_generation_data)
+        values = pd.DataFrame(
+            np.nan if fresh else self._generation_concepts.numpy(),
+            index=_cell_names(new_generation_data), columns=names,
+        )
         if concepts is not None:
-            original_concepts = _update_concepts(data, original_concepts, concepts)
+            if isinstance(concepts, (Mapping, pd.DataFrame)):
+                replacement = pd.DataFrame(concepts, index=values.index, dtype=float)
+            else:
+                replacement = torch.as_tensor(concepts).detach().cpu().numpy()
+                if replacement.shape not in (values.shape, (len(values), len(names) - 3)):
+                    raise ValueError("concepts must have shape (cells, binary concepts) or (cells, all concepts).")
+                replacement = pd.DataFrame(replacement, index=values.index, columns=names[:replacement.shape[1]])
+            if not set(replacement).issubset(names) or not np.isfinite(replacement.to_numpy()).all():
+                raise ValueError("Invalid concepts: expected known names and finite real values.")
+            context = replacement.filter(items=_CONTEXT_NAMES)
+            limits = pd.Series({name: config[name]["n"] for name in context})
+            if not ((context == np.floor(context)) & (context >= 0) & (context < limits)).all().all():
+                raise ValueError("Invalid class indices for celltype, tissue or batch.")
+            values[replacement.columns] = replacement
+
+        for name, value in (model_parameters or {}).items():
+            if name not in new_generation_data["model_parameters"]:
+                raise ValueError(f"Unknown model parameter: {name!r}.")
+            value = torch.as_tensor(value, dtype=torch.float64).detach().cpu()
+            expected_shape = new_generation_data["model_parameters"][name].shape
+            if value.shape != expected_shape or not value.isfinite().all():
+                raise ValueError(f"Parameter {name!r} must be finite and have shape {tuple(expected_shape)}.")
+            new_generation_data["model_parameters"][name] = value.clone()
+        inputs, new_concepts, new_generation_data["cell_background"] = model(
+            new_generation_data["model_parameters"], torch.from_numpy(values.to_numpy()),
+            cell_background=new_generation_data["cell_background"],
+            rng=np.random.default_rng(self.seed if seed is None else seed) if fresh else None,
+            std_noise=config["noise"]["std"],
+        )
+        output_seed = self.seed if seed is None else seed
         digest = hashlib.sha256()
-        values = {**data["model_parameters"], **data["cell_background"], "concepts": original_concepts,
-                  "cell_indices": data["cell_indices"]}
+        values = {**new_generation_data["model_parameters"], **new_generation_data["cell_background"],
+                  "concepts": new_concepts, "cell_indices": new_generation_data["cell_indices"]}
         for name, value in sorted(values.items()):
             digest.update(f"{name}:{value.dtype}:{tuple(value.shape)}".encode())
             digest.update(value.numpy().tobytes())
@@ -674,11 +568,14 @@ class SingleCellDataset(ConceptDataset):
         variant = f"generated_{digest.hexdigest()[:16]}"
         cache_root = cache_root if os.path.basename(cache_root) == variant else os.path.join(cache_root, variant)
         os.makedirs(cache_root, exist_ok=True)
-        filenames = _cache_filenames(data["generation_config"], output_seed)
-        torch.save(original_concepts, os.path.join(cache_root, filenames[1]))
-        torch.save(data, os.path.join(cache_root, filenames[4]))
+        filenames = _cache_filenames(new_generation_data["generation_config"], output_seed)
+        torch.save(inputs, os.path.join(cache_root, filenames[0]))
+        torch.save(new_concepts, os.path.join(cache_root, filenames[1]))
+        torch.save(torch.load(self.processed_paths[2], weights_only=False), os.path.join(cache_root, filenames[2]))
+        pd.DataFrame().to_hdf(os.path.join(cache_root, filenames[3]), key="graph", mode="w")
+        torch.save(new_generation_data, os.path.join(cache_root, filenames[4]))
         return type(self)(
-            root=cache_root, seed=output_seed, generation_config=data["generation_config"],
+            root=cache_root, seed=output_seed, generation_config=new_generation_data["generation_config"],
             concept_subset=self.concept_names,
             label_descriptions=deepcopy(self.label_descriptions),
         )
@@ -698,16 +595,17 @@ class SingleCellDataset(ConceptDataset):
             raise ValueError("The reference must have the same number of genes.")
         if min(reference.input_data.shape) < 2:
             raise ValueError("PCA plotting requires at least two cells and two genes.")
-        concepts = self.get_concepts()
-        if color_by not in concepts:
+        concept_names = _concept_names(self.generation_data)
+        if color_by not in concept_names:
             raise ValueError(f"Unknown concept: {color_by!r}.")
+        groups = self._generation_concepts[:, concept_names.index(color_by)].numpy()
         pca = PCA(n_components=2, svd_solver="full").fit(np.log1p(reference.input_data.numpy()))
         points = pca.transform(np.log1p(self.input_data.numpy()))
         ax = plt.subplots(figsize=(6, 5), layout="constrained")[1] if ax is None else ax
         n_classes = self.generation_config[color_by]["n"] if color_by in _CONTEXT_NAMES else 2
         palette = plt.get_cmap("tab10" if n_classes <= 10 else "tab20")
         for value in range(n_classes):
-            mask = concepts[color_by].to_numpy() == value
+            mask = groups == value
             if mask.any():
                 ax.scatter(points[mask, 0], points[mask, 1], s=18, alpha=0.75,
                            color=palette(value % palette.N), edgecolors="none", label=str(value))
@@ -726,7 +624,9 @@ class SingleCellDataset(ConceptDataset):
             for name, values in self.generation_data["cell_background"].items()
         }
         cell_indices = self.generation_data["cell_indices"][row_indices]
+        concepts = self._generation_concepts[row_indices]
         super()._subset_rows(row_indices)
+        self._generation_concepts = concepts
         self.generation_data["cell_background"] = cell_background
         self.generation_data["cell_indices"] = cell_indices
 
