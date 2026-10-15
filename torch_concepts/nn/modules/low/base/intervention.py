@@ -167,17 +167,13 @@ class InterventionPolicy(nn.Module, ABC):
             mask = (mask - soft_proxy).detach() + soft_proxy
             return mask.reshape(*lead, F)
 
-        # K > 1: standard per-row quantile via kthvalue
+        # K > 1: replace exactly the k lowest-scoring columns of each row. Ties are
+        # broken by position, so a policy that scores every column equally (e.g.
+        # UniformPolicy) intervenes on the first k, not on all of them.
         k = int(max(1, min(K, 1 + math.floor(quantile * (K - 1)))))
-        try:
-            thr, _ = torch.kthvalue(sel, k, dim=1, keepdim=True)  # [B,1]
-        except NotImplementedError:
-            # kthvalue has no MPS kernel; fall back to CPU for this op only.
-            thr, _ = torch.kthvalue(sel.cpu(), k, dim=1, keepdim=True)
-            thr = thr.to(device)
-
-        # Use strict '>' so ties at the threshold are replaced (robust near edges)
-        sel_mask_hard = (sel > (thr - 0.0)).to(dtype)  # [B,K]
+        order = torch.sort(sel.detach(), dim=1, stable=True).indices  # [B,K]
+        rank = torch.empty_like(order).scatter_(1, order, torch.arange(K, device=device).expand(B, K))
+        sel_mask_hard = (rank >= k).to(dtype)  # [B,K]: 0 = replaced
 
         mask = torch.ones((B, F), device=device, dtype=dtype)
         mask.scatter_(1, sel_idx, sel_mask_hard)

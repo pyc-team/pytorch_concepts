@@ -232,6 +232,11 @@ class TestUniformPolicy:
         policy = UniformPolicy()
         assert torch.equal(policy(torch.randn(4, 3)), policy(torch.randn(4, 3)))
 
+    def test_mask_replaces_exactly_k_first_columns_despite_ties(self):
+        policy = UniformPolicy()
+        mask = policy.build_mask(policy(torch.randn(4, 6)), quantile=0.4)  # k = 1 + floor(0.4 * 5) = 3
+        assert torch.equal(mask.detach(), torch.tensor([[0., 0., 0., 1., 1., 1.]]).expand(4, 6))
+
 
 # ===========================================================================
 # 5. RandomPolicy
