@@ -8,13 +8,18 @@ class SingleCellDataModule(ConceptDataModule):
     """DataModule for synthetic single-cell datasets.
 
     Handles data loading, splitting, and batching for the synthetic single-cell
-    dataset.
+    dataset. Global ``model_parameters`` and realized ``cell_background`` are
+    saved together with ``generation_config`` in one processed file. With
+    ``max_samples``, the in-memory concepts and cell background follow the
+    selected dataset rows.
+    Only binary indicators are concepts; celltype, tissue and batch belong to
+    the fixed cell background.
     Paper: Andersson, A., et al. (2026). Single-Cell Concept Bottleneck Generative Models for Interpretable and Controllable Cellular Editing.
     In ICLR 2026 Workshop on Machine Learning for Genomics Explorations. https://arxiv.org/pdf/2606.07760.
 
     Args:
         seed: Random seed for the train/val/test split.
-        root: Root directory to store/load the dataset. If None, uses
+        root: Directory for processed dataset files. If None, uses
             './data/single_cell'.
         generation_seed: Random seed for data generation.
         val_size: Validation set size (fraction or absolute count).
@@ -23,7 +28,7 @@ class SingleCellDataModule(ConceptDataModule):
         concept_subset: Subset of concepts to use. If None, uses all concepts.
         label_descriptions: Dictionary mapping concept names to descriptions.
         generation_config: Partial counts and distribution parameters grouped
-            by quantity: cells, genes, batch, celltype, tissue, concept,
+            by quantity: cells, genes, batch, celltype, tissue, original_concept,
             baseline, library, noise.
             Omitted parameters use the defaults documented in
             :class:`~torch_concepts.data.datasets.single_cell.SingleCellDataset`.
