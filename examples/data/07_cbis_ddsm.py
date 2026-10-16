@@ -10,12 +10,14 @@ Like the HAM10000 example, a ``FixedConceptGenerator`` proposes a vocabulary,
 ``CLIPAnnotator`` scores the images, and ``SigmoidCalibrator`` converts cosine
 similarities into probabilities. A dog and a cat are added as sanity checks.
 
-Data: up to 256 training mass crops. Download the official mass train/test CSVs
-and cropped DICOMs manually from
-https://www.cancerimagingarchive.net/collection/cbis-ddsm/.
-Put CSVs in ``DATA_ROOT/cbis_ddsm/raw`` and images below
-``DATA_ROOT/cbis_ddsm``, preserving ``StudyUID/SeriesUID/filename.dcm`` suffixes.
-CLIP weights are downloaded on first run.
+Data: up to 256 training mass crops. The datasets first try to download the
+official mass train/test CSVs and missing image series from TCIA. If downloading
+fails or the API filenames cannot be mapped uniquely to the CSV, the error asks
+for manual acquisition from https://www.cancerimagingarchive.net/collection/cbis-ddsm/.
+Put CSVs in ``DATA_ROOT/cbis_ddsm/raw`` and images below ``DATA_ROOT/cbis_ddsm``,
+preserving ``StudyUID/SeriesUID/filename.dcm`` suffixes matching the CSV.
+Each selected split's missing sources are acquired before the 256-image subset
+is selected. CLIP weights are downloaded on first run.
 
 Image scaling, resizing, and RGB replication below are choices for this CLIP
 example. The dataset keeps its native DICOM pixels and original annotations.

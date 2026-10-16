@@ -1,17 +1,26 @@
 """Native CBIS-DDSM abnormality/view observations and distributed DICOM images."""
 import os
+import shutil
+import zipfile
+from http.client import HTTPException
 from pathlib import Path, PurePosixPath
+from tempfile import TemporaryDirectory
 from typing import Callable, List, Optional
+from urllib.parse import urlencode
+from urllib.request import urlopen
 
 import numpy as np
 import pandas as pd
 import torch
+from tqdm import tqdm
 
 from torch_concepts import Annotations
 from torch_concepts.data.base import ConceptDataset
 
 
 TCIA_URL = "https://www.cancerimagingarchive.net/collection/cbis-ddsm/"
+CSV_URL = "https://www.cancerimagingarchive.net/wp-content/uploads/"
+NBIA_URL = "https://services.cancerimagingarchive.net/nbia-api/services/v1/getImage"
 IMAGE_COLUMNS = {
     "full": "image_file_path",
     "cropped": "cropped_image_file_path",
@@ -68,10 +77,11 @@ class CBISDDSMDataset(ConceptDataset):
     have separate descriptor axes, alongside categorical density, assessment,
     subtlety, and the three original pathology states.
 
-    Download the CSVs and DICOM images manually from TCIA using the NBIA Data
-    Retriever. Put CSVs in ``root/raw`` and DICOMs anywhere below ``root``, keeping
-    the source ``StudyUID/SeriesUID/filename.dcm`` suffixes. Prefix directories
-    may differ from the CSV. Missing or ambiguous references raise an error.
+    Missing CSVs and image series are downloaded from TCIA automatically. If
+    acquisition fails or downloaded instances cannot be matched unambiguously,
+    an error asks for manual acquisition using the NBIA Data Retriever. Put
+    CSVs in ``root/raw`` and DICOMs below ``root``, keeping the source
+    ``StudyUID/SeriesUID/filename.dcm`` suffixes. Prefix directories may differ.
 
     Pixels are float32 tensors of shape ``(1, H, W)`` at native resolution and
     stored dynamic range. MONOCHROME1 is linearly inverted using the declared
@@ -151,14 +161,115 @@ class CBISDDSMDataset(ConceptDataset):
             "concepts.h5", "annotations.pt", "metadata.h5",
         )]
 
+    def maybe_download(self) -> None:
+        """Download only when the selected CSV or referenced images are missing."""
+        if not Path(self.raw_paths[0]).is_file():
+            self.download()
+            return
+        metadata = self._read_metadata(self.raw_paths[0], self.abnormality_type)
+        paths = self._build_path_index(self.root_dir)
+        for reference in metadata[IMAGE_COLUMNS[self.image_type]]:
+            try:
+                self._resolve_path(reference, paths)
+            except FileNotFoundError:
+                self.download()
+                return
+
     def download(self) -> None:
-        """Explain manual TCIA acquisition; never scrape or download images."""
-        raise FileNotFoundError(
-            f"CBIS-DDSM source metadata not found: {self.raw_paths[0]}. "
-            f"Download the official CSV and DICOM images from {TCIA_URL} "
-            "using the NBIA Data Retriever. Place the CSV in root/raw and "
-            "DICOMs below root, preserving StudyUID/SeriesUID/filename.dcm."
+        """Fetch missing selected sources, falling back to manual instructions."""
+        csv_path = Path(self.raw_paths[0])
+        try:
+            if not csv_path.is_file():
+                csv_path.parent.mkdir(parents=True, exist_ok=True)
+                with TemporaryDirectory(dir=csv_path.parent) as directory:
+                    temporary = Path(directory) / csv_path.name
+                    self._download_file(CSV_URL + csv_path.name, temporary)
+                    self._read_metadata(str(temporary), self.abnormality_type)
+                    os.replace(temporary, csv_path)
+        except (OSError, HTTPException, ValueError) as exc:
+            raise self._manual_download_error(exc) from exc
+        metadata = self._read_metadata(str(csv_path), self.abnormality_type)
+        paths = self._build_path_index(self.root_dir)
+        missing = {}
+        for reference in dict.fromkeys(metadata[IMAGE_COLUMNS[self.image_type]]):
+            try:
+                self._resolve_path(reference, paths)
+            except FileNotFoundError:
+                suffix = PurePosixPath(reference.strip().replace("\\", "/")).parts[-3:]
+                if len(suffix) != 3 or any(part in ("..", ".") for part in suffix):
+                    raise ValueError(f"Invalid source DICOM reference: {reference!r}.")
+                missing.setdefault(suffix[:2], []).append(suffix[2])
+        for (study, series), filenames in tqdm(
+            missing.items(), desc="Downloading CBIS-DDSM series", disable=not missing,
+        ):
+            try:
+                self._download_series(study, series, filenames)
+            except (OSError, HTTPException, ValueError, zipfile.BadZipFile, EOFError) as exc:
+                raise self._manual_download_error(exc) from exc
+
+    def _manual_download_error(self, error: Exception) -> FileNotFoundError:
+        return FileNotFoundError(
+            f"Automatic CBIS-DDSM download failed: {error} "
+            f"Please download {self.abnormality_type} {self.split} "
+            f"{self.image_type} images and {Path(self.raw_paths[0]).name} "
+            f"manually from {TCIA_URL} using the NBIA Data Retriever. "
+            f"Place the CSV in {Path(self.root_dir) / 'raw'} and DICOMs below "
+            f"{self.root_dir}, preserving StudyUID/SeriesUID/filename.dcm "
+            "suffixes matching the CSV. Completed files are kept; rerun after downloading."
         )
+
+    @staticmethod
+    def _download_file(url: str, destination: Path) -> None:
+        """Stream to a temporary file so interrupted transfers are not reused."""
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        with TemporaryDirectory(dir=destination.parent) as directory:
+            temporary = Path(directory) / destination.name
+            with urlopen(url, timeout=60) as response, temporary.open("wb") as output:
+                shutil.copyfileobj(response, output)
+                expected = response.headers.get("Content-Length")
+            if expected is not None and temporary.stat().st_size != int(expected):
+                raise OSError(f"Incomplete download from {url}.")
+            os.replace(temporary, destination)
+
+    def _download_series(self, study: str, series: str, filenames: List[str]) -> None:
+        import pydicom
+
+        query = urlencode({"SeriesInstanceUID": series, "NewFileNames": "No"})
+        destination = Path(self.root_dir) / "images" / study / series
+        destination.mkdir(parents=True, exist_ok=True)
+        with TemporaryDirectory(dir=destination) as directory:
+            archive_path = Path(directory) / "series.zip"
+            self._download_file(f"{NBIA_URL}?{query}", archive_path)
+            with zipfile.ZipFile(archive_path) as archive:
+                members = [member for member in archive.infolist() if member.filename.endswith(".dcm")]
+                selected = []
+                for filename in dict.fromkeys(filenames):
+                    matches = [m for m in members if PurePosixPath(m.filename).name == filename]
+                    if not matches and len(members) == 1 and len(set(filenames)) == 1:
+                        matches = members
+                    if len(matches) != 1:
+                        raise ValueError(
+                            f"Cannot uniquely map CSV instance {study}/{series}/{filename} "
+                            f"to API filenames {[m.filename for m in members]}. "
+                            "Crop/mask identity cannot be inferred from archive order."
+                        )
+                    member = matches[0]
+                    with archive.open(member) as source:
+                        try:
+                            header = pydicom.dcmread(source, stop_before_pixels=True)
+                        except pydicom.errors.InvalidDicomError as exc:
+                            raise ValueError(f"Invalid downloaded DICOM: {member.filename}.") from exc
+                    if (header.get("StudyInstanceUID"), header.get("SeriesInstanceUID")) != (study, series):
+                        raise ValueError(f"Downloaded DICOM UIDs disagree with {study}/{series}.")
+                    temporary = Path(directory) / filename
+                    with archive.open(member) as source, temporary.open("wb") as output:
+                        shutil.copyfileobj(source, output)
+                    selected.append((temporary, destination / filename))
+                for temporary, target in selected:
+                    os.replace(temporary, target)
+                if "LICENSE" in archive.namelist():
+                    license_path = Path(self.root_dir) / "raw" / "TCIA_LICENSE"
+                    license_path.write_bytes(archive.read("LICENSE"))
 
     @staticmethod
     def _read_metadata(csv_path: str, abnormality_type: str) -> pd.DataFrame:
