@@ -13,12 +13,24 @@ does not repeat that historical processing.
 Acquisition and layout
 ----------------------
 
-Install the data extras (including ``pydicom`` and ``tables``), then obtain the
-images through the NBIA Data Retriever from the `official TCIA collection
-<https://www.cancerimagingarchive.net/collection/cbis-ddsm/>`_. Download the full
-mammogram and ROI/crop products needed for your selected abnormality and split.
-There is no automatic image download. The four small metadata CSVs are also
-linked on that release page:
+Install the data extras (including ``pydicom`` and ``tables``). The dataset first
+tries to download the selected metadata CSV and missing image series from TCIA's
+public NBIA API. Only series referenced by the requested abnormality, split, and
+image product are requested; existing local images are reused. NBIA transfers
+whole series, which can contain both a crop and a mask. Only requested instances
+are retained. Large selections can require substantial time and disk space.
+
+If a transfer fails, or downloaded instances cannot be matched unambiguously,
+the dataset raises an error with the cause and manual acquisition instructions.
+Completed files remain available for the next attempt; incomplete transfers and
+temporary ZIP archives are removed. Network requests use a 60-second timeout.
+There is no interactive terminal prompt, so notebooks and training jobs receive
+the same actionable error.
+
+For manual acquisition, use the NBIA Data Retriever from the `official TCIA
+collection <https://www.cancerimagingarchive.net/collection/cbis-ddsm/>`_. Download
+the full mammogram and ROI/crop products needed for your selection, and place
+the metadata CSVs and images as follows:
 
 .. code-block:: text
 
@@ -48,6 +60,19 @@ raise errors identifying the reference, observation, and requested column.
 Exports that rename UID directories or instance filenames must restore these
 suffixes using an independently verified mapping. The loader does not guess an
 instance from directory order, a numeric filename, or image dimensions.
+
+The automatic downloader checks StudyInstanceUID and SeriesInstanceUID in each
+selected DICOM header before retaining it. An API member must match the CSV
+filename exactly. If a series contains only one DICOM and only one filename is
+requested, that unique instance can be saved under the CSV name. For multi-image
+series with incompatible filenames, acquisition stops with manual instructions.
+In a live check on 16 October 2026, the API returned a crop/mask series as
+``00000001.dcm`` and ``00000002.dcm``, while the CSV used ``000000.dcm`` and
+``000001.dcm``. Both instances had InstanceNumber 1, so that field could not
+establish a unique filename mapping either. The downloader does not rename by
+position, swap columns, or infer the intended file from image appearance.
+See the `official NBIA download API documentation
+<https://wiki.cancerimagingarchive.net/display/Public/NBIA+Search+REST+API+Guide>`_.
 
 Caches are separate for each abnormality/split/image selection. Images remain
 DICOM sources. Existing caches are reused deterministically and their selected
