@@ -89,10 +89,12 @@ class ConceptMemoryReasoner(BipartiteModel):
         annotations: Dataset annotations containing binary concepts and tasks.
         task_names: Name or names of the task labels.
         n_rules: Number of rules stored per task.
-        memory_latent_size: Size of each learned task memory embedding.
+        memory_latent_size: Size of each learned task-rule memory embedding.
         memory_decoder_hidden_layers: Number of hidden decoder layers in
             ``RuleMemory``.
         selector_hidden_layers: Number of hidden layers in the rule selector.
+        reset_selector_every_n_epochs: If set, reinitialize the rule selector
+            before every Nth training epoch, excluding epoch zero.
         rec_weight: Non-negative exponent applied to each rule reconstruction
             probability.
         hard_roles_at_eval: If true, use the argmax one-hot role assignment in
@@ -117,6 +119,7 @@ class ConceptMemoryReasoner(BipartiteModel):
         memory_latent_size: int = 100,
         memory_decoder_hidden_layers: int = 1,
         selector_hidden_layers: int = 1,
+        reset_selector_every_n_epochs: Optional[int] = None,
         rec_weight: float = 0.1,
         hard_roles_at_eval: bool = True,
         inference: Optional[BaseInference] = DeterministicInference,
@@ -150,6 +153,17 @@ class ConceptMemoryReasoner(BipartiteModel):
             )
         if selector_hidden_layers < 0:
             raise ValueError("selector_hidden_layers must be non-negative.")
+        if (
+            reset_selector_every_n_epochs is not None
+            and (
+                not isinstance(reset_selector_every_n_epochs, int)
+                or isinstance(reset_selector_every_n_epochs, bool)
+                or reset_selector_every_n_epochs <= 0
+            )
+        ):
+            raise ValueError(
+                "reset_selector_every_n_epochs must be a positive integer or None."
+            )
         if rec_weight < 0:
             raise ValueError("rec_weight must be non-negative.")
 
@@ -157,6 +171,7 @@ class ConceptMemoryReasoner(BipartiteModel):
         self.memory_latent_size = memory_latent_size
         self.memory_decoder_hidden_layers = memory_decoder_hidden_layers
         self.selector_hidden_layers = selector_hidden_layers
+        self.reset_selector_every_n_epochs = reset_selector_every_n_epochs
         self.rec_weight = rec_weight
         self.hard_roles_at_eval = hard_roles_at_eval
         self.pgm = self._build_model()
@@ -170,6 +185,30 @@ class ConceptMemoryReasoner(BipartiteModel):
     def prepare_query(self, batch, step="train"):
         """Include both CMR task paths in the standard query."""
         return {**super().prepare_query(batch, step), "tasks_with_rec": None}
+
+    def _rule_selector_network(self) -> nn.Module:
+        """Return the trainable network that produces rule-selector logits."""
+        selector_cpd = self.pgm.factors["rule_selector"]
+        return selector_cpd.parametrization["logits"][0]
+
+    def reset_rule_selector(self) -> None:
+        """Reinitialize only the neural rule selector's parameters."""
+        self._rule_selector_network().reset_parameters()
+
+    def _maybe_reset_rule_selector(self, epoch: int) -> bool:
+        """Apply the configured periodic reset and report whether it ran."""
+        interval = self.reset_selector_every_n_epochs
+        if interval is None or epoch <= 0 or epoch % interval != 0:
+            return False
+        self.reset_rule_selector()
+        return True
+
+    def on_train_epoch_start(self) -> None:
+        """Reset the selector on the schedule used by the original CMR code."""
+        parent_hook = getattr(super(), "on_train_epoch_start", None)
+        if parent_hook is not None:
+            parent_hook()
+        self._maybe_reset_rule_selector(self.current_epoch)
 
     def _input_latent_block(self):
         """Build the standard raw-input to latent block used by CBM/CEM."""

@@ -27,7 +27,7 @@ class TestRuleMemory(unittest.TestCase):
             hidden_layers=2,
         )
         self.assertEqual(memory.shape, (3, 5, 10, 3))
-        self.assertEqual(memory.memory.weight.shape, (3, 64))
+        self.assertEqual(memory.memory.weight.shape, (3 * 5, 64))
 
     def test_forward_shape(self):
         memory = RuleMemory(n_tasks=2, n_rules=4, n_concepts=6)
@@ -59,10 +59,23 @@ class TestRuleMemory(unittest.TestCase):
         self.assertEqual(linear_two, 3)
 
     def test_gradient_flow(self):
-        memory = RuleMemory(n_tasks=2, n_rules=3, n_concepts=4)
-        loss = memory().sum()
+        n_tasks, n_rules = 2, 3
+        memory = RuleMemory(
+            n_tasks=n_tasks, n_rules=n_rules, n_concepts=4
+        )
+        selected_task, selected_rule = 1, 2
+        loss = memory()[selected_task, selected_rule, :, 0].sum()
         loss.backward()
         self.assertIsNotNone(memory.memory.weight.grad)
+        selected_index = selected_task * n_rules + selected_rule
+        embedding_grad = memory.memory.weight.grad
+        self.assertGreater(embedding_grad[selected_index].abs().sum().item(), 0)
+        other_indices = [
+            index
+            for index in range(n_tasks * n_rules)
+            if index != selected_index
+        ]
+        self.assertEqual(embedding_grad[other_indices].abs().sum().item(), 0)
 
 
 class TestRuleConceptEmbeddingToConcept(unittest.TestCase):

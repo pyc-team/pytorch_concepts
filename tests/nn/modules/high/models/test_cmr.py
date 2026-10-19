@@ -74,7 +74,63 @@ def test_cmr_cpd_parametrizations_match_layer_output_domains():
     )
 
 
-def test_cmr_composite_loss_matches_original_value_and_gradients():
+def test_cmr_rejects_invalid_selector_reset_interval():
+    annotations = Annotations(labels=["c1", "task"], cardinalities=[1, 1])
+
+    for interval in (0, -1, 1.5, True):
+        try:
+            ConceptMemoryReasoner(
+                input_size=2,
+                annotations=annotations,
+                task_names=["task"],
+                reset_selector_every_n_epochs=interval,
+            )
+        except ValueError as exc:
+            assert "positive integer or None" in str(exc)
+        else:
+            raise AssertionError(f"interval {interval!r} should be rejected")
+
+
+def test_cmr_periodically_resets_only_the_rule_selector():
+    torch.manual_seed(3)
+    model = ConceptMemoryReasoner(
+        input_size=2,
+        annotations=Annotations(
+            labels=["c1", "c2", "task"], cardinalities=[1, 1, 1]
+        ),
+        task_names=["task"],
+        n_rules=3,
+        reset_selector_every_n_epochs=2,
+    )
+    selector_parameters = list(model._rule_selector_network().parameters())
+    selector_ids = {id(parameter) for parameter in selector_parameters}
+    other_parameters = [
+        parameter
+        for parameter in model.parameters()
+        if id(parameter) not in selector_ids
+    ]
+    selector_before = [parameter.detach().clone() for parameter in selector_parameters]
+    others_before = [parameter.detach().clone() for parameter in other_parameters]
+
+    assert not model._maybe_reset_rule_selector(epoch=0)
+    assert not model._maybe_reset_rule_selector(epoch=1)
+    assert all(
+        torch.equal(before, after)
+        for before, after in zip(selector_before, selector_parameters)
+    )
+
+    assert model._maybe_reset_rule_selector(epoch=2)
+    assert any(
+        not torch.equal(before, after)
+        for before, after in zip(selector_before, selector_parameters)
+    )
+    assert all(
+        torch.equal(before, after)
+        for before, after in zip(others_before, other_parameters)
+    )
+
+
+def test_cmr_composite_loss_matches_explicit_value_and_gradients():
     torch.manual_seed(7)
     task_names = ["y1", "y2"]
     annotations = Annotations(

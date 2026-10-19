@@ -10,6 +10,10 @@ from ..dense_layers import MLP
 class RuleMemory(torch.nn.Module):
     """Learnable rule memory decoded into categorical role probabilities.
 
+    Each task-rule pair owns an independent latent embedding. A decoder shared
+    by all pairs maps each embedding to the positive, negative, and irrelevant
+    role probabilities of every concept.
+
     During training the decoded roles remain soft probabilities. During eval,
     ``hard_at_eval=True`` converts each 3-way role categorical to its argmax
     one-hot mode.
@@ -32,27 +36,32 @@ class RuleMemory(torch.nn.Module):
         if hidden_layers < 0:
             raise ValueError("hidden_layers must be non-negative.")
         self.hard_at_eval = hard_at_eval
+        self.n_tasks = n_tasks
+        self.n_rules = n_rules
         self.shape = (n_tasks, n_rules, n_concepts, 3)
-        width = n_rules * n_concepts * 3
-        self.memory = torch.nn.Embedding(n_tasks, latent_size)
+        role_size = n_concepts * 3
+        self.memory = torch.nn.Embedding(n_tasks * n_rules, latent_size)
         decoder = (
-            torch.nn.Linear(latent_size, width)
+            torch.nn.Linear(latent_size, role_size)
             if hidden_layers == 0
             else MLP(
                 input_size=latent_size,
-                hidden_size=width,
-                output_size=width,
+                hidden_size=latent_size,
+                output_size=role_size,
                 n_layers=hidden_layers,
                 activation="leaky_relu",
             )
         )
         self.decoder = torch.nn.Sequential(
             decoder,
-            torch.nn.Unflatten(-1, (n_rules, n_concepts, 3)),
+            torch.nn.Unflatten(-1, (n_concepts, 3)),
         )
 
     def forward(self):
-        pred = torch.softmax(self.decoder(self.memory.weight), dim=-1)
+        pred = self.decoder(self.memory.weight).unflatten(
+            0, (self.n_tasks, self.n_rules)
+        )
+        pred = torch.softmax(pred, dim=-1)
         if (not self.training) and self.hard_at_eval:
             idx = pred.argmax(dim=-1)
             pred = torch.nn.functional.one_hot(
