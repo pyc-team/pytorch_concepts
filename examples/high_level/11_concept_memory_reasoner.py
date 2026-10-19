@@ -79,7 +79,7 @@ model = ConceptMemoryReasoner(
     latent_size=32,
     n_rules=n_rules,
     memory_latent_size=64,
-    rec_weight=1.0,
+    rec_weight=0.1,
     hard_roles_at_eval=True,
     lightning=True,
     loss=loss,
@@ -102,7 +102,7 @@ trainer.test(model, datamodule=datamodule)
 # three roles; their argmax is the rule. ``rule_selector`` gives how often each
 # rule is used on the test set.
 concepts = model.intermediate_concept_names
-x_test = datamodule.dataset.input_data[datamodule.testset.indices]
+x_test = datamodule.dataset.input_data[datamodule.testset.indices].to(model.device)
 model.eval()
 with torch.no_grad():
     out = model(query=["rule_selector", "rule_roles"], input=x_test)
