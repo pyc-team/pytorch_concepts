@@ -98,6 +98,11 @@ Expand each block below for an explanation and an example.
     images, as above. CelebA uses its own three partitions, unless ``splitter=None`` asks for
     a random split, which ``max_samples`` requires.
 
+    ``CustomSplitter`` accepts ordinary functions, ``functools.partial`` objects,
+    and callable instances as split functions. Its ``val_policy`` and ``test_policy``
+    properties report the function name (unwrapping partials), or the class name for
+    callable instances. Unset policies are ``None``.
+
 
 .. dropdown:: Precomputed embeddings
     :icon: cpu
