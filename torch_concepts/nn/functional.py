@@ -355,20 +355,36 @@ def logic_rule_eval(
         concept_weights: concept weights with shape (batch_size,
             memory_size, n_concepts, n_tasks, n_roles) with n_roles=3.
         c_pred: concept predictions with shape (batch_size, n_concepts).
-        memory_idxs: Indices of rules to evaluate with shape (batch_size,
-            n_tasks). Default is None (evaluate all).
+        memory_idxs: Long tensor of rule indices with shape (batch_size,
+            n_tasks), on the same device as concept_weights. Selects one rule
+            per sample and task. Default is None (evaluate all).
         semantic: Semantic function to use for rule evaluation.
 
     Returns:
         torch.Tensor: Rule predictions with shape (batch_size, n_tasks,
-            memory_size)
+            memory_size) when memory_idxs is None, otherwise (batch_size,
+            n_tasks, 1).
+
+    Raises:
+        ValueError: If memory_idxs does not have shape (batch_size, n_tasks).
     """
 
     assert len(concept_weights.shape) == 5, \
         ("Size error, concept weights should be batch_size x memory_size "
          f"x n_concepts x n_tasks x n_roles. Received {concept_weights.shape}")
-    memory_size = concept_weights.size(1)
     n_tasks = concept_weights.size(3)
+    if memory_idxs is not None:
+        expected_shape = (concept_weights.size(0), n_tasks)
+        if tuple(memory_idxs.shape) != expected_shape:
+            raise ValueError(
+                f"memory_idxs must have shape {expected_shape}, "
+                f"received {tuple(memory_idxs.shape)}."
+            )
+        indices = memory_idxs[:, None, None, :, None].expand(
+            -1, 1, concept_weights.size(2), -1, concept_weights.size(4)
+        )
+        concept_weights = concept_weights.gather(1, indices)
+    memory_size = concept_weights.size(1)
 
     # to avoid numerical problem
     concept_weights = concept_weights * 0.999
@@ -379,17 +395,9 @@ def logic_rule_eval(
         concept_weights[..., 2],
     )
 
-    if memory_idxs is None:
-        # cast all to (batch_size, memory_size, n_concepts, n_tasks)
-        x = c_pred.unsqueeze(1).unsqueeze(-1).expand(
-            -1,
-            memory_size,
-            -1,
-            n_tasks,
-        )
-    else:  # cast all to (batch_size, memory_size=1, n_concepts, n_tasks)
-        # TODO: memory_idxs never used!
-        x = c_pred.unsqueeze(1).unsqueeze(-1).expand(-1, 1, -1, n_tasks)
+    x = c_pred.unsqueeze(1).unsqueeze(-1).expand(
+        -1, memory_size, -1, n_tasks
+    )
 
     # batch_size, mem_size, n_tasks
     y_per_rule = semantic.disj(
