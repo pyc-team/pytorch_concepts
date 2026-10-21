@@ -27,6 +27,7 @@ dependencies = { file = ["requirements.txt"] }
 version = { attr = "torch_concepts._version.__version__" }
 
 [project.optional-dependencies]
+lfcbm = ["glm-saga==0.1.2"]
 data = [
     "Pillow",
     "opencv-python",

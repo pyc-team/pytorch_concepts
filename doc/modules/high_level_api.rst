@@ -36,6 +36,7 @@ Models
    :nosignatures:
 
    ConceptBottleneckModel
+   LabelFreeCBM
    ConceptEmbeddingModel
    ConceptBottleneckVAE
    ConditionalVAE
@@ -43,6 +44,17 @@ Models
    CausallyReliableConceptBottleneckModel
    BlackBox
    BlackBoxTaskOnly
+
+Concept Generation Helpers
+--------------------------
+
+See :doc:`/guides/lfcbm` for LF-CBM training and reproduction settings.
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   torch_concepts.data.generation.filters.SemanticConceptFilter
 
 Outputs
 -------
