@@ -267,11 +267,19 @@ class TestConvertPrecision:
         result = convert_precision(tensor, "float16")
         assert result.dtype == torch.float16
 
-    def test_no_change(self):
-        """Test when precision doesn't change."""
+    def test_int_precision(self):
+        """Test integer precisions, as passed by ConceptDataset (default 32)."""
+        tensor = torch.tensor([1, 2, 3], dtype=torch.float64)
+        assert convert_precision(tensor, 32).dtype == torch.float32
+        assert convert_precision(tensor, 16).dtype == torch.float16
+        assert convert_precision(tensor.float(), 64).dtype == torch.float64
+
+    def test_unsupported_precision_raises(self):
+        """Test that unsupported precisions raise instead of passing through."""
         tensor = torch.tensor([1, 2, 3], dtype=torch.float32)
-        result = convert_precision(tensor, "unknown")
-        assert result.dtype == torch.float32
+        for precision in ("unknown", "32", 8, None):
+            with pytest.raises(ValueError, match="Unsupported precision"):
+                convert_precision(tensor, precision)
 
 
 class TestResolveSize:

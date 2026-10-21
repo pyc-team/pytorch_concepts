@@ -97,13 +97,21 @@ def convert_precision(tensor: Tensor,
 
     Returns:
         Tensor: Tensor converted to specified precision.
+
+    Raises:
+        ValueError: If precision is not one of the supported values.
     """
-    if precision == "float32":
+    if precision in ("float32", 32):
         tensor = tensor.to(torch.float32)
-    elif precision == "float64":
+    elif precision in ("float64", 64):
         tensor = tensor.to(torch.float64)
-    elif precision == "float16":
+    elif precision in ("float16", 16):
         tensor = tensor.to(torch.float16)
+    else:
+        raise ValueError(
+            f"Unsupported precision {precision!r}; expected 16, 32, 64 "
+            "or 'float16', 'float32', 'float64'."
+        )
     return tensor
 
 def resolve_size(size: Union[int, float], n_samples: int) -> int:
