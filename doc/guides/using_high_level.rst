@@ -17,6 +17,14 @@ Out-of-the-box Models
 The High-Level API gives you concept-based models out-of-the-box. 
 It is the right entry point if you just want a model that works without assembling it yourself.
 
+For the high-level LF-CBM model with concept discovery and multi-stage fitting,
+see :doc:`lfcbm`.
+
+.. toctree::
+   :hidden:
+
+   lfcbm
+
 .. image:: /_static/img/api_levels/high_level.png
    :alt: Overview of the PyC High-Level API
    :align: center

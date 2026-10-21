@@ -67,6 +67,7 @@ from .modules.outputs import InferenceOutput
 # Models (high-level)
 from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
 from .modules.high.models.cbm import ConceptBottleneckModel
+from .modules.high.models.lfcbm import LabelFreeCBM
 from .modules.high.models.cem import ConceptEmbeddingModel
 from .modules.high.models.cbvae import ConceptBottleneckVAE
 from .modules.high.models.cvae import ConditionalVAE
@@ -200,6 +201,7 @@ __all__ = [
     "BlackBox",
     "BlackBoxTaskOnly",
     "ConceptBottleneckModel",
+    "LabelFreeCBM",
     "ConceptEmbeddingModel",
     "ConceptBottleneckVAE",
     "ConditionalVAE",
