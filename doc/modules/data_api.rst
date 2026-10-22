@@ -49,6 +49,7 @@ Datasets
    AWA2Dataset
    CUBDataset
    HAM10000Dataset
+   CBISDDSMDataset
 
 Data Modules
 ------------
