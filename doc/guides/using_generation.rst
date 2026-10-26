@@ -250,7 +250,7 @@ Pipeline steps
           return AnnotatedTensor(
               torch.stack([value.tensor for value in values]).mean(dim=0),
               values[0].annotations,
-              axis=1,
+              axis=-1,
           )
 
 
@@ -271,13 +271,13 @@ Pipeline steps
       concepts = Annotations(labels=["round", "striped"], cardinalities=[1, 1])
       outputs = {
           "CLIPAnnotator": AnnotatedTensor(
-              torch.tensor([[0.8, 0.2], [0.4, 0.6]]), concepts, axis=1,
+              torch.tensor([[0.8, 0.2], [0.4, 0.6]]), concepts, axis=-1,
           ),
           "CLIPAnnotator_1": AnnotatedTensor(
-              torch.tensor([[0.6, 0.4], [0.2, 0.8]]), concepts, axis=1,
+              torch.tensor([[0.6, 0.4], [0.2, 0.8]]), concepts, axis=-1,
           ),
           "aggregated": AnnotatedTensor(
-              torch.tensor([[0.7, 0.3], [0.3, 0.7]]), concepts, axis=1,
+              torch.tensor([[0.7, 0.3], [0.3, 0.7]]), concepts, axis=-1,
           ),
       }
 

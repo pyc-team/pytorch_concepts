@@ -43,16 +43,17 @@ def annotations():
     )
 
 
-@pytest.fixture
-def concepts(annotations):
-    """Concepts on wildly different scales — the case scaling exists for."""
+@pytest.fixture(params=[1, -1], ids=["axis1", "last_axis"])
+def concepts(annotations, request):
+    """Concepts on wildly different scales — the case scaling exists for —
+    annotated on axis 1 or on the last axis, as ``ConceptDataset`` batches are."""
     torch.manual_seed(0)
     data = torch.stack([
         torch.randn(N_SAMPLES) * 3 + 10,
         torch.randn(N_SAMPLES) * 100 + 500,
         torch.randn(N_SAMPLES) * 0.01,
     ], dim=1)
-    return AnnotatedTensor(data, annotations, axis=1)
+    return AnnotatedTensor(data, annotations, axis=request.param)
 
 
 @pytest.fixture

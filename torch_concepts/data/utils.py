@@ -212,7 +212,7 @@ def concat_datasets(*datasets):
     merged.set_concepts(AnnotatedTensor(
         torch.cat([d.concepts.tensor for d in datasets]),
         reference.concepts.annotations,
-        axis=1,
+        axis=-1,
     ))
     return merged
 

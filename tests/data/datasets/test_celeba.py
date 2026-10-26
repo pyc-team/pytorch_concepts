@@ -10,6 +10,7 @@ import numpy as np
 import torch
 from PIL import Image
 
+from torch_concepts import AnnotatedTensor, Annotations
 from torch_concepts.data.datasets.celeba import CelebADataset
 
 
@@ -29,7 +30,7 @@ def _bare_dataset(root, filename="x.png"):
     ds._zip = None
     ds.embs_precomputed = False
     ds.input_data = [filename]
-    ds.concepts = torch.zeros(1, 2)
+    ds.concepts = AnnotatedTensor(torch.zeros(1, 2), Annotations(labels=["a", "b"]))
     ds.native_concepts = None
     ds.generated_concepts = {}
     ds.image_size = None
