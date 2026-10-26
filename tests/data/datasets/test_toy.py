@@ -9,6 +9,7 @@ import pytest
 import tempfile
 import shutil
 import os
+import numpy as np
 import torch
 import pandas as pd
 from torch_concepts.data.datasets.toy import ToyDataset, CompletenessDataset, TOYDATASETS
@@ -272,262 +273,106 @@ class TestToyDataset:
 class TestCompletenessDataset:
     """Test suite for CompletenessDataset class."""
 
-    @pytest.fixture
-    def temp_dir(self):
-        """Create a temporary directory for test data."""
-        temp_dir = tempfile.mkdtemp()
-        yield temp_dir
-        shutil.rmtree(temp_dir, ignore_errors=True)
-
-    def test_completeness_dataset_creation(self, temp_dir):
-        """Test that completeness dataset can be created."""
-        dataset = CompletenessDataset(
-            name='test_completeness',
-            root=temp_dir,
-            seed=42,
-            n_gen=100,
-            n_concepts=3,
-            n_hidden_concepts=0
-        )
-
-        assert dataset is not None
-        assert len(dataset) == 100
-        assert dataset.name == 'test_completeness'
-
-    def test_completeness_dataset_properties(self, temp_dir):
-        """Test that completeness dataset properties are correct."""
-        n_concepts = 5
-        n_gen = 200
-
-        dataset = CompletenessDataset(
-            name='test_complete',
-            root=temp_dir,
-            seed=42,
-            n_gen=n_gen,
-            n_concepts=n_concepts,
-            n_hidden_concepts=0,
-            n_tasks=1
-        )
-
-        assert len(dataset) == n_gen
-        assert dataset.n_concepts == n_concepts + 1  # includes task
-        assert len(dataset.concept_names) == n_concepts + 1
-
-        # Check concept names format - should be C0, C1, ..., y
-        for i in range(n_concepts):
-            assert f'C{i}' in dataset.concept_names
-        assert 'y' in dataset.concept_names
-
-    def test_completeness_dataset_with_hidden_concepts(self, temp_dir):
-        """Test completeness dataset with hidden concepts."""
-        dataset = CompletenessDataset(
-            name='test_hidden',
-            root=temp_dir,
-            seed=42,
-            n_gen=100,
-            n_concepts=3,
-            n_hidden_concepts=2
-        )
-
-        # Should expose n_concepts + n_tasks (3 concepts + 1 task = 4)
-        assert dataset.n_concepts == 4  # 3 concepts + 1 task
-        assert len(dataset.concept_names) == 4
-
-    def test_completeness_dataset_structure(self, temp_dir):
-        """Test completeness dataset structure."""
-        p = 2
-        n_views = 10
-        n_concepts = 4
-
-        dataset = CompletenessDataset(
-            name='test_structure',
-            root=temp_dir,
-            seed=42,
-            n_gen=50,
-            p=p,
-            n_views=n_views,
-            n_concepts=n_concepts
-        )
-
-        # Input features should be p * n_views
-        expected_features = p * n_views
-        n_features = dataset.n_features[0] if isinstance(dataset.n_features, tuple) else dataset.n_features
-        assert n_features == expected_features
-
-        # Check sample structure - includes task
-        sample = dataset[0]
-        assert 'inputs' in sample
-        assert 'concepts' in sample
-        assert sample['inputs']['x'].shape == (expected_features,)
-        assert sample['concepts']['c'].shape == (n_concepts + 1,)  # includes task
-
-    def test_completeness_dataset_reproducibility(self, temp_dir):
-        """Test that completeness dataset is reproducible with same seed."""
-        dataset1 = CompletenessDataset(
-            name='test_repro1',
-            root=os.path.join(temp_dir, 'ds1'),
-            seed=42,
-            n_gen=50,
-            n_concepts=3
-        )
-
-        dataset2 = CompletenessDataset(
-            name='test_repro2',
-            root=os.path.join(temp_dir, 'ds2'),
-            seed=42,
-            n_gen=50,
-            n_concepts=3
-        )
-
-        # Check that data is identical
-        sample1 = dataset1[0]
-        sample2 = dataset2[0]
-
-        assert torch.allclose(sample1['inputs']['x'], sample2['inputs']['x'])
-        assert torch.allclose(sample1['concepts']['c'], sample2['concepts']['c'])
-
-    def test_completeness_dataset_different_seeds(self, temp_dir):
-        """Test that different seeds produce different data."""
-        dataset1 = CompletenessDataset(
-            name='test_seed1',
-            root=os.path.join(temp_dir, 'ds1'),
-            seed=42,
-            n_gen=50,
-            n_concepts=3
-        )
-
-        dataset2 = CompletenessDataset(
-            name='test_seed2',
-            root=os.path.join(temp_dir, 'ds2'),
-            seed=123,
-            n_gen=50,
-            n_concepts=3
-        )
-
-        # Check that data is different
-        sample1 = dataset1[0]
-        sample2 = dataset2[0]
-
-        assert not torch.allclose(sample1['inputs']['x'], sample2['inputs']['x'])
-
-    def test_completeness_dataset_persistence(self, temp_dir):
-        """Test that completeness dataset is saved and loaded correctly."""
-        # Create dataset
-        dataset1 = CompletenessDataset(
-            name='test_persist',
-            root=temp_dir,
-            seed=42,
-            n_gen=50,
-            n_concepts=3
-        )
-        sample1 = dataset1[0]
-
-        # Load the same dataset again (should load from disk)
-        dataset2 = CompletenessDataset(
-            name='test_persist',
-            root=temp_dir,
-            seed=42,
-            n_gen=50,
-            n_concepts=3
-        )
-        sample2 = dataset2[0]
-
-        # Check that data is identical
-        assert torch.allclose(sample1['inputs']['x'], sample2['inputs']['x'])
-        assert torch.allclose(sample1['concepts']['c'], sample2['concepts']['c'])
-
-    def test_completeness_dataset_no_graph(self, temp_dir):
-        """Test that completeness dataset has a graph."""
-        dataset = CompletenessDataset(
-            name='test_graph',
-            root=temp_dir,
-            seed=42,
-            n_gen=50,
-            n_concepts=3
-        )
-
-        # Completeness datasets should have a graph
-        assert dataset.graph is not None
-
-    def test_completeness_dataset_concept_subset(self, temp_dir):
-        """Test that concept subset selection works."""
-        dataset = CompletenessDataset(
-            name='test_subset',
-            root=temp_dir,
-            seed=42,
-            n_gen=100,
-            n_concepts=5,
-            concept_subset=['C0', 'C1', 'C3']
-        )
-
-        # Should only have 3 concepts selected
-        assert dataset.n_concepts == 3
-        assert 'C0' in dataset.concept_names
-        assert 'C1' in dataset.concept_names
-        assert 'C3' in dataset.concept_names
-        assert 'C2' not in dataset.concept_names
-        assert 'C4' not in dataset.concept_names
-
-    def test_completeness_dataset_annotations(self, temp_dir):
-        """Test that completeness dataset annotations are correct."""
-        dataset = CompletenessDataset(
-            name='test_annotations',
-            root=temp_dir,
-            seed=42,
-            n_gen=100,
-            n_concepts=3
-        )
-
-        # Check annotations structure
-        assert dataset.annotations is not None
-        assert dataset.annotations.labels is not None
-        assert dataset.annotations.cardinalities is not None
-        assert dataset.annotations.types is not None
-
-        # All concepts should be discrete (binary/categorical, not continuous)
-        for concept_name in dataset.concept_names:
-            assert dataset.annotations.concept(concept_name).type in ('binary', 'categorical')
-
-    def test_completeness_dataset_batching(self, temp_dir):
-        """Test that completeness dataset works with DataLoader."""
+    def test_structure(self):
         from torch.utils.data import DataLoader
 
-        dataset = CompletenessDataset(
-            name='test_batching',
-            root=temp_dir,
-            seed=42,
-            n_gen=100,
-            p=2,
-            n_views=5,
-            n_concepts=3
-        )
+        ds = CompletenessDataset(n_gen=100, n_concepts=10, observed_fraction=0.7,
+                                 hidden_importance=0.3, n_side=3)
+        assert ds.concept_names == [f"C{i}" for i in range(7)] + ["y"]
+        assert ds.input_data.shape == (100, 13)
+        assert ds.hidden_concepts.shape == (100, 3)
+        assert ds.side_latents.shape == (100, 3)
+        batch = next(iter(DataLoader(ds, batch_size=10)))
+        assert batch['inputs']['x'].shape == (10, 13)
+        assert batch['concepts']['c'].shape == (10, 8)
 
-        dataloader = DataLoader(dataset, batch_size=10, shuffle=False)
-        batch = next(iter(dataloader))
+    def test_seed(self):
+        a, b, c = (CompletenessDataset(n_gen=50, seed=s) for s in (0, 0, 1))
+        assert torch.equal(a.input_data, b.input_data)
+        assert torch.equal(a.concepts.tensor, b.concepts.tensor)
+        assert not torch.equal(a.input_data, c.input_data)
 
-        assert batch['inputs']['x'].shape == (10, 10)  # 10 samples, 2*5 features
-        assert batch['concepts']['c'].shape == (10, 4)  # 10 samples, 3 concepts + 1 task
+    @pytest.mark.parametrize("n_concepts,nonlinearity", [(1, 0), (2, 0), (2, 1), (3, 0), (3, 1), (10, 0.5)])
+    def test_balanced(self, n_concepts, nonlinearity):
+        # the previous generator drew a constant task for <= 3 concepts
+        c = CompletenessDataset(n_gen=20000, n_concepts=n_concepts, nonlinearity=nonlinearity).concepts.tensor
+        assert ((c.mean(0) - 0.5).abs() < 0.02).all()
 
-    def test_completeness_dataset_different_parameters(self, temp_dir):
-        """Test completeness dataset with various parameter combinations."""
-        params_list = [
-            {'p': 2, 'n_views': 5, 'n_concepts': 2},
-            {'p': 3, 'n_views': 7, 'n_concepts': 4},
-            {'p': 1, 'n_views': 10, 'n_concepts': 3},
-        ]
+    def test_y_is_a_function_of_x(self):
+        ds = CompletenessDataset(n_gen=20000, n_concepts=6, observed_fraction=0.5, hidden_importance=0.5,
+                                 nonlinearity=0.5, side_importance=0.3, mixing_layers=4)
+        v = ds.input_data.double().numpy() @ ds._mix_w[-1].T  # invert the deepest mixing network
+        for w, b in zip(reversed(ds._mix_w[:-1]), reversed(ds._mix_b)):
+            v = (np.where(v > 0, v, v / 0.2) / np.sqrt(2 / 1.04) - b) @ w.T
+        y = ds._label(ds._score(v[:, :6], v[:, 6:10]))
+        assert np.array_equal(y, ds.concepts.tensor[:, -1].numpy())  # exact, despite float32 x
+        assert np.array_equal(v[:, 3:6] > 0, ds.hidden_concepts.numpy() == 1)
 
-        for i, params in enumerate(params_list):
-            dataset = CompletenessDataset(
-                name=f'test_params_{i}',
-                root=os.path.join(temp_dir, f'ds_{i}'),
-                seed=42,
-                n_gen=50,
-                **params
-            )
+    def test_hidden_observed_corr(self):
+        ds = CompletenessDataset(n_gen=10, n_concepts=4, observed_fraction=0.5, hidden_observed_corr=-0.6)
+        z = ds._latents(np.random.default_rng(0), 100_000)[0]
+        c = z > 0
+        assert abs(np.corrcoef(c[:, 0], c[:, 2])[0, 1] + 0.6) < 0.01  # C2, hidden, is paired with C0
+        on = c[:, 0]  # given C0, its latent (a predictor's confidence) says nothing about C2
+        assert abs(np.corrcoef(z[on, 0], c[on, 2])[0, 1]) < 0.02
 
-            n_features = dataset.n_features[0] if isinstance(dataset.n_features, tuple) else dataset.n_features
-            assert n_features == params['p'] * params['n_views']
-            assert dataset.n_concepts == params['n_concepts'] + 1  # includes task
+    def test_bayes_accuracy_follows_the_knobs(self):
+        def acc(given="observed", **kw):
+            ds = CompletenessDataset(n_gen=10, n_concepts=8, observed_fraction=0.5, **kw)
+            return ds.bayes_accuracy(given, n=1000, n_draws=100)
+
+        assert acc(hidden_importance=0.0) == 1.0
+        assert acc(hidden_importance=1.0) < 0.6
+        assert acc(hidden_importance=0.5, hidden_observed_corr=1.0) == 1.0  # hidden concepts copy observed ones
+        assert acc("all", hidden_importance=0.5) == 1.0
+        assert acc("all", side_importance=0.5) < 0.9
+        accs = [acc(hidden_importance=h) for h in (0.1, 0.4, 0.8)]
+        assert accs[0] > accs[1] > accs[2]
+
+    def test_nonlinearity(self):
+        from sklearn.linear_model import LogisticRegression
+
+        def linear_head_accuracy(nonlinearity):
+            c = CompletenessDataset(n_gen=4000, n_concepts=6, nonlinearity=nonlinearity).concepts.tensor.numpy()
+            return LogisticRegression(C=1e4, max_iter=1000).fit(c[:, :-1], c[:, -1]).score(c[:, :-1], c[:, -1])
+
+        assert linear_head_accuracy(0.0) > 0.99
+        assert linear_head_accuracy(1.0) < 0.8
+
+    def test_knobs_change_only_y(self):
+        base = dict(n_gen=500, n_concepts=8, observed_fraction=0.5, hidden_importance=0.5)
+        ref = CompletenessDataset(**base)
+        for knob in [dict(hidden_importance=0.2), dict(nonlinearity=0.7), dict(side_importance=0.3)]:
+            ds = CompletenessDataset(**{**base, **knob})
+            assert torch.equal(ds.input_data, ref.input_data)
+            assert torch.equal(ds.concepts.tensor[:, :-1], ref.concepts.tensor[:, :-1])
+            assert torch.equal(ds.hidden_concepts, ref.hidden_concepts)
+        # with hidden_importance=None, observed_fraction only masks a fixed dataset
+        full = CompletenessDataset(n_gen=500, n_concepts=8)
+        part = CompletenessDataset(n_gen=500, n_concepts=8, observed_fraction=0.5)
+        c = part.concepts.tensor
+        assert torch.equal(full.input_data, part.input_data)
+        assert torch.equal(full.concepts.tensor, torch.cat([c[:, :-1], part.hidden_concepts, c[:, -1:]], 1))
+
+    def test_graph(self):
+        def edges(**kw):
+            g = CompletenessDataset(n_gen=50, n_concepts=4, **kw).graph
+            return {(s, t) for s in g.node_names for t in g.get_successors(s)}
+
+        assert edges() == {(f"C{i}", "y") for i in range(4)}
+        assert edges(observed_fraction=0.5, hidden_importance=1.0) == set()
+
+    def test_concept_subset(self):
+        ds = CompletenessDataset(n_gen=50, n_concepts=5, concept_subset=['C0', 'C3', 'y'])
+        assert ds.concept_names == ['C0', 'C3', 'y']
+
+    def test_invalid_arguments(self):
+        with pytest.raises(ValueError):
+            CompletenessDataset(n_concepts=4, hidden_importance=0.5)  # nothing is hidden
+        with pytest.raises(ValueError):
+            CompletenessDataset(nonlinearity=1.5)
+        with pytest.raises(ValueError):
+            CompletenessDataset(mixing_layers=5)
 
 
 if __name__ == '__main__':

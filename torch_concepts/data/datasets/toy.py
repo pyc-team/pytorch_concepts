@@ -3,9 +3,7 @@ import torch
 import pandas as pd
 import os
 import logging
-from numpy.random import multivariate_normal, uniform
-from sklearn.preprocessing import StandardScaler
-from sklearn.datasets import make_spd_matrix, make_low_rank_matrix
+from scipy.special import ndtr
 from typing import List, Optional, Union
 
 from ..base.dataset import ConceptDataset
@@ -347,311 +345,252 @@ class ToyDataset(ConceptDataset):
         return self.load_raw()
 
 
-def _relu(x):
-    return x * (x > 0)
+def _leaky_relu(h):
+    """Leaky ReLU, scaled to keep the variance of a symmetric input."""
+    return np.where(h > 0, h, 0.2 * h) * np.sqrt(2 / 1.04)
 
 
-def _random_nonlin_map(n_in, n_out, n_hidden, rank=1000):
-    W_0 = make_low_rank_matrix(n_in, n_hidden, effective_rank=rank)
-    W_1 = make_low_rank_matrix(n_hidden, n_hidden, effective_rank=rank)
-    W_2 = make_low_rank_matrix(n_hidden, n_out, effective_rank=rank)
-    # No biases
-    b_0 = np.random.uniform(0, 0, (1, n_hidden))
-    b_1 = np.random.uniform(0, 0, (1, n_hidden))
-    b_2 = np.random.uniform(0, 0, (1, n_out))
-
-    nlin_map = lambda x: np.matmul(
-        _relu(
-            np.matmul(
-                _relu(np.matmul(x, W_0) + np.tile(b_0, (x.shape[0], 1))),
-                W_1,
-            ) +
-            np.tile(b_1, (x.shape[0], 1))
-        ),
-        W_2,
-    ) + np.tile(b_2, (x.shape[0], 1))
-
-    return nlin_map
-
-
-def _complete(
-    n_samples: int = 10,
-    p: int = 2,
-    n_views: int = 10,
-    n_concepts: int = 2,
-    n_hidden_concepts: int = 0,
-    n_tasks: int = 1,
-    seed: int = 42,
-):
-    total_concepts = n_concepts + n_hidden_concepts
-
-    # Replicability
-    np.random.seed(seed)
-
-    # Generate covariates
-    mu = uniform(-5, 5, p * n_views)
-    sigma = make_spd_matrix(p * n_views, random_state=seed)
-    X = multivariate_normal(mean=mu, cov=sigma, size=n_samples)
-    ss = StandardScaler()
-    X = ss.fit_transform(X)
-    # Produce different views
-    X_views = np.zeros((n_samples, n_views, p))
-    for v in range(n_views):
-        X_views[:, v] = X[:, (v * p):(v * p + p)]
-
-    # Nonlinear maps
-    g = _random_nonlin_map(
-        n_in=p * n_views,
-        n_out=total_concepts,
-        n_hidden=int((p * n_views + total_concepts) / 2),
-    )
-    f = _random_nonlin_map(
-        n_in=total_concepts,
-        n_out=n_tasks,
-        n_hidden=int(total_concepts / 2),
-    )
-
-    # Generate concepts
-    c = g(X)
-    c = torch.sigmoid(torch.FloatTensor(c))
-    c = (c >= 0.5) * 1.0
-
-    # Generate labels
-    y = f(c.detach().numpy())
-    if n_tasks == 1:
-        y = torch.sigmoid(torch.FloatTensor(y)).squeeze(-1)
-        y = (y >= 0.5) * 1.0
-    else:
-        y = torch.argmax(torch.FloatTensor(y), dim=-1).float()
-
-    u = c[:, :n_concepts]
-    X = torch.FloatTensor(X)
-    u = torch.FloatTensor(u)
-    # y is already a FloatTensor at this point
-
-    uy = torch.cat([u, y.unsqueeze(-1)], dim=-1)
-    uy_names = [f'C{i}' for i in range(n_concepts)] + ['y']
-    graph_c_to_y = pd.DataFrame(
-        np.zeros((n_concepts + 1, n_concepts + 1)),
-        index=uy_names,
-        columns=uy_names,
-    )
-    for i in range(n_concepts):
-        graph_c_to_y.iloc[i, n_concepts] = 1  # concepts influence tasks
-
-    return X, uy, uy_names, graph_c_to_y
+def _unit(v):
+    norm = np.linalg.norm(v)
+    return v / norm if norm else v
 
 
 class CompletenessDataset(ConceptDataset):
     """
-    Synthetic dataset for concept bottleneck completeness experiments.
+    Synthetic dataset with controlled concept (in)completeness.
 
-    This dataset generates synthetic data to study complete vs. incomplete concept
-    bottlenecks. Data is generated using randomly initialized multi-layer perceptrons
-    with ReLU activations. Input features are sampled from a multivariate normal
-    distribution, and concepts are derived through nonlinear transformations.
-    Hidden concepts can be included to simulate incomplete bottlenecks.
+    ``n_concepts`` binary concepts and a binary task ``y`` are generated from
+    Gaussian latents, which an invertible network maps to the input ``x``. So
+    ``y`` is a function of ``x`` (the best accuracy from ``x`` is 1), and any
+    shortfall of the concepts is due to the concepts alone. The first
+    ``observed_fraction * n_concepts`` concepts (rounded half up) are annotated
+    (``C0``, ``C1``, ...); the others are hidden, available in
+    ``hidden_concepts``.
 
-    The dataset uses a two-stage generation process:
-    1. Map inputs X to concepts C (both observed and hidden) via nonlinear function g
-    2. Map concepts C to tasks Y via nonlinear function f
+    Generative process, with ``rho = hidden_observed_corr``::
+
+        u ~ N(0, I)                        one latent per concept
+        z_i = u_i                          observed concept i
+        z_j = u_j                          hidden concept j; with probability |rho|
+            = sign(rho) |u_j| sgn(z_p)     it takes the sign of its observed partner p
+        c = 1[z > 0]                       balanced binary concepts
+        x = mix(z, e)                      side latents e ~ N(0, I); mix is invertible
+        s = concept part + side part
+        y = 1[s > t]                       t: median of s, midway between two values (*)
+
+    Given the concepts, their latents carry no information on each other or on
+    ``y``: a concept predictor's confidence leaks no hidden information.
+
+    The concept part of ``s`` sums linear terms ``a_i c_i`` and pairwise terms
+    ``b_ij c_i c_j`` (concepts coded -1/1) with random weights; the side part
+    is linear in ``e``. With ``rho = 0`` all terms are uncorrelated and ``s``
+    has unit variance, so the importances below are exact shares of the
+    variance of ``s``. Their effect on accuracy is not linear, nor always
+    monotone (with ``rho != 0``, a hidden concept can cancel its partner's
+    effect): measure it with :meth:`bayes_accuracy`. (*) So ``y`` is balanced,
+    within about 0.005 at ``rho = 0``; with ``rho != 0`` and a few concepts,
+    ``s`` takes few values with unequal probabilities, and ``P(y = 1)`` can
+    deviate by a few points.
+
+    With a fixed ``seed``, changing ``hidden_importance``, ``nonlinearity`` or
+    ``side_importance`` changes only ``y``. With ``hidden_importance=None`` and
+    ``hidden_observed_corr=0``, changing ``observed_fraction`` changes only
+    which concepts are annotated.
+
+    The input has ``n_concepts + n_side`` features. The graph links to ``y``
+    the annotated concepts with a nonzero weight in ``s``.
 
     Parameters
     ----------
-    name : str
-        Name identifier for the dataset (used for file storage).
-    root : str, optional
-        Root directory to store/load the dataset files. If None, defaults to
-        './data/completeness_datasets/{name}'. Default: None
-    seed : int, optional
-        Random seed for reproducible data *generation* (also determines the
-        on-disk cache filename). Default: 42
     n_gen : int, optional
-        Number of samples to generate. Default: 10000
-    p : int, optional
-        Dimensionality of each view (feature group). Default: 2
-    n_views : int, optional
-        Number of views/feature groups. Total input features = p * n_views.
-        Default: 10
+        Number of samples. Default: 10000
     n_concepts : int, optional
-        Number of observable concepts (not including hidden concepts). Default: 2
-    n_hidden_concepts : int, optional
-        Number of hidden concepts not observable in the bottleneck. Use this to
-        simulate incomplete concept bottlenecks. Default: 0
-    n_tasks : int, optional
-        Number of downstream tasks to predict. Default: 1
+        Number of concepts, observed and hidden. Default: 10
+    observed_fraction : float, optional
+        Fraction of the concepts that is annotated. Default: 1 (complete)
+    hidden_importance : float, optional
+        Share of the concept part of ``s`` in terms involving a hidden
+        concept: 0 makes the observed concepts complete, 1 makes ``y`` depend
+        on hidden concepts only. None does not split the weights: all concepts
+        matter alike and ``observed_fraction`` only decides which are
+        annotated. Default: None
+    nonlinearity : float, optional
+        Share of each part of ``s`` in pairwise terms. At 0, ``y`` is a
+        threshold of a linear function of the concepts, so a linear
+        concept-to-task predictor suffices. Default: 0
+    hidden_observed_corr : float, optional
+        Correlation between each hidden concept and its observed partner
+        (hidden concepts take the observed ones as partners in turn). At 1,
+        hidden concepts copy observed ones; at -1, they negate them. Default: 0
+    side_importance : float, optional
+        Share of ``s`` from the side latents ``e``, which are in ``x`` but in no
+        concept. Above 0, even all concepts together are incomplete. Default: 0
+    n_side : int, optional
+        Number of side latents, part of ``x`` even when ``side_importance=0``
+        (they then affect nothing). Default: 4
+    mixing_layers : int, optional
+        Depth of the network from latents to ``x``, from 0 to 4, i.e. how hard
+        the concepts are to predict from ``x``. At 0, each concept is a linear
+        threshold of ``x``. Deeper networks are not exactly invertible in
+        float32. Default: 2
+    seed : int, optional
+        Seed of the generation. Default: 42
     concept_subset : list of str, optional
-        Subset of concept names to use. If provided, only the specified concepts
-        will be included. Concept names follow format 'C0', 'C1', etc. Default: None
+        Annotated concepts to keep (include ``'y'`` to keep the task).
+        Default: None
 
     Attributes
     ----------
-    input_data : torch.Tensor
-        Input features tensor of shape (n_samples, p * n_views).
-    concepts : torch.Tensor
-        Concepts and tasks tensor of shape (n_samples, n_concepts + n_tasks).
-        Note: Hidden concepts are NOT included in this tensor.
-    annotations : Annotations
-        Metadata about concept names, cardinalities, and types.
-    graph : pandas.DataFrame
-        Directed acyclic graph representing concept-to-task relationships.
-        All concepts influence all tasks in this dataset.
-    concept_names : list of str
-        Names of all concepts and tasks. Format: ['C0', 'C1', ..., 'y']
-    n_concepts : int
-        Total number of observable concepts and tasks (includes both, excludes hidden).
-    n_features : tuple or int
-        Dimensionality of input features (p * n_views).
+    hidden_concepts : torch.Tensor
+        Hidden concepts, shape ``(n_gen, n_concepts - n_observed)``.
+    side_latents : torch.Tensor
+        Side latents ``e``, shape ``(n_gen, n_side)``.
 
     Examples
     --------
-    Basic usage with complete bottleneck:
-
     >>> from torch_concepts.data import CompletenessDataset
-    >>>
-    >>> # Create dataset with complete bottleneck (no hidden concepts)
-    >>> dataset = CompletenessDataset(
-    ...     name='complete_exp',
-    ...     n_gen=5000,
-    ...     n_concepts=5,
-    ...     n_hidden_concepts=0,
-    ...     seed=42
-    ... )
-    >>> print(f"Dataset size: {len(dataset)}")
-    >>> print(f"Input features: {dataset.n_features}")
-    >>> print(f"Concepts: {dataset.concept_names}")
-
-    Creating incomplete bottleneck with hidden concepts:
-
-    >>> from torch_concepts.data import CompletenessDataset
-    >>>
-    >>> # Create dataset with incomplete bottleneck
-    >>> dataset = CompletenessDataset(
-    ...     name='incomplete_exp',
-    ...     n_gen=5000,
-    ...     n_concepts=3,          # 3 observable concepts
-    ...     n_hidden_concepts=2,   # 2 hidden concepts (not in bottleneck)
-    ...     seed=42
-    ... )
-    >>> # The hidden concepts affect tasks but are not observable
-    >>> print(f"Observable concepts: {dataset.n_concepts}")
-
-    References
-    ----------
-    .. [1] Laguna, S., et al. "Beyond Concept Bottleneck Models: How to Make Black Boxes
-           Intervenable?", NeurIPS 2024. https://arxiv.org/abs/2401.13544
+    >>> dataset = CompletenessDataset(n_concepts=10, observed_fraction=0.7,
+    ...                               hidden_importance=0.3)
+    >>> dataset.concept_names
+    ['C0', 'C1', 'C2', 'C3', 'C4', 'C5', 'C6', 'y']
+    >>> round(dataset.bayes_accuracy(), 2)  # best accuracy of y from C0..C6
+    0.81
     """
 
     def __init__(
             self,
-            name: str,  # name of the dataset
-            root: str = None,  # root directory to store/load the dataset
-            seed: int = 42,  # seed for data generation
-            n_gen: int = 10000,  # number of samples to generate
-            p: int = 2,  # dimensionality of each view
-            n_views: int = 10,  # number of views
-            n_concepts: int = 2,  # number of concepts
-            n_hidden_concepts: int = 0,  # number of hidden concepts
-            n_tasks: int = 1,  # number of tasks
-            concept_subset: Optional[list] = None,  # subset of concept labels
+            n_gen: int = 10000,
+            n_concepts: int = 10,
+            observed_fraction: float = 1.0,
+            hidden_importance: Optional[float] = None,
+            nonlinearity: float = 0.0,
+            hidden_observed_corr: float = 0.0,
+            side_importance: float = 0.0,
+            n_side: int = 4,
+            mixing_layers: int = 2,
+            seed: int = 42,
+            concept_subset: Optional[list] = None,
     ):
-        self.name = name
+        k = int(observed_fraction * n_concepts + 0.5)  # observed concepts, rounded half up
+        h = hidden_importance
+        shares = [observed_fraction, nonlinearity, side_importance] + ([] if h is None else [h])
+        if n_concepts < 1 or not all(0 <= v <= 1 for v in shares) or abs(hidden_observed_corr) > 1:
+            raise ValueError("Need n_concepts >= 1, fractions and importances in [0, 1] and "
+                             "hidden_observed_corr in [-1, 1].")
+        if h is not None and ((h > 0 and k == n_concepts) or (h < 1 and k == 0)):
+            raise ValueError("hidden_importance > 0 needs hidden concepts, < 1 needs observed ones.")
+        if side_importance > 0 and n_side == 0:
+            raise ValueError("side_importance > 0 needs n_side > 0.")
+        if not 0 <= mixing_layers <= 4:
+            raise ValueError("mixing_layers must be in 0..4: deeper mixing is not exactly invertible in float32.")
+
         self.seed = seed
+        self._k, self._dims, self._corr = k, (n_concepts, n_side), hidden_observed_corr
+        self._partner = np.arange(n_concepts - k) % k if k else None
+        # one random stream per component: changing a knob leaves the other draws unchanged
+        task_seq, mix_seq, data_seq, ref_seq, self._eval_seq = np.random.SeedSequence(seed).spawn(5)
 
-        # If root is not provided, create a local folder automatically
-        if root is None:
-            root = os.path.join(os.getcwd(), 'data', 'completeness_datasets', name)
+        # task weights over all concepts, then rescaled per part
+        rng = np.random.default_rng(task_seq)
+        a = rng.choice([-1.0, 1.0], n_concepts) * rng.uniform(0.5, 1.5, n_concepts)  # no negligible concept
+        b = np.triu(rng.standard_normal((n_concepts, n_concepts)), 1)
+        g = rng.standard_normal(n_side)
+        obs = np.arange(n_concepts) < k
+        both = np.outer(obs, obs)
+        parts = [(1.0, np.ones_like(obs), np.ones_like(both))] if h is None else [(1 - h, obs, both), (h, ~obs, ~both)]
+        self._a, self._b = np.zeros(n_concepts), np.zeros((n_concepts, n_concepts))
+        for w, lin, pairs in parts:
+            lam = nonlinearity if (b * pairs).any() else 0.0  # a lone concept has no pairs: stays linear
+            self._a += np.sqrt(w * (1 - lam)) * _unit(a * lin)
+            self._b += np.sqrt(w * lam) * _unit(b * pairs)
+        self._a *= np.sqrt(1 - side_importance)
+        self._b *= np.sqrt(1 - side_importance)
+        self._g = np.sqrt(side_importance) * _unit(g)
 
-        self.root = root
-        self.n_gen = n_gen
-        self.p = p
-        self.n_views = n_views
-        self._n_concepts = n_concepts  # Use internal variable to avoid property conflict
-        self._n_hidden_concepts = n_hidden_concepts
-        self._n_tasks = n_tasks
+        rng = np.random.default_rng(mix_seq)
+        d = sum(self._dims)
+        self._mix_w = [np.linalg.qr(rng.standard_normal((d, d)))[0] for _ in range(mixing_layers + 1)]
+        self._mix_b = [0.5 * rng.standard_normal(d) for _ in range(mixing_layers)]
 
-        # Load data (will generate if not exists)
-        input_data, concepts, annotations, graph = self.load()
+        # threshold halfway between the score values around the median: y is balanced, and when s is
+        # discrete (no side latents) no concept combination lies on it. Rounding makes equal scores tie.
+        s = np.round(self._score(*self._latents(np.random.default_rng(ref_seq), 100_000)), 9)
+        values, counts = np.unique(s, return_counts=True)
+        j = np.abs(np.cumsum(counts)[:-1] / len(s) - 0.5).argmin()
+        self._tau = (values[j] + values[j + 1]) / 2
 
-        # Initialize parent class
+        z, e = self._latents(np.random.default_rng(data_seq), n_gen)
+        c = (z > 0).astype(np.float32)
+        y = self._label(self._score(z, e))
+        self.hidden_concepts = torch.tensor(c[:, k:])
+        self.side_latents = torch.tensor(e, dtype=torch.float32)
+
+        labels = [f"C{i}" for i in range(k)] + ["y"]
+        graph = pd.DataFrame(np.zeros((k + 1, k + 1)), index=labels, columns=labels)
+        graph.iloc[:k, k] = ((self._a != 0) | (self._b != 0).any(0) | (self._b != 0).any(1))[:k].astype(float)
         super().__init__(
-            input_data=input_data,
-            concepts=concepts,
-            annotations=annotations,
+            input_data=torch.tensor(self._mix(np.concatenate([z, e], 1)), dtype=torch.float32),
+            concepts=torch.tensor(np.column_stack([c[:, :k], y]), dtype=torch.float32),
+            annotations=Annotations(labels=labels, cardinalities=[1] * (k + 1), types=["binary"] * (k + 1)),
             graph=graph,
             concept_names_subset=concept_subset,
-            name=name
         )
 
-    @property
-    def raw_filenames(self) -> List[str]:
-        """No raw files needed - data is generated."""
-        return []
+    def bayes_accuracy(self, given: str = "observed", n: int = 4000, n_draws: int = 500) -> float:
+        """
+        Best possible accuracy of ``y`` from the annotated concepts
+        (``given="observed"``) or from all concepts (``given="all"``).
 
-    @property
-    def processed_filenames(self) -> List[str]:
-        """List of processed filenames that will be created during build step."""
-        return [
-            f"input_N_{self.n_gen}_p_{self.p}_views_{self.n_views}_concepts_{self._n_concepts}_hidden_{self._n_hidden_concepts}_seed_{self.seed}.pt",
-            f"concepts_N_{self.n_gen}_p_{self.p}_views_{self.n_views}_concepts_{self._n_concepts}_hidden_{self._n_hidden_concepts}_seed_{self.seed}.pt",
-            f"annotations_concepts_{self._n_concepts}.pt",
-            "graph.h5",
-        ]
+        From ``x`` it is 1 by construction. Estimated on ``n`` fresh samples,
+        integrating the hidden concepts out with ``n_draws`` Monte Carlo draws
+        (the side latents analytically); the defaults are within about 0.005.
+        ``concept_subset`` is ignored.
+        """
+        rng = np.random.default_rng(self._eval_seq)
+        z = self._latents(rng, n)[0]
+        if given == "all":
+            p = self._p_y(z)
+            return float(np.maximum(p, 1 - p).mean())
+        if given != "observed":
+            raise ValueError(f"given must be 'observed' or 'all', got {given!r}.")
+        sign = np.where(z[:, :self._k] > 0, 1.0, -1.0)
+        p = np.array([self._p_y(self._latents(rng, n, sign)[0]) for _ in range(n_draws)])
+        # half of the draws guess the likelier y, the other half score the guess
+        # (scoring on the same draws would bias the estimate up)
+        guess, check = p[::2].mean(0) > 0.5, p[1::2].mean(0)
+        return float(np.where(guess, check, 1 - check).mean())
 
-    def download(self):
-        """No download needed for synthetic datasets."""
-        pass
+    def _latents(self, rng, n, obs_sign=None):
+        """Concept latents z and side latents e; ``obs_sign`` fixes the signs of the observed concepts."""
+        n_concepts, n_side = self._dims
+        k = self._k
+        z = rng.standard_normal((n, n_concepts))
+        e = rng.standard_normal((n, n_side))
+        copy = rng.random((n, n_concepts - k)) < abs(self._corr)  # drawn last: k changes no other draw
+        if obs_sign is not None:
+            z[:, :k] = obs_sign * np.abs(z[:, :k])
+        if self._partner is not None:  # hidden concepts: with probability |corr|, the partner's sign
+            partner = np.where(z[:, self._partner] > 0, 1.0, -1.0)
+            z[:, k:] = np.where(copy, np.sign(self._corr) * partner * np.abs(z[:, k:]), z[:, k:])
+        return z, e
 
-    def build(self):
-        """Generate synthetic completeness data and save to disk."""
-        logger.info(f"Generating completeness dataset with n_gen={self.n_gen}, seed={self.seed}")
+    def _score(self, z, e):
+        x = np.where(z > 0, 1.0, -1.0)
+        return x @ self._a + ((x @ self._b) * x).sum(1) + e @ self._g
 
-        # Generate data using _complete function
-        input_data, concepts, concept_names, graph = _complete(
-            n_samples=self.n_gen,
-            p=self.p,
-            n_views=self.n_views,
-            n_concepts=self._n_concepts,
-            n_hidden_concepts=self._n_hidden_concepts,
-            n_tasks=self._n_tasks,
-            seed=self.seed,
-        )
+    def _label(self, s):
+        return (s > self._tau).astype(np.float32)
 
-        # Create annotations
-        cardinalities = tuple([1] * self._n_concepts) + tuple([self._n_tasks])
-        task_type = 'binary' if self._n_tasks == 1 else 'categorical'
-        types = ['binary'] * self._n_concepts + [task_type]
+    def _p_y(self, z):
+        """P(y = 1 | concepts); the side part e @ g is N(0, |g|^2)."""
+        s = self._score(z, np.zeros((len(z), len(self._g))))
+        sd = np.linalg.norm(self._g)
+        return ndtr((s - self._tau) / sd) if sd else self._label(s)
 
-        annotations = Annotations(
-            labels=concept_names,
-            cardinalities=cardinalities,
-            types=types,
-        )
-
-        # Save all data
-        logger.info(f"Saving dataset to {self.root_dir}")
-        os.makedirs(self.root_dir, exist_ok=True)
-
-        torch.save(input_data, self.processed_paths[0])
-        torch.save(concepts, self.processed_paths[1])
-        torch.save(annotations, self.processed_paths[2])
-        graph.to_hdf(os.path.join(self.root_dir, "graph.h5"), key="graph", mode="w")
-
-    def load_raw(self):
-        """Load the generated dataset from disk."""
-        self.maybe_build()
-        logger.info(f"Loading dataset from {self.root_dir}")
-
-        input_data = torch.load(self.processed_paths[0], weights_only=False)
-        concepts = torch.load(self.processed_paths[1], weights_only=False)
-        annotations = torch.load(self.processed_paths[2], weights_only=False)
-        graph = pd.read_hdf(os.path.join(self.root_dir, "graph.h5"), "graph")
-
-        return input_data, concepts, annotations, graph
-
-    def load(self):
-        """Load the dataset (wraps load_raw)."""
-        return self.load_raw()
+    def _mix(self, v):
+        for w, b in zip(self._mix_w, self._mix_b):
+            v = _leaky_relu(v @ w + b)
+        return v @ self._mix_w[-1]
 
 
 TOYDATASETS = ['xor', 'trigonometry', 'dot', 'checkmark']
