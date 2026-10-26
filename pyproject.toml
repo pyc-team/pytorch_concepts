@@ -36,6 +36,7 @@ data = [
     "transformers",
     "litellm",
     "tables",
+    "pydicom",
 ]
 tests = [
     "pytest-cov",
