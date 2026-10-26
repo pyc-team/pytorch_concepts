@@ -1,11 +1,13 @@
 
-from typing import Optional, Union, List, Tuple
+from contextlib import nullcontext
+from typing import Callable, Iterable, Optional, Union, List, Tuple
 import torch
 from torch import nn
 from torchmetrics import Metric, MetricCollection
 from copy import deepcopy
 
 from ...annotations import Annotations
+from .low.base.intervention import InterventionPolicy, InterventionStrategy, intervention
 from .outputs import (CONTINUOUS_QUANTITIES, DISCRETE_QUANTITIES, InferenceOutput,
                       resolve_quantity, supervised_subset)
 from .utils import by_type, check_collection
@@ -474,3 +476,126 @@ def compute_cace(
         NotImplementedError: Always — this function is not implemented yet.
     """
     raise NotImplementedError("compute_cace is not implemented.")
+
+
+def intervention_curve(
+    model: nn.Module,
+    layer_name: Optional[str],
+    intervention_strategy: Union[InterventionStrategy, Callable[[dict], InterventionStrategy]],
+    intervention_policy: InterventionPolicy,
+    concepts_to_intervene_on: Union[List[str], List[int]],
+    dataloader: Iterable[dict],
+    task: str,
+    evidence: List[str] = [],  # needed for higher levels of the API
+    build_context: Optional[Callable] = None,
+) -> List[float]:
+    """Task performance after intervening on ``n = 0, 1, ..., K`` of the ``K`` concepts in
+    ``concepts_to_intervene_on``, chosen in each example by the policy.
+
+    The first point (``n = 0``) is the model without interventions; the last
+    intervenes on every concept. With a :class:`GroundTruthIntervention`, this
+    is the intervention curve of Koh et al. (2020). The task is scored by its
+    type: accuracy if binary or categorical, mean squared error if continuous.
+
+    Works at every level of the library:
+
+    - low level: ``model`` is a module called as ``model(x)``, returning the task
+      predictions (logits if discrete, values if continuous) or
+      ``(concept predictions, task predictions)``; ``layer_name`` names its layer
+      to intervene on;
+    - mid level: ``model`` is an inference engine, high level: a high-level model.
+      Both are queried for the task with the input, and the names in
+      ``concepts_to_intervene_on`` locate the layer (``layer_name=None``).
+
+    Args:
+        model: The model to evaluate.
+        layer_name: Attribute of ``model`` holding the layer to intervene on (low
+            level); ``None`` for an inference engine or a high-level model.
+        intervention_strategy: Gives the new values: an
+            :class:`InterventionStrategy`, or a callable building one from the
+            batch, e.g. a :class:`GroundTruthIntervention` with the batch's true
+            concepts.
+        intervention_policy: Scores the concepts; the lowest are intervened on first.
+        concepts_to_intervene_on: One name or position per concept (see
+            :func:`intervention`).
+        dataloader: Batches in the library's format,
+            ``{"inputs": {"x": x}, "concepts": {"c": c}}``, with ``c`` an
+            :class:`AnnotatedTensor` holding the true values by name (the index
+            of the true state for a categorical task).
+        task: The task to score: binary, categorical or continuous.
+        evidence: Concepts observed by an inference engine or a high-level model,
+            with values from the batch.
+        build_context: As in :func:`intervention`; e.g. the concept gradients that
+            :class:`GradientPolicy` needs.
+
+    Returns:
+        The score for ``n = 0 .. K``.
+
+    Example::
+
+        >>> accuracy = intervention_curve(  # doctest: +SKIP
+        ...     model=cbm,
+        ...     layer_name="concept_encoder",
+        ...     intervention_strategy=lambda batch: GroundTruthIntervention(true_logits(batch)),
+        ...     intervention_policy=UncertaintyInterventionPolicy(),
+        ...     concepts_to_intervene_on=["c0", "c1", "c2"],
+        ...     dataloader=test_loader,
+        ...     task="y",
+        ... )
+        >>> len(accuracy)  # n = 0 .. 3 intervened concepts  # doctest: +SKIP
+        4
+    """
+    target = getattr(model, layer_name) if layer_name is not None else model
+    n_concepts = len(concepts_to_intervene_on)
+    scores = []
+    for n in range(n_concepts + 1):
+        score_sum, count = 0.0, 0
+        for batch in dataloader:
+            x, c = batch["inputs"]["x"], batch["concepts"]["c"]
+            strategy = (intervention_strategy if isinstance(intervention_strategy, InterventionStrategy)
+                        else intervention_strategy(batch))
+            # all K concepts are candidates and the policy picks n of them: intervention() replaces
+            # 1 + floor(quantile * (K - 1)) candidates, so this quantile gives n
+            quantile = 1.0 if n == n_concepts else (n - 0.5) / (n_concepts - 1)
+            intervened = nullcontext() if n == 0 else intervention(  # n = 0: the baseline, no intervention
+                target=target,
+                intervention_strategy=strategy,
+                intervention_policy=intervention_policy,
+                out_concepts_to_intervene_on=concepts_to_intervene_on,
+                quantile=quantile,
+                build_context=build_context,
+            )
+            with torch.no_grad(), intervened:
+                # the input: an inference engine (mid level) or a high-level model is queried with the
+                # input and the evidence; a low-level model is called on the input
+                if hasattr(model, "pgm"):
+                    out = model(
+                        query=[task],
+                        evidence={"input": x, **{name: c[name].tensor for name in evidence}}
+                    )
+                else:
+                    out = model(x)
+
+            # the output: an InferenceOutput holds the logits of a discrete task and the loc (or value)
+            # of a continuous one; a low-level model returns the task predictions, or (concepts, task)
+            y = c[task]
+            kind = y.annotations.types[0]
+            if isinstance(out, InferenceOutput):
+                quantity = (out.logits if kind != "continuous"
+                            else resolve_quantity(out.params, None, CONTINUOUS_QUANTITIES, y))
+                y_pred = quantity[task].tensor
+            else:
+                y_pred = out[-1] if isinstance(out, tuple) else out
+            y = y.tensor
+
+            # Fill the score, summed over the batches and averaged at the end
+            if kind == "binary":  # accuracy: predicted true where the logit is positive
+                per_example = ((y_pred > 0).float() == y).float()
+            elif kind == "categorical":  # accuracy: the predicted state has the largest logit
+                per_example = (y_pred.argmax(-1, keepdim=True) == y.long()).float()
+            else:  # continuous: squared error
+                per_example = (y_pred - y) ** 2
+            score_sum += per_example.sum().item()
+            count += per_example.numel()
+        scores.append(score_sum / count)
+    return scores
