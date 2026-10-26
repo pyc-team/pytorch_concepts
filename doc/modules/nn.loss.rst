@@ -22,4 +22,5 @@ for how they fit together.
    OrthogonalityLoss
    NLLProbLoss
    L1LogitRegularizer
+   CMRTaskLoss
    LossWeightWarmup
