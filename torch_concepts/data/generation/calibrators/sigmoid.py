@@ -20,7 +20,7 @@ class SigmoidCalibrator(Calibrator):
     >>> scores = AnnotatedTensor(
     ...     torch.tensor([[-1.0], [0.0], [1.0]]),
     ...     Annotations(labels=["is_red"]),
-    ...     axis=1,
+    ...     axis=-1,
     ... )
     >>> calibrated = SigmoidCalibrator(scale=2.0).calibrate(scores)
     >>> torch.testing.assert_close(
@@ -40,7 +40,7 @@ class SigmoidCalibrator(Calibrator):
         if self.standardize:
             # Statistics per concept: reduce over every dim but the concept axis.
             values = scores.tensor
-            dims = [d for d in range(values.dim()) if d != scores.axis]
+            dims = [d for d in range(values.dim()) if d != scores.axis % values.dim()]
             std = values.std(dims, keepdim=True, correction=0).clamp_min(1e-12)
             scores = (scores - values.mean(dims, keepdim=True)) / std
         return (scores * self.scale + self.bias).sigmoid()

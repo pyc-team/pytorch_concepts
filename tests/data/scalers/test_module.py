@@ -57,6 +57,19 @@ class TestFit:
         assert fitted.concept_scalers['large'].mean.item() == pytest.approx(400.0)
         assert fitted.concept_scalers['small'].mean.item() == pytest.approx(4.0)
 
+    def test_time_axis_statistics_span_every_step(self, annotations, concepts):
+        # (n, steps, concepts): the second step is the first plus 10.
+        steps = torch.stack([concepts, concepts + 10], dim=1)
+        module = ScalerModule.fit(annotations=annotations, concepts=steps, concept_scaler=StandardScaler())
+        assert module.concept_scalers['small'].mean.item() == pytest.approx(9.0)
+        assert module.concept_scalers['large'].mean.item() == pytest.approx(405.0)
+
+    def test_one_dimensional_concepts_are_rejected(self, annotations):
+        # concepts[..., i] would take one value of a 1-D tensor as the column.
+        with pytest.raises(ValueError, match="shape"):
+            ScalerModule.fit(annotations=annotations, concepts=torch.rand(4),
+                             concept_scaler=StandardScaler())
+
     def test_no_scaler_prototype_yields_empty_module(self, annotations, concepts):
         empty = ScalerModule.fit(annotations=annotations, concepts=concepts)
         assert not empty.has_concepts

@@ -105,7 +105,9 @@ class ScalerModule(nn.Module):
         annotations : Annotations
             Concept-axis annotations, used to find the continuous concepts.
         concepts : torch.Tensor, optional
-            ``(n_train, n_concepts)`` concept-space ground truth.
+            ``(n_train, n_concepts)`` concept-space ground truth, or
+            ``(n_train, ..., n_concepts)`` with leading axes such as time
+            steps, whose statistics then span every step.
         input_data : torch.Tensor, optional
             ``(n_train, *features)`` inputs, shaped as the model consumes them.
         concept_scaler : Scaler, optional
@@ -121,6 +123,11 @@ class ScalerModule(nn.Module):
         """
         fitted_concepts: Dict[str, Scaler] = {}
         if concept_scaler is not None and concepts is not None:
+            if concepts.ndim < 2:
+                raise ValueError(
+                    "ScalerModule: concepts must have shape (n_train, n_concepts) "
+                    f"or (n_train, ..., n_concepts); got {tuple(concepts.shape)}."
+                )
             for name in annotations.type_groups['continuous']['labels']:
                 concept = annotations.concept(name)
                 # A column-per-label layout is what makes name-based alignment
@@ -132,7 +139,7 @@ class ScalerModule(nn.Module):
                         f"{concept.cardinality}; scaling supports cardinality 1 "
                         f"(one column per continuous concept)."
                     )
-                column = concepts[:, concept.index].unsqueeze(-1).float()
+                column = concepts[..., concept.index].reshape(-1, 1).float()
                 fitted_concepts[name] = deepcopy(concept_scaler).fit(column)
 
         fitted_input = None

@@ -501,6 +501,10 @@ class ConceptDataModule(LightningDataModule):
                         )
                         continue
                     train_data = continuous
+                    # Concepts with leading axes (n, ..., k), such as time steps:
+                    # one statistic per concept, over every step.
+                    if train_data.dim() > 2:
+                        train_data = train_data.tensor.flatten(0, -2)
 
                 # Fit the scaler on the training data and store it in the dataset
                 scaler.fit(train_data)

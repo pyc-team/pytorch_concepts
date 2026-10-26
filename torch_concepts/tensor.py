@@ -330,7 +330,7 @@ class AnnotatedTensor:
                     f"union_with expects AnnotatedTensor arguments, "
                     f"got {type(other).__name__} at position {i + 1}."
                 )
-            if other._axis != ax:
+            if other._axis % other._data.dim() != ax % self._data.dim():
                 raise ValueError(
                     f"union_with: annotated axis mismatch at position {i + 1}: "
                     f"this tensor annotates axis {ax}, the other annotates {other._axis}."

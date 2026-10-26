@@ -266,5 +266,91 @@ class TestAnnotationSpaces(unittest.TestCase):
         self.assertEqual(dataset.concepts.shape[1], 2)
 
 
+
+class TestLeadingAxes(unittest.TestCase):
+    """Concepts with leading axes, such as time steps: (n_samples, n_steps, n_concepts),
+    with the metadata on the last axis."""
+
+    def setUp(self):
+        self.n_samples, self.n_steps = 12, 4
+        self.X = torch.randn(self.n_samples, 7, 3)
+        # continuous before binary, so that grouping by type reorders them
+        self.annotations = Annotations(labels=['level', 'flag'], cardinalities=(1, 1),
+                                       types=['continuous', 'binary'])
+        self.C = torch.stack([
+            torch.randn(self.n_samples, self.n_steps),
+            torch.randint(0, 2, (self.n_samples, self.n_steps)).float(),
+        ], dim=-1)
+
+    def test_concepts_keep_the_time_axis(self):
+        dataset = ConceptDataset(self.X, self.C, annotations=self.annotations)
+
+        self.assertEqual(tuple(dataset.concepts.shape), (self.n_samples, self.n_steps, 2))
+        self.assertEqual(dataset.concepts.axis, -1)
+        self.assertEqual(dataset.n_concepts, 2)
+        # Grouped by type on the last axis; values follow their label.
+        self.assertEqual(list(dataset.concept_names), ['flag', 'level'])
+        torch.testing.assert_close(dataset.concepts[['level']].tensor[..., 0], self.C[..., 0])
+
+    def test_rows_are_plain_and_batches_annotated(self):
+        dataset = ConceptDataset(self.X, self.C, annotations=self.annotations)
+
+        row = dataset[0]['concepts']['c']
+        self.assertIs(type(row), torch.Tensor)
+        self.assertEqual(tuple(row.shape), (self.n_steps, 2))
+        batch = dataset.collate([dataset[i] for i in range(3)])['concepts']['c']
+        self.assertEqual(tuple(batch.shape), (3, self.n_steps, 2))
+        self.assertEqual(batch.axis, -1)
+        self.assertEqual(tuple(batch[['level']].shape), (3, self.n_steps, 1))
+
+    def test_row_subset_keeps_the_time_axis(self):
+        dataset = ConceptDataset(self.X, self.C, annotations=self.annotations)
+        dataset._subset_rows([0, 2, 5])
+
+        self.assertEqual(tuple(dataset.concepts.shape), (3, self.n_steps, 2))
+        torch.testing.assert_close(dataset.concepts[['level']].tensor[..., 0], self.C[[0, 2, 5], :, 0])
+
+    def test_concept_scaler_spans_every_step(self):
+        from torch_concepts.data.base.datamodule import ConceptDataModule
+        from torch_concepts.data.scalers import StandardScaler
+        dataset = ConceptDataset(self.X, self.C, annotations=self.annotations)
+        datamodule = ConceptDataModule(dataset, batch_size=4, seed=0, scalers={'concepts': StandardScaler()})
+        datamodule.setup('fit')
+
+        # One statistic for 'level', over the training rows and all their steps.
+        train = self.C[datamodule.trainset.indices, :, 0]
+        self.assertEqual(dataset.scalers['concepts'].mean.numel(), 1)
+        self.assertAlmostEqual(dataset.scalers['concepts'].mean.item(), train.mean().item(), places=5)
+
+    def test_two_dimensional_concepts_on_the_last_axis(self):
+        dataset = ConceptDataset(self.X, self.C[:, 0], annotations=self.annotations)
+
+        self.assertEqual(dataset.concepts.axis, -1)
+        self.assertIs(type(dataset[0]['concepts']['c']), torch.Tensor)
+        batch = dataset.collate([dataset[i] for i in range(3)])['concepts']['c']
+        self.assertEqual(tuple(batch.shape), (3, 2))
+        self.assertEqual(batch.axis, -1)
+
+    def test_axis_1_input_is_stored_on_the_last_axis(self):
+        from torch_concepts import AnnotatedTensor
+        # On two dimensions axis 1 and -1 are the same axis: both are accepted.
+        on_axis_1 = AnnotatedTensor(self.C[:, 0], self.annotations, axis=1)
+        dataset = ConceptDataset(self.X, concepts=on_axis_1)
+
+        self.assertEqual(dataset.concepts.axis, -1)
+        torch.testing.assert_close(dataset.concepts[['level']].tensor[:, 0], self.C[:, 0, 0])
+
+    def test_one_dimensional_concepts_are_rejected(self):
+        level = Annotations(labels=['level'], cardinalities=(1,), types=['continuous'])
+        with self.assertRaises(ValueError):
+            ConceptDataset(self.X, self.C[:, 0, 0], annotations=level)
+
+    def test_metadata_must_be_on_the_last_axis(self):
+        from torch_concepts import AnnotatedTensor
+        on_axis_1 = AnnotatedTensor(self.C.transpose(1, 2), self.annotations, axis=1)   # (n, concepts, steps)
+        with self.assertRaises(ValueError):
+            ConceptDataset(self.X, concepts=on_axis_1)
+
+
 if __name__ == '__main__':
     unittest.main()
