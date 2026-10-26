@@ -44,6 +44,7 @@ from .modules.low.predictors.rule import (
     RuleConceptEmbeddingToConcept,
     RuleMemory,
 )
+from .modules.low.predictors.selective import SelectiveLinearConceptToConcept
 from .modules.low.predictors.mix import MixConceptEmbeddingToConcept, \
     MixConceptEmbeddings
 
@@ -63,7 +64,7 @@ from .modules.loss import PyCLoss, ConceptLoss, ConceptSubset, WeightedConceptLo
 from .modules.callbacks import LossWeightWarmup
 
 # Metrics
-from .modules.metrics import ConceptMetrics, compute_cace
+from .modules.metrics import ConceptMetrics, compute_cace, intervention_curve
 
 # Output containers
 from .modules.outputs import InferenceOutput
@@ -161,6 +162,7 @@ __all__ = [
     # Predictor classes
     "LinearConceptToConcept",
     "MLPConceptToConcept",
+    "SelectiveLinearConceptToConcept",
     "CallableConceptToConcept",
     "HyperlinearConceptEmbeddingToConcept",
     "MixConceptEmbeddingToConcept",
@@ -200,6 +202,7 @@ __all__ = [
     # Metrics
     "ConceptMetrics",
     "compute_cace",
+    "intervention_curve",
 
     # Output containers
     "InferenceOutput",

@@ -1461,3 +1461,94 @@ class TestMetricsReceiveProbabilities(unittest.TestCase):
             scores.append({k: float(v) for k, v in m.compute().items()})
         for key in scores[0]:
             self.assertAlmostEqual(scores[0][key], scores[1][key], places=5, msg=key)
+
+
+class TestInterventionCurve(unittest.TestCase):
+    """Each point n of the curve intervenes on exactly n of the K concepts."""
+
+    @staticmethod
+    def _wrong_layer(n_in, n_out):
+        """A layer predicting every concept off: logit -5 for every example."""
+        layer = torch.nn.Linear(n_in, n_out)
+        with torch.no_grad():
+            layer.weight.zero_()
+            layer.bias.fill_(-5.0)
+        return layer
+
+    @staticmethod
+    def _batch(x, values, annotations):
+        """A batch in the library's format, the same true values for every example."""
+        c = AnnotatedTensor(torch.tensor(values).float().expand(len(x), len(values)).clone(), annotations)
+        return {"inputs": {"x": x}, "concepts": {"c": c}}
+
+    def _curve(self, tasks, task, values, annotations):
+        """The curve of a low-level model: a wrong concept encoder, then ``tasks`` of the concept logits;
+        ground-truth interventions on c0, then c1, then c2."""
+        from torch_concepts.nn import GroundTruthIntervention, UniformPolicy, intervention_curve
+
+        class Model(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.concept_encoder = TestInterventionCurve._wrong_layer(2, 3)
+
+            def forward(self, x):
+                return tasks(self.concept_encoder(x))
+
+        x = torch.randn(8, 2)
+        return intervention_curve(
+            model=Model(),
+            layer_name="concept_encoder",
+            intervention_strategy=lambda batch: GroundTruthIntervention(
+                torch.logit(batch["concepts"]["c"][["c0", "c1", "c2"]].tensor, eps=1e-6)),
+            intervention_policy=UniformPolicy(),
+            concepts_to_intervene_on=[0, 1, 2],
+            dataloader=[self._batch(x[:5], values, annotations), self._batch(x[5:], values, annotations)],
+            task=task,
+        )
+
+    def test_binary_task_accuracy(self):
+        curve = self._curve(lambda c_logits: (c_logits, c_logits[:, 1:2]),  # y copies c1
+                            "y", [1, 1, 1, 1], Annotations(labels=["c0", "c1", "c2", "y"]))
+        self.assertEqual(curve, [0.0, 0.0, 1.0, 1.0])
+
+    def test_categorical_task_accuracy_and_continuous_task_squared_error(self):
+        from torch_concepts.nn.modules.outputs import InferenceOutput
+        off = torch.logit(torch.tensor(0.0), eps=1e-6).item()  # the true logit of a concept that is off
+
+        def tasks(c_logits):  # y: the state of the largest concept logit; v: the logit of c0
+            return InferenceOutput(
+                logits=AnnotatedTensor(c_logits, Annotations(labels=["y"], cardinalities=[3], types=["categorical"]),
+                                       axis=-1),
+                loc=AnnotatedTensor(c_logits[:, :1], Annotations(labels=["v"], types=["continuous"]), axis=-1),
+            )
+
+        values = [0, 0, 1, 2, off]  # c2 on: y is state 2, the largest logit once c0 and c1 are off
+        annotations = Annotations(labels=["c0", "c1", "c2", "y", "v"], cardinalities=[1, 1, 1, 3, 1],
+                                  types=["binary", "binary", "binary", "categorical", "continuous"])
+        self.assertEqual(self._curve(tasks, "y", values, annotations.to_concept_space()), [0.0, 0.0, 1.0, 1.0])
+        squared_error = self._curve(tasks, "v", values, annotations.to_concept_space())
+        self.assertAlmostEqual(squared_error[0], (off + 5.0) ** 2, places=3)  # c0 still at logit -5
+        self.assertTrue(all(error < 1e-8 for error in squared_error[1:]))  # c0 corrected first
+
+    def test_an_inference_engine_is_queried_and_intervened_on_by_name(self):
+        from torch.distributions import Bernoulli
+        from torch_concepts import ConceptVariable, EmbeddingVariable
+        from torch_concepts.distributions import Delta
+        from torch_concepts.nn import (BayesianNetwork, DeterministicInference, DoIntervention, LearnablePrior,
+                                       ParametricCPD, UniformPolicy, intervention_curve)
+        inputs = EmbeddingVariable("input", distribution=Delta, size=2)
+        concepts = ConceptVariable("concepts", members=["a", "b", "c"], distribution=Bernoulli)
+        model = BayesianNetwork(variables=[inputs, concepts], factors=[
+            ParametricCPD(inputs, parents=[], parametrization=LearnablePrior(2)),
+            ParametricCPD(concepts, parents=[inputs], parametrization={"logits": self._wrong_layer(2, 3)}),
+        ])
+        curve = intervention_curve(
+            model=DeterministicInference(model),
+            layer_name=None,
+            intervention_strategy=DoIntervention(5.0),  # the same for every batch
+            intervention_policy=UniformPolicy(),  # a, then b, then c
+            concepts_to_intervene_on=["a", "b", "c"],
+            dataloader=[self._batch(torch.randn(8, 2), [1, 1, 1], Annotations(labels=["a", "b", "c"]))],
+            task="b",
+        )
+        self.assertEqual(curve, [0.0, 0.0, 1.0, 1.0])
