@@ -45,6 +45,12 @@ Models
    BlackBox
    BlackBoxTaskOnly
 
+``ConceptBottleneckModel.set_linear_heads`` installs externally fitted linear
+heads for scalar deterministic continuous concepts and one categorical task.
+``LabelFreeCBM`` subclasses ``ConceptBottleneckModel`` and accepts a generation
+pipeline to discover and construct its bottleneck internally during ``fit``.
+See :doc:`/guides/lfcbm` for lifecycle, ownership, and numerical equivalence tests.
+
 Concept Generation Helpers
 --------------------------
 

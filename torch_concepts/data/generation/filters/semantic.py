@@ -11,8 +11,8 @@ from ..base.filter_generator import FilterGenerator
 class SemanticConceptFilter(FilterGenerator):
     """Filter concept vocabularies by class and pairwise text similarity.
 
-    Removes long names, class aliases, and semantically similar concepts using
-    the filtering rules from LF-CBM.
+    Removes long names, class aliases, and semantically similar concepts.
+    By default, preserves the exact LF-CBM reference rules for compatibility.
 
     Supply ``clip_text_encoder(texts)`` using CLIP ViT-B/16 and
     ``sentence_encoder(texts)`` using all-mpnet-base-v2 to reproduce the authors'
@@ -25,13 +25,17 @@ class SemanticConceptFilter(FilterGenerator):
     concept with greater summed similarity, with ties favoring the earlier one.
     For numerical reference compatibility, the class comparison also preserves
     its ``class_index != concept_index`` condition, despite the unrelated axes.
-    This filter is optional when consuming the published, already-filtered list.
+    Set ``reference_class_filter=False`` to compare every class/concept pair,
+    including matching indices. The default index exception is a reproduction
+    quirk, not a general semantic filtering rule. Output order is alphabetical
+    in both modes. This filter is optional for published, already-filtered lists.
     """
 
     def __init__(
         self, class_names: Sequence[str], clip_text_encoder: Callable,
         sentence_encoder: Callable, *, max_length: int = 30,
         class_cutoff: float = .85, similarity_cutoff: float = .9,
+        reference_class_filter: bool = True,
     ):
         self.class_names = list(class_names)
         self.clip_text_encoder = clip_text_encoder
@@ -39,6 +43,7 @@ class SemanticConceptFilter(FilterGenerator):
         self.max_length = max_length
         self.class_cutoff = class_cutoff
         self.similarity_cutoff = similarity_cutoff
+        self.reference_class_filter = reference_class_filter
 
     def _similarities(self, left, right):
         with torch.no_grad():
@@ -59,7 +64,9 @@ class SemanticConceptFilter(FilterGenerator):
         similarity = self._similarities(self.class_names, labels)
         keep = [
             name for j, name in enumerate(labels)
-            if not any(similarity[i, j] >= self.class_cutoff and i != j for i in range(len(self.class_names)))
+            if not any(similarity[i, j] >= self.class_cutoff
+                       and (not self.reference_class_filter or i != j)
+                       for i in range(len(self.class_names)))
         ]
         if not keep:
             raise ValueError("No concepts survived the class-similarity filter.")

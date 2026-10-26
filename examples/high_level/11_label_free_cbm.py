@@ -7,7 +7,7 @@ pipeline supplies candidate concepts and raw CLIP similarities. ``LabelFreeCBM``
 learns a bias-free projection, removes concepts with poor validation alignment,
 standardizes learned activations, and fits an elastic-net classifier with SAGA.
 The high-level model supports the standard concept/task query interface and
-uses an ordinary ``ConceptBottleneckModel`` for its fitted prediction graph.
+inherits ``ConceptBottleneckModel`` and constructs its own prediction graph.
 
 This example uses CIFAR-10 task labels, the authors' published vocabulary, and
 a frozen ImageNet ResNet-18 backbone. The backbone and small data subset make
@@ -101,8 +101,20 @@ lfcbm = LabelFreeCBM(
 lfcbm.fit(dm)
 print(f"Retained {len(lfcbm.concept_names_)} concepts")
 print(lfcbm.concept_names_[:10])
-print(lfcbm.alignment_scores_[lfcbm.concept_names_[:10]])
-print(lfcbm.classifier_diagnostics_)
+print(lfcbm.diagnostics_["alignment_scores"][lfcbm.concept_names_[:10]])
+print(lfcbm.diagnostics_["classifier"])
+
+# %%
+# Classification accuracy on the held-out test subset
+# --------------------------------------------------
+lfcbm.eval()
+test_indices = dm.testset.indices
+correct = 0
+for start in range(0, len(test_indices), dm.batch_size):
+    indices = test_indices[start:start + dm.batch_size]
+    predictions = lfcbm.predict(dataset.input_data[indices]).argmax(1).cpu()
+    correct += (predictions == targets[indices]).sum().item()
+print(f"Held-out test accuracy: {correct / len(test_indices):.2%} ({correct}/{len(test_indices)})")
 
 # %%
 # Learned concepts and task predictions
@@ -114,7 +126,7 @@ output = lfcbm(query=["class"], input=x.to(device))
 torch.testing.assert_close(output.logits["class"].tensor, logits)
 print(activations[lfcbm.concept_names_[:3]])
 print([train.classes[index] for index in logits.argmax(1).tolist()])
-model = lfcbm.model_                   # a normal high-level CBM, independently usable
+model = lfcbm                          # itself a high-level ConceptBottleneckModel
 torch.testing.assert_close(model(query=["class"], input=x.to(device)).logits["class"].tensor, logits)
 
 # %%
@@ -124,6 +136,6 @@ checkpoint = root / "fitted"
 lfcbm.save(checkpoint)
 # A custom backbone is reconstructed explicitly; the checkpoint supplies weights.
 # Reusing this already-created architecture avoids any further model downloads.
-restored = LabelFreeCBM.load(checkpoint, backbone=lfcbm.backbone_, device=device)
+restored = LabelFreeCBM.load(checkpoint, backbone=lfcbm.backbone, device=device)
 torch.testing.assert_close(restored.predict(x), logits)
 torch.testing.assert_close(restored.predict_concepts(x).tensor, activations.tensor)
