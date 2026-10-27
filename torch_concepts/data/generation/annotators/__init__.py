@@ -4,9 +4,11 @@ from .clip import (
     default_input_getter,
     default_state_prompt_formatter,
 )
+from .random import RandomAnnotator
 
 __all__ = [
     "CLIPAnnotator",
+    "RandomAnnotator",
     "default_binary_prompt_formatter",
     "default_input_getter",
     "default_state_prompt_formatter",
