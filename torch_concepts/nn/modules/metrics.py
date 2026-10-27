@@ -8,6 +8,8 @@ from copy import deepcopy
 
 from ...annotations import Annotations
 from .low.base.intervention import InterventionPolicy, InterventionStrategy, intervention
+from .low.intervention.policy.uniform import UniformPolicy
+from .low.intervention.strategy.do import DoIntervention
 from .outputs import (CONTINUOUS_QUANTITIES, DISCRETE_QUANTITIES, InferenceOutput,
                       resolve_quantity, supervised_subset)
 from .utils import by_type, check_collection
@@ -429,53 +431,123 @@ class ConceptMetrics(nn.Module):
             collection.reset()
 
 
+def _predict_task(model: nn.Module, batch: dict, task: str, evidence: List[str]):
+    """The model's prediction of ``task`` on ``batch`` (logits if discrete, values if
+    continuous), and the true values of the task as an :class:`AnnotatedTensor`."""
+    x, c = batch["inputs"]["x"], batch["concepts"]["c"]
+    # the input: an inference engine (mid level) or a high-level model is queried with the
+    # input and the evidence; a low-level model is called on the input
+    if hasattr(model, "pgm"):
+        out = model(
+            query=[task],
+            evidence={"input": x, **{name: c[name].tensor for name in evidence}}
+        )
+    else:
+        out = model(x)
+
+    # the output: an InferenceOutput holds the logits of a discrete task and the loc (or value)
+    # of a continuous one; a low-level model returns the task predictions, or (concepts, task)
+    y = c[task]
+    if isinstance(out, InferenceOutput):
+        quantity = (out.logits if y.annotations.types[0] != "continuous"
+                    else resolve_quantity(out.params, None, CONTINUOUS_QUANTITIES, y))
+        return quantity[task].tensor, y
+    return (out[-1] if isinstance(out, tuple) else out), y
+
+
 @torch.no_grad()
 def compute_cace(
-    model,
-    dataloader,
-    source_concept: str,
-    target_concept: str,
+    model: nn.Module,
+    layer_name: Optional[str],
+    concepts_to_intervene_on: Union[List[str], List[slice], List[int]],
+    dataloader: Iterable[dict],
+    task: str,
     prob_high: Union[float, torch.Tensor] = 1.0,
     prob_low: Union[float, torch.Tensor] = 0.0,
+    evidence: List[str] = [],  # needed for higher levels of the API
 ) -> torch.Tensor:
-    """Compute the Causal Concept Effect of *source_concept* on *target_concept*.
+    """Causal Concept Effect (CaCE) of the concepts in ``concepts_to_intervene_on`` on the task:
+    ``E[y | do(C = prob_high)] - E[y | do(C = prob_low)]``, averaged over the dataloader.
 
-    Runs ``do(source = prob_high)`` vs ``do(source = prob_low)`` over the
-    dataloader and returns the mean difference on the target.
+    Goyal et al. (2019), `"Explaining Classifiers with Causal Concept Effect (CaCE)"
+    <https://arxiv.org/abs/1907.07165>`_. The expectation of the task is its probability if
+    binary, the probability of each state if categorical, its value if continuous.
 
-    Values are in **probability space** (0–1 for binary concepts).
-    They are converted to logits internally via ``torch.logit``.
+    The concepts are set in **probability space**, converted to the logits the layer
+    outputs with ``torch.logit``:
 
-    * **Binary** (default): ``prob_high=1, prob_low=0``.
-    * **Categorical**: pass probability vectors, e.g.
+    - binary (default): ``prob_high=1``, ``prob_low=0``;
+    - categorical: one probability per output of the layer, e.g.
       ``prob_high=tensor([0, 0, 1])``, ``prob_low=tensor([1, 0, 0])``.
 
+    Works at every level of the library, as :func:`intervention_curve`:
+
+    - low level: ``model`` is a module called as ``model(x)``, returning the task
+      predictions (logits if discrete, values if continuous) or
+      ``(concept predictions, task predictions)``; ``layer_name`` names its layer
+      to intervene on;
+    - mid level: ``model`` is an inference engine, high level: a high-level model.
+      Both are queried for the task with the input, and the names in
+      ``concepts_to_intervene_on`` locate the layer (``layer_name=None``).
+
     Args:
-        model: A high-level concept model (e.g.
-            :class:`~torch_concepts.nn.ConceptBottleneckModel`).
-        dataloader: Iterable yielding batch dicts with
-            ``{'inputs': {'x': Tensor}}``.
-        source_concept: Concept to intervene on.
-        target_concept: Concept whose prediction is measured.
-        prob_high: Probability for the *high* regime (default 1.0).
-        prob_low: Probability for the *low* regime (default 0.0).
+        model: The model to evaluate.
+        layer_name: Attribute of ``model`` holding the layer to intervene on (low
+            level); ``None`` for an inference engine or a high-level model.
+        concepts_to_intervene_on: One name, slice or position per concept (see
+            :func:`intervention`); all of them are set.
+        dataloader: Batches in the library's format,
+            ``{"inputs": {"x": x}, "concepts": {"c": c}}``, with ``c`` an
+            :class:`AnnotatedTensor` holding the task, whose annotation gives its type.
+        task: The task to measure: binary, categorical or continuous.
+        prob_high: Probability of the concepts in the *high* regime (default 1.0).
+        prob_low: Probability of the concepts in the *low* regime (default 0.0).
+        evidence: Concepts observed by an inference engine or a high-level model,
+            with values from the batch.
 
     Returns:
-        Scalar tensor with the CaCE score.
+        The CaCE: a scalar if the task is binary or continuous, one value per state if
+        categorical.
 
     Example::
 
         >>> cace = compute_cace(  # doctest: +SKIP
         ...     model=cbm,
+        ...     layer_name="concept_encoder",
+        ...     concepts_to_intervene_on=["c1"],
         ...     dataloader=test_loader,
-        ...     source_concept="c1",
-        ...     target_concept="task",
+        ...     task="y",
         ... )
-
-    Raises:
-        NotImplementedError: Always — this function is not implemented yet.
     """
-    raise NotImplementedError("compute_cace is not implemented.")
+    target = getattr(model, layer_name) if layer_name is not None else model
+    # do(C = prob), on the logits the layer outputs
+    regimes = [DoIntervention(torch.logit(torch.as_tensor(prob, dtype=torch.float), eps=1e-6))
+               for prob in (prob_low, prob_high)]
+    effect_sum, count = 0.0, 0
+    for batch in dataloader:
+        expected = []  # the expectation of the task in each example, under do(C = prob_low), do(C = prob_high)
+        for strategy in regimes:
+            with intervention(
+                target=target,
+                intervention_strategy=strategy,
+                intervention_policy=UniformPolicy(),
+                out_concepts_to_intervene_on=concepts_to_intervene_on,
+            ):
+                y_pred, y = _predict_task(model, batch, task, evidence)
+            kind = y.annotations.types[0]
+            if kind == "binary":
+                y_pred = y_pred.sigmoid()
+            elif kind == "categorical":
+                y_pred = y_pred.softmax(-1)
+            expected.append(y_pred.reshape(-1, y_pred.shape[-1]))  # fold any leading dims into the batch
+
+        # Fill the effect, summed over the batches and averaged at the end
+        low, high = expected
+        effect_sum = effect_sum + (high - low).sum(0)
+        count += len(low)
+    if not count:
+        raise ValueError("compute_cace: the dataloader yielded no batches.")
+    return (effect_sum / count).squeeze()
 
 
 def intervention_curve(
@@ -483,7 +555,7 @@ def intervention_curve(
     layer_name: Optional[str],
     intervention_strategy: Union[InterventionStrategy, Callable[[dict], InterventionStrategy]],
     intervention_policy: InterventionPolicy,
-    concepts_to_intervene_on: Union[List[str], List[int]],
+    concepts_to_intervene_on: Union[List[str], List[slice], List[int]],
     dataloader: Iterable[dict],
     task: str,
     evidence: List[str] = [],  # needed for higher levels of the API
@@ -516,8 +588,9 @@ def intervention_curve(
             batch, e.g. a :class:`GroundTruthIntervention` with the batch's true
             concepts.
         intervention_policy: Scores the concepts; the lowest are intervened on first.
-        concepts_to_intervene_on: One name or position per concept (see
-            :func:`intervention`).
+        concepts_to_intervene_on: One name, slice or position per concept (see
+            :func:`intervention`); a concept named or given as a slice is
+            corrected whole, e.g. every state of a categorical one.
         dataloader: Batches in the library's format,
             ``{"inputs": {"x": x}, "concepts": {"c": c}}``, with ``c`` an
             :class:`AnnotatedTensor` holding the true values by name (the index
@@ -551,41 +624,21 @@ def intervention_curve(
     for n in range(n_concepts + 1):
         score_sum, count = 0.0, 0
         for batch in dataloader:
-            x, c = batch["inputs"]["x"], batch["concepts"]["c"]
             strategy = (intervention_strategy if isinstance(intervention_strategy, InterventionStrategy)
                         else intervention_strategy(batch))
-            # all K concepts are candidates and the policy picks n of them: intervention() replaces
-            # 1 + floor(quantile * (K - 1)) candidates, so this quantile gives n
-            quantile = 1.0 if n == n_concepts else (n - 0.5) / (n_concepts - 1)
             intervened = nullcontext() if n == 0 else intervention(  # n = 0: the baseline, no intervention
                 target=target,
                 intervention_strategy=strategy,
                 intervention_policy=intervention_policy,
                 out_concepts_to_intervene_on=concepts_to_intervene_on,
-                quantile=quantile,
+                # all K concepts are candidates and the policy picks n of them: intervention() replaces
+                # 1 + floor(quantile * (K - 1)) candidates, so this quantile gives n
+                quantile=1.0 if n == n_concepts else (n - 0.5) / (n_concepts - 1),
                 build_context=build_context,
             )
             with torch.no_grad(), intervened:
-                # the input: an inference engine (mid level) or a high-level model is queried with the
-                # input and the evidence; a low-level model is called on the input
-                if hasattr(model, "pgm"):
-                    out = model(
-                        query=[task],
-                        evidence={"input": x, **{name: c[name].tensor for name in evidence}}
-                    )
-                else:
-                    out = model(x)
-
-            # the output: an InferenceOutput holds the logits of a discrete task and the loc (or value)
-            # of a continuous one; a low-level model returns the task predictions, or (concepts, task)
-            y = c[task]
+                y_pred, y = _predict_task(model, batch, task, evidence)
             kind = y.annotations.types[0]
-            if isinstance(out, InferenceOutput):
-                quantity = (out.logits if kind != "continuous"
-                            else resolve_quantity(out.params, None, CONTINUOUS_QUANTITIES, y))
-                y_pred = quantity[task].tensor
-            else:
-                y_pred = out[-1] if isinstance(out, tuple) else out
             y = y.tensor
 
             # Fill the score, summed over the batches and averaged at the end

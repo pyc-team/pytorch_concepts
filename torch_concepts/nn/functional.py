@@ -991,66 +991,6 @@ def number_of_contributing_concepts(
     return kappa.float().mean().item()
 
 
-def cace_score(y_pred_c0, y_pred_c1):
-    """Compute the Average Causal Effect (ACE) / Causal Concept Effect (CaCE) score.
-
-    Measures the causal effect of a concept on model predictions:
-    ``E[Y | do(C=1)] - E[Y | do(C=0)]``.
-
-    Main reference: `"Explaining Classifiers with Causal Concept Effect
-    (CaCE)" <https://arxiv.org/abs/1907.07165>`_
-
-    Args:
-        y_pred_c0 (torch.Tensor): Predictions when the concept is inactive
-            (``do(C=0)``). Shape: ``(batch_size, num_classes)``.
-        y_pred_c1 (torch.Tensor): Predictions when the concept is active
-            (``do(C=1)``). Shape: ``(batch_size, num_classes)``.
-
-    Returns:
-        torch.Tensor: CaCE score for each class. Shape: ``(num_classes,)``.
-
-    Example:
-        >>> import torch
-        >>> y_c0 = torch.tensor([[0.1, 0.9], [0.2, 0.8]])
-        >>> y_c1 = torch.tensor([[0.7, 0.3], [0.6, 0.4]])
-        >>> cace_score(y_c0, y_c1)
-        tensor([ 0.5000, -0.5000])
-    """
-    if y_pred_c0.shape != y_pred_c1.shape:
-        raise RuntimeError(
-            "The shapes of y_pred_c0 and y_pred_c1 must be the same but got "
-            f"{y_pred_c0.shape} and {y_pred_c1.shape} instead."
-        )
-    return y_pred_c1.mean(dim=0) - y_pred_c0.mean(dim=0)
-
-
-def residual_concept_causal_effect(cace_before, cace_after):
-    """Compute the residual concept causal effect.
-
-    Quantifies how much of a concept's causal effect remains after
-    intervening on another (inner) concept.  A value close to 1
-    indicates that the inner intervention had little impact; values
-    close to 0 indicate that the original effect was mostly mediated
-    through the inner concept.
-
-    Args:
-        cace_before (torch.Tensor): CaCE score **before** the
-            do-intervention on the inner concept.
-        cace_after (torch.Tensor): CaCE score **after** the
-            do-intervention on the inner concept.
-
-    Returns:
-        torch.Tensor: Element-wise ratio ``cace_after / cace_before``.
-
-    Example::
-
-        >>> before = torch.tensor([0.5, 0.4])
-        >>> after  = torch.tensor([0.1, 0.3])
-        >>> residual_concept_causal_effect(before, after)
-        tensor([0.2000, 0.7500])
-    """
-    return cace_after / cace_before
-
 def edge_type(graph, i, j):
     if graph[i,j]==1 and graph[j,i]==0:
         return 'i->j'
