@@ -21,8 +21,6 @@ from torch_concepts.nn.functional import (
     tcav_score,
     number_of_effective_concepts,
     number_of_contributing_concepts,
-    cace_score,
-    residual_concept_causal_effect,
     edge_type,
     custom_hamming_distance,
     prune_linear_layer,
@@ -1047,34 +1045,6 @@ class TestNumberOfContributingConcepts(unittest.TestCase):
         a = torch.randn(3, 5)
         with self.assertRaises(ValueError):
             number_of_contributing_concepts(W, a, cardinalities=[2, 2])
-
-
-class TestCACEScore(unittest.TestCase):
-    """Test Causal Average Concept Effect score."""
-
-    def test_cace_score_basic(self):
-        """Test basic CACE score."""
-        y_pred_c0 = torch.tensor([[0.2, 0.8], [0.3, 0.7]])
-        y_pred_c1 = torch.tensor([[0.8, 0.2], [0.9, 0.1]])
-
-        result = cace_score(y_pred_c0, y_pred_c1)
-        self.assertEqual(result.shape, (2,))
-
-    def test_cace_score_shape_mismatch(self):
-        """Test with mismatched shapes."""
-        y_pred_c0 = torch.rand(5, 2)
-        y_pred_c1 = torch.rand(5, 3)
-
-        with self.assertRaises(RuntimeError):
-            cace_score(y_pred_c0, y_pred_c1)
-
-    def test_residual_concept_causal_effect(self):
-        """Test residual concept causal effect."""
-        cace_before = torch.tensor(0.5)
-        cace_after = torch.tensor(0.3)
-
-        result = residual_concept_causal_effect(cace_before, cace_after)
-        self.assertEqual(result, 0.6)
 
 
 class TestGraphMetrics(unittest.TestCase):

@@ -552,6 +552,35 @@ class TestSelIdx:
         assert sel.tolist() == [0, 2]
 
 
+class TestConceptSelection:
+    """A concept spanning several outputs (a categorical one) is chosen and replaced whole."""
+
+    def test_mask_replaces_whole_concepts(self):
+        policy = UniformPolicy()
+        groups = torch.tensor([0, 0, 0, 1, 1, 2])  # concepts of 3, 2 and 1 outputs
+        mask = policy.build_mask(policy(torch.randn(4, 6)), quantile=0.5, groups=groups)  # 1 + floor(0.5 * 2) = 2
+        assert torch.equal(mask.detach(), torch.tensor([[0., 0., 0., 0., 0., 1.]]).expand(4, 6))
+
+    def test_each_row_picks_the_concept_with_the_lowest_output(self):
+        """Not the lowest mean or max, not the first by position, not a lone output."""
+        scores = torch.tensor([[1.0, 1., 5., 0.1, 5.],   # row 0: the 3-output concept 2 (0.1)
+                               [0.2, 1., 5., 0.5, 5.]])  # row 1: concept 0 (0.2)
+        mask = UniformPolicy().build_mask(scores, quantile=0.0, groups=torch.tensor([0, 1, 2, 2, 2]))
+        assert mask.detach().tolist() == [[1., 1., 0., 0., 0.],
+                                          [0., 1., 1., 1., 1.]]
+
+    @pytest.mark.parametrize("sel", [["color", "size"], [slice(0, 3), slice(3, 4)], [slice(3), slice(3, 4)]])
+    def test_names_and_slices_select_whole_concepts(self, sel):
+        enc = _make_enc(out_f=4)
+        enc.out_concepts = Annotations(labels=["color", "size"], cardinalities=[3, 1])
+        m = InterventionModule(enc, DoIntervention(7.0), UniformPolicy(), sel, quantile=0.0)
+        assert m.sel_idx.tolist() == [0, 1, 2, 3]
+        assert m.groups.tolist() == [0, 0, 0, 1]
+        out = m(torch.randn(B, enc.in_f))
+        assert torch.all(out[:, :3] == 7.0)  # every state of color
+        assert torch.all(out[:, 3] != 7.0)
+
+
 # ===========================================================================
 # 13. Extra modules registration
 # ===========================================================================

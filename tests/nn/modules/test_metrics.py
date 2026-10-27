@@ -2,7 +2,7 @@
 Comprehensive tests for torch_concepts.nn.modules.metrics
 
 Tests metrics module for concept-based models:
-- Completeness score, intervention score, CACE score (functional metrics)
+- Completeness score, intervention score (functional metrics)
 - ConceptMetrics: Unified metric tracking for different concept types
 - Edge cases, error handling, and advanced scenarios
 - Integration with PyTorch Lightning workflows
@@ -12,7 +12,7 @@ import torch
 import torchmetrics
 from sklearn.metrics import f1_score
 
-from torch_concepts.nn.functional import completeness_score, intervention_score, cace_score
+from torch_concepts.nn.functional import completeness_score, intervention_score
 from torch_concepts.nn.modules.metrics import ConceptMetrics, Metric
 from torch_concepts.annotations import Annotations
 from torch_concepts.tensor import AnnotatedTensor
@@ -80,37 +80,6 @@ class TestInterventionScore(unittest.TestCase):
         self.assertEqual(round(auc_score*100)/100, 0.89)
 
 
-class TestCaceScore(unittest.TestCase):
-    """Test CACE (Concept Activation Causal Effect) score metric."""
-    
-    def test_cace_score_basic(self):
-        y_pred_c0 = torch.tensor([[0.1, 0.2, 0.7], [0.1, 0.2, 0.7]])
-        y_pred_c1 = torch.tensor([[0.2, 0.3, 0.5], [0.3, 0.3, 0.4]])
-        expected_result = torch.tensor([0.15, 0.1, -0.25])
-        result = cace_score(y_pred_c0, y_pred_c1)
-        self.assertTrue(torch.allclose(result, expected_result, atol=1e-6))
-
-    def test_cace_score_zero_effect(self):
-        y_pred_c0 = torch.tensor([[0.1, 0.2, 0.7], [0.1, 0.2, 0.7]])
-        y_pred_c1 = torch.tensor([[0.1, 0.2, 0.7], [0.1, 0.2, 0.7]])
-        expected_result = torch.tensor([0.0, 0.0, 0.0])
-        result = cace_score(y_pred_c0, y_pred_c1)
-        self.assertTrue(torch.allclose(result, expected_result, atol=1e-6))
-
-    def test_cace_score_negative_effect(self):
-        y_pred_c0 = torch.tensor([[0.3, 0.4, 0.3], [0.4, 0.3, 0.3]])
-        y_pred_c1 = torch.tensor([[0.1, 0.1, 0.8], [0.2, 0.1, 0.7]])
-        expected_result = torch.tensor([-0.2, -0.25, 0.45])
-        result = cace_score(y_pred_c0, y_pred_c1)
-        self.assertTrue(torch.allclose(result, expected_result, atol=1e-6))
-
-    def test_cace_score_different_shapes(self):
-        y_pred_c0 = torch.tensor([[0.3, 0.4, 0.3], [0.4, 0.3, 0.3]])
-        y_pred_c1 = torch.tensor([[0.1, 0.1, 0.8]])
-        with self.assertRaises(RuntimeError):
-            cace_score(y_pred_c0, y_pred_c1)
-
-
 class TestConceptMetricsModule(unittest.TestCase):
     """Test metrics module structure and imports."""
 
@@ -128,97 +97,108 @@ class TestConceptMetricsModule(unittest.TestCase):
         self.assertTrue(True)
 
 
-@unittest.skip("compute_cace disabled — intervention module not yet ported")
 class TestComputeCace(unittest.TestCase):
-    """Test compute_cace utility function."""
+    """The CaCE is the change in the task's expectation between do(C = prob_high) and do(C = prob_low)."""
 
-    def setUp(self):
-        """Build a minimal CBM and fake dataloader."""
+    @staticmethod
+    def _batch(x, values, annotations):
+        """A batch in the library's format, the same true values for every example."""
+        c = AnnotatedTensor(torch.tensor(values).float().expand(len(x), len(values)).clone(), annotations)
+        return {"inputs": {"x": x}, "concepts": {"c": c}}
+
+    def _cace(self, tasks, task, concept, values, annotations, **kwargs):
+        """The CaCE of ``concept`` on ``task`` in a low-level model: a concept encoder predicting every
+        concept off, then ``tasks`` of the concept logits."""
+        from torch_concepts.nn import compute_cace
+
+        class Model(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.concept_encoder = TestInterventionCurve._wrong_layer(2, 3)
+
+            def forward(self, x):
+                return tasks(self.concept_encoder(x))
+
+        x = torch.randn(8, 2)
+        return compute_cace(
+            model=Model(),
+            layer_name="concept_encoder",
+            concepts_to_intervene_on=[concept],
+            dataloader=[self._batch(x[:5], values, annotations), self._batch(x[5:], values, annotations)],
+            task=task,
+            **kwargs,
+        )
+
+    def test_binary_task_probability(self):
+        def tasks(c_logits):  # y copies c1
+            return c_logits, c_logits[:, 1:2]
+        annotations = Annotations(labels=["c0", "c1", "c2", "y"])
+        on = self._cace(tasks, "y", 1, [1, 1, 1, 1], annotations)
+        self.assertEqual(on.dim(), 0)
+        self.assertAlmostEqual(on.item(), 1.0, places=5)  # from probability 0 to 1
+        self.assertEqual(self._cace(tasks, "y", 0, [1, 1, 1, 1], annotations).item(), 0.0)  # y ignores c0
+        self.assertAlmostEqual(self._cace(tasks, "y", 1, [1, 1, 1, 1], annotations,
+                                          prob_high=0.8, prob_low=0.2).item(), 0.6, places=5)
+        self.assertEqual(self._cace(tasks, "y", 1, [1, 1, 1, 1], annotations,
+                                    prob_high=0.5, prob_low=0.5).item(), 0.0)
+
+    def test_categorical_task_per_state_and_continuous_task_value(self):
+        from torch_concepts.nn.modules.outputs import InferenceOutput
+
+        def tasks(c_logits):  # y: the softmax of the concept logits; v: the logit of c0
+            return InferenceOutput(
+                logits=AnnotatedTensor(c_logits, Annotations(labels=["y"], cardinalities=[3], types=["categorical"]),
+                                       axis=-1),
+                loc=AnnotatedTensor(c_logits[:, :1], Annotations(labels=["v"], types=["continuous"]), axis=-1),
+            )
+
+        annotations = Annotations(labels=["c0", "c1", "c2", "y", "v"], cardinalities=[1, 1, 1, 3, 1],
+                                  types=["binary", "binary", "binary", "categorical", "continuous"])
+        values = [0, 0, 1, 2, 0]
+        # c0 and c1 stay at logit -5: c2 on makes y state 2, c2 off splits y between states 0 and 1
+        per_state = self._cace(tasks, "y", 2, values, annotations.to_concept_space())
+        self.assertEqual(per_state.shape, (3,))
+        self.assertTrue(torch.allclose(per_state, torch.tensor([-0.5, -0.5, 1.0]), atol=1e-4))
+        on, off = torch.logit(torch.tensor([1.0, 0.0]), eps=1e-6).tolist()  # v is the logit set on c0
+        self.assertAlmostEqual(self._cace(tasks, "v", 0, values, annotations.to_concept_space()).item(),
+                               on - off, places=4)
+        self.assertEqual(self._cace(tasks, "v", 2, values, annotations.to_concept_space()).item(), 0.0)
+
+    def test_an_inference_engine_is_queried_and_intervened_on_by_name(self):
         from torch.distributions import Bernoulli
-        from torch_concepts.nn.modules.high.models.cbm import ConceptBottleneckModel
+        from torch_concepts import ConceptVariable, EmbeddingVariable
+        from torch_concepts.distributions import Delta
+        from torch_concepts.nn import (BayesianNetwork, DeterministicInference, LearnablePrior, ParametricCPD,
+                                       compute_cace)
+        inputs = EmbeddingVariable("input", distribution=Delta, size=2)
+        concepts = ConceptVariable("concepts", members=["a", "b", "c"], distribution=Bernoulli)
+        model = DeterministicInference(BayesianNetwork(variables=[inputs, concepts], factors=[
+            ParametricCPD(inputs, parents=[], parametrization=LearnablePrior(2)),
+            ParametricCPD(concepts, parents=[inputs], parametrization={"logits": TestInterventionCurve._wrong_layer(2, 3)}),
+        ]))
+        dataloader = [self._batch(torch.randn(8, 2), [1, 1, 1], Annotations(labels=["a", "b", "c"]))]
+        on_itself = compute_cace(model=model, layer_name=None, concepts_to_intervene_on=["b"],
+                                 dataloader=dataloader, task="b")
+        self.assertAlmostEqual(on_itself.item(), 1.0, places=5)
+        on_another = compute_cace(model=model, layer_name=None, concepts_to_intervene_on=["a"],
+                                  dataloader=dataloader, task="b")
+        self.assertEqual(on_another.item(), 0.0)
 
-        ann = Annotations(
-                labels=['c1', 'c2', 'task'],
-                cardinalities=[1, 1, 1],
-            )
-        self.model = ConceptBottleneckModel(
-            input_size=4, annotations=ann, task_names=['task']
-        )
+    def test_a_high_level_model(self):
+        from torch_concepts.nn import ConceptBottleneckModel, compute_cace
+        annotations = Annotations(labels=["c1", "c2", "task"], cardinalities=[1, 1, 1])
+        model = ConceptBottleneckModel(input_size=4, annotations=annotations, task_names=["task"]).eval()
         x = torch.randn(8, 4)
-        self.dataloader = [{"inputs": {"x": x[:4]}, "concepts": {}},
-                           {"inputs": {"x": x[4:]}, "concepts": {}}]
-
-    def test_basic(self):
-        """Returns a scalar tensor."""
-        from torch_concepts.nn.modules.metrics import compute_cace
-        result = compute_cace(
-            model=self.model,
-            dataloader=self.dataloader,
-            source_concept='c1',
-            target_concept='task',
-        )
-        self.assertEqual(result.dim(), 0)
-
-    def test_custom_v_high_v_low(self):
-        """Custom intervention values."""
-        from torch_concepts.nn.modules.metrics import compute_cace
-        result = compute_cace(
-            model=self.model,
-            dataloader=self.dataloader,
-            source_concept='c1',
-            target_concept='task',
-            prob_high=0.8,
-            prob_low=0.2,
-        )
-        self.assertEqual(result.dim(), 0)
-
-    def test_empty_dataloader_raises(self):
-        """Empty dataloader should raise ValueError."""
-        from torch_concepts.nn.modules.metrics import compute_cace
+        dataloader = [self._batch(x[:4], [1, 0, 1], annotations), self._batch(x[4:], [1, 0, 1], annotations)]
+        cace = compute_cace(model=model, layer_name=None, concepts_to_intervene_on=["c1"],
+                            dataloader=dataloader, task="task")
+        self.assertEqual(cace.dim(), 0)
+        self.assertNotEqual(cace.item(), 0.0)
+        same = compute_cace(model=model, layer_name=None, concepts_to_intervene_on=["c1"],
+                            dataloader=dataloader, task="task", prob_high=0.5, prob_low=0.5)
+        self.assertEqual(same.item(), 0.0)
         with self.assertRaises(ValueError):
-            compute_cace(
-                model=self.model,
-                dataloader=[],
-                source_concept='c1',
-                target_concept='task',
-            )
-
-    def test_identical_interventions_give_zero(self):
-        """do(C=v) vs do(C=v) should yield zero CaCE."""
-        from torch_concepts.nn.modules.metrics import compute_cace
-        result = compute_cace(
-            model=self.model,
-            dataloader=self.dataloader,
-            source_concept='c1',
-            target_concept='task',
-            prob_high=0.5,
-            prob_low=0.5,
-        )
-        self.assertTrue(torch.allclose(result, torch.tensor(0.0), atol=1e-6))
-
-    def test_restores_training_mode(self):
-        """Model training mode is restored after compute_cace."""
-        from torch_concepts.nn.modules.metrics import compute_cace
-        self.model.train()
-        compute_cace(
-            model=self.model,
-            dataloader=self.dataloader,
-            source_concept='c1',
-            target_concept='task',
-        )
-        self.assertTrue(self.model.training)
-
-    def test_keeps_eval_mode(self):
-        """If model was in eval mode, stays in eval mode."""
-        from torch_concepts.nn.modules.metrics import compute_cace
-        self.model.eval()
-        compute_cace(
-            model=self.model,
-            dataloader=self.dataloader,
-            source_concept='c1',
-            target_concept='task',
-        )
-        self.assertFalse(self.model.training)
+            compute_cace(model=model, layer_name=None, concepts_to_intervene_on=["c1"], dataloader=[], task="task")
 
 
 class TestConceptMetrics(unittest.TestCase):
@@ -1481,9 +1461,9 @@ class TestInterventionCurve(unittest.TestCase):
         c = AnnotatedTensor(torch.tensor(values).float().expand(len(x), len(values)).clone(), annotations)
         return {"inputs": {"x": x}, "concepts": {"c": c}}
 
-    def _curve(self, tasks, task, values, annotations):
+    def _curve(self, tasks, task, values, annotations, concepts=(0, 1, 2)):
         """The curve of a low-level model: a wrong concept encoder, then ``tasks`` of the concept logits;
-        ground-truth interventions on c0, then c1, then c2."""
+        ground-truth interventions on ``concepts`` in order (c0, then c1, then c2)."""
         from torch_concepts.nn import GroundTruthIntervention, UniformPolicy, intervention_curve
 
         class Model(torch.nn.Module):
@@ -1501,7 +1481,7 @@ class TestInterventionCurve(unittest.TestCase):
             intervention_strategy=lambda batch: GroundTruthIntervention(
                 torch.logit(batch["concepts"]["c"][["c0", "c1", "c2"]].tensor, eps=1e-6)),
             intervention_policy=UniformPolicy(),
-            concepts_to_intervene_on=[0, 1, 2],
+            concepts_to_intervene_on=list(concepts),
             dataloader=[self._batch(x[:5], values, annotations), self._batch(x[5:], values, annotations)],
             task=task,
         )
@@ -1510,6 +1490,35 @@ class TestInterventionCurve(unittest.TestCase):
         curve = self._curve(lambda c_logits: (c_logits, c_logits[:, 1:2]),  # y copies c1
                             "y", [1, 1, 1, 1], Annotations(labels=["c0", "c1", "c2", "y"]))
         self.assertEqual(curve, [0.0, 0.0, 1.0, 1.0])
+
+    def test_each_point_corrects_whole_categorical_concepts(self):
+        """Three categorical concepts of 3 states: point n replaces every state of n concepts, 3n outputs."""
+        from torch_concepts.nn import DoIntervention, UniformPolicy, intervention_curve
+
+        class Model(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.concept_encoder = TestInterventionCurve._wrong_layer(2, 9)
+                self.concept_encoder.out_concepts = Annotations(labels=["a", "b", "c"], cardinalities=[3, 3, 3])
+
+            def forward(self, x):  # v: the number of outputs the intervention set (logit 5 instead of -5)
+                return (self.concept_encoder(x) > 0).sum(-1, keepdim=True).float()
+
+        curve = intervention_curve(
+            model=Model(),
+            layer_name="concept_encoder",
+            intervention_strategy=DoIntervention(5.0),
+            intervention_policy=UniformPolicy(),
+            concepts_to_intervene_on=["a", "b", "c"],
+            dataloader=[self._batch(torch.randn(8, 2), [0], Annotations(labels=["v"], types=["continuous"]))],
+            task="v",
+        )
+        self.assertEqual(curve, [0.0, 9.0, 36.0, 81.0])  # squared error (3n)^2 against v = 0
+
+    def test_a_single_concept(self):
+        curve = self._curve(lambda c_logits: (c_logits, c_logits[:, 1:2]),  # y copies c1
+                            "y", [1, 1, 1, 1], Annotations(labels=["c0", "c1", "c2", "y"]), concepts=[1])
+        self.assertEqual(curve, [0.0, 1.0])
 
     def test_categorical_task_accuracy_and_continuous_task_squared_error(self):
         from torch_concepts.nn.modules.outputs import InferenceOutput

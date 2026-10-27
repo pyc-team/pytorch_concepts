@@ -432,6 +432,22 @@ class TestMidIntervention:
             out = layer(torch.randn(3, 4))
         assert torch.allclose(out, torch.full((3, 2), 0.5))
 
+    @pytest.mark.parametrize("names", [["m0", "m1", "m2"], ["g"]])  # the plate's name stands for its members
+    def test_quantile_counts_categorical_members_whole(self, names):
+        """A categorical member spans one column per state; the policy picks members, not columns."""
+        x = ConceptVariable("x", distribution=Delta, size=4)
+        g = ConceptVariable("g", members=["m0", "m1", "m2"], distribution=dist.OneHotCategorical, size=3)
+        layer = nn.Linear(4, 9)
+        pgm = BayesianNetwork(variables=[x, g], factors=[
+            ParametricCPD(variable=x, parametrization={"value": FixedPrior(torch.zeros(4))}),
+            ParametricCPD(variable=g, parametrization={"logits": layer}, parents=[x]),
+        ])
+        x_in = torch.randn(3, 4)
+        with intervention(pgm, DoIntervention(7.0), UniformPolicy(), names, quantile=0.5):
+            out = layer(x_in)
+        assert torch.equal(out[:, :6], torch.full((3, 6), 7.0))  # 1 + floor(0.5 * 2) = 2 members, every state
+        assert torch.equal(out[:, 6:], layer(x_in)[:, 6:])
+
     def test_parameter_selects_the_head(self):
         pgm = _make_plate_pgm()
         with pytest.raises(ValueError, match="parameter_to_intervene_on"):

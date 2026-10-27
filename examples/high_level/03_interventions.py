@@ -31,6 +31,7 @@ from torch_concepts.nn import (
     GroundTruthIntervention,
     UniformPolicy,
     intervention,
+    intervention_curve,
 )
 
 seed_everything(42)
@@ -94,6 +95,20 @@ with torch.no_grad():
         report("true digit", model(query=query, input=x_test))
     with intervention(model, true_color, UniformPolicy(), ["color"]):
         report("true color", model(query=query, input=x_test))
+
+# ``intervention_curve`` gives the parity accuracy after correcting 0, then 1
+# concept. One curve spans one layer: digit and color have different
+# cardinalities, so the CBM predicts them in different layers.
+curve = intervention_curve(
+    model=model,
+    layer_name=None,
+    intervention_strategy=true_digit,
+    intervention_policy=UniformPolicy(),
+    concepts_to_intervene_on=["digit"],
+    dataloader=[{"inputs": {"x": x_test}, "concepts": {"c": c_test}}],
+    task="parity",
+)
+print("intervention curve on digit: parity accuracy", " -> ".join(f"{accuracy:.3f}" for accuracy in curve))
 
 # %%
 # Do-interventions
