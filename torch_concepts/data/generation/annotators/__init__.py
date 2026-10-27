@@ -1,4 +1,4 @@
-from .CLIPAnnotator import (
+from .clip import (
     CLIPAnnotator,
     default_binary_prompt_formatter,
     default_input_getter,
