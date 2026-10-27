@@ -104,8 +104,17 @@ class InterventionPolicy(nn.Module, ABC):
             policy_scores: torch.tensor,
             sel_idx: Optional[torch.LongTensor] = None,
             quantile: float = 1.0,
-            eps: float = 1e-12
+            eps: float = 1e-12,
+            groups: Optional[torch.LongTensor] = None,
     ) -> torch.Tensor:
+        """Mask over ``policy_scores`` ``[..., F]``: 0 where the output is replaced, 1 where kept.
+
+        ``quantile`` sets how many of the selected concepts are replaced, the lowest-scoring
+        first. ``groups`` (``[K]``, ids ``0 .. G-1``) gives the concept of each selected
+        column: a concept spanning several columns (a categorical one, one column per state)
+        scores as its lowest column and is replaced whole. By default every column is its
+        own concept.
+        """
         # Arbitrary leading dims are supported by flattening them into a single
         # synthetic batch axis; the quantile/threshold logic below then runs
         # independently per leading-dim slice, exactly as it did per row for
@@ -152,28 +161,26 @@ class InterventionPolicy(nn.Module, ABC):
 
         sel = torch.gather(scores, dim=1, index=sel_idx)  # [B, K]
 
-        if K == 1:
-            # Edge case: single selected column.
+        # Rank concepts, not columns: each concept scores as its lowest column.
+        groups = (torch.arange(K, device=device) if groups is None
+                  else groups.to(device=device)).expand(B, K)
+        G = int(groups.max()) + 1
+        concept_scores = torch.full((B, G), float("inf"), device=device, dtype=sel.dtype).scatter_reduce(
+            1, groups, sel.detach(), reduce="amin")  # [B,G]
+
+        if G == 1:
+            # Edge case: single selected concept.
             # q < 1 => keep; q == 1 => replace.
-            keep_col = torch.ones((B, 1), device=device, dtype=dtype) if quantile < 1.0 \
-                else torch.zeros((B, 1), device=device, dtype=dtype)
-            mask = torch.ones((B, F), device=device, dtype=dtype)
-            mask.scatter_(1, sel_idx, keep_col)
-
-            # STE proxy (optional; keeps gradients flowing on the selected col).
-            soft_sel = self._ste_soft_sel(sel, eps, dtype)  # [B,1]
-            soft_proxy = torch.ones_like(scores)
-            soft_proxy.scatter_(1, sel_idx, soft_sel)
-            mask = (mask - soft_proxy).detach() + soft_proxy
-            return mask.reshape(*lead, F)
-
-        # K > 1: replace exactly the k lowest-scoring columns of each row. Ties are
-        # broken by position, so a policy that scores every column equally (e.g.
-        # UniformPolicy) intervenes on the first k, not on all of them.
-        k = int(max(1, min(K, 1 + math.floor(quantile * (K - 1)))))
-        order = torch.sort(sel.detach(), dim=1, stable=True).indices  # [B,K]
-        rank = torch.empty_like(order).scatter_(1, order, torch.arange(K, device=device).expand(B, K))
-        sel_mask_hard = (rank >= k).to(dtype)  # [B,K]: 0 = replaced
+            concept_mask = torch.full((B, 1), 1.0 if quantile < 1.0 else 0.0, device=device, dtype=dtype)
+        else:
+            # G > 1: replace exactly the k lowest-scoring concepts of each row. Ties are
+            # broken by position, so a policy that scores every concept equally (e.g.
+            # UniformPolicy) intervenes on the first k, not on all of them.
+            k = int(max(1, min(G, 1 + math.floor(quantile * (G - 1)))))
+            order = torch.sort(concept_scores, dim=1, stable=True).indices  # [B,G]
+            rank = torch.empty_like(order).scatter_(1, order, torch.arange(G, device=device).expand(B, G))
+            concept_mask = (rank >= k).to(dtype)  # [B,G]: 0 = replaced
+        sel_mask_hard = concept_mask.gather(1, groups)  # [B,K]: every column follows its concept
 
         mask = torch.ones((B, F), device=device, dtype=dtype)
         mask.scatter_(1, sel_idx, sel_mask_hard)
@@ -190,19 +197,21 @@ class InterventionModule(nn.Module):
     """
     Wraps a layer so that calling it returns intervened outputs.
 
-    The policy scores the selected outputs, ``quantile`` sets how many of them are
-    intervened on, and the strategy gives their new values. All other outputs are
-    returned unchanged.
+    The policy scores the selected concepts, ``quantile`` sets how many of them are
+    intervened on, and the strategy gives their new values. A concept spanning several
+    outputs (a categorical one, one output per state) is chosen and replaced whole. All
+    other outputs are returned unchanged.
 
     Args:
         original_module: Layer to intervene on.
         intervention_strategy: Computes the new values of the intervened outputs.
         intervention_policy: Scores the outputs; the lowest are intervened on first.
-        out_concepts_to_intervene_on: Outputs that may be intervened on: names
-            (if ``original_module.out_concepts`` is an :class:`Annotations`),
-            positions, or per-sample positions as a ``[*lead, K]`` nested list or
+        out_concepts_to_intervene_on: Concepts that may be intervened on: names
+            (if ``original_module.out_concepts`` is an :class:`Annotations`), one
+            ``slice(start, stop)`` of outputs per concept, positions (one output per
+            concept), or per-sample positions as a ``[*lead, K]`` nested list or
             LongTensor.
-        quantile: Fraction of the selected outputs to intervene on. Defaults to
+        quantile: Fraction of the selected concepts to intervene on. Defaults to
             1.0 (all of them).
         eps: Numerical stability constant used when building the mask.
         build_context: Optional callable returning extra kwargs for the policy
@@ -226,7 +235,7 @@ class InterventionModule(nn.Module):
             original_module: nn.Module,
             intervention_strategy: InterventionStrategy,
             intervention_policy: InterventionPolicy,
-            out_concepts_to_intervene_on: Union[List[str], List[int], List[List[int]], torch.Tensor],
+            out_concepts_to_intervene_on: Union[List[str], List[slice], List[int], List[List[int]], torch.Tensor],
             quantile: float = 1.0,
             eps: float = 1e-12,
             build_context: Optional[Callable] = None,
@@ -300,12 +309,9 @@ class InterventionModule(nn.Module):
             return torch.empty(0, dtype=torch.long)
 
         first = spec[0]
-        if isinstance(first, str):
-            original_annotations = getattr(self.original_module, "out_concepts", None)
-            if not isinstance(original_annotations, Annotations):
-                raise ValueError("To use string-based concept selection, the original module must have an "
-                                 "'out_concepts' attribute of type Annotations.")
-            return torch.tensor(original_annotations.get_slice(spec), dtype=torch.long)
+        if isinstance(first, (str, slice)):
+            return torch.tensor([i for s in self._concept_slices for i in range(s.start, s.stop)],
+                                dtype=torch.long)
         elif isinstance(first, int):
             return torch.tensor(spec, dtype=torch.long)
         elif isinstance(first, (list, tuple)):
@@ -314,10 +320,32 @@ class InterventionModule(nn.Module):
         else:
             raise ValueError(
                 "out_concepts_to_intervene_on must be a list of integers (shared "
-                "indices), a list of strings (shared names), a list of lists of "
-                "integers (per-batch-element indices, fixed K), or a LongTensor "
-                "of shape [K] or [*lead, K]."
+                "indices), a list of strings (shared names), a list of slices (one "
+                "per concept), a list of lists of integers (per-batch-element "
+                "indices, fixed K), or a LongTensor of shape [K] or [*lead, K]."
             )
+
+    @property
+    def _concept_slices(self) -> List[slice]:
+        """The outputs of each selected concept, for names or slices."""
+        spec = self.out_concepts_to_intervene_on
+        if not isinstance(spec[0], str):
+            return [slice(s.start or 0, s.stop) for s in spec]  # slice(3) starts at 0
+        original_annotations = getattr(self.original_module, "out_concepts", None)
+        if not isinstance(original_annotations, Annotations):
+            raise ValueError("To use string-based concept selection, the original module must have an "
+                             "'out_concepts' attribute of type Annotations.")
+        return [original_annotations.get_slice(name) for name in spec]
+
+    @property
+    def groups(self) -> Optional[torch.Tensor]:
+        """The concept of each position in :attr:`sel_idx`, for names or slices; ``None``
+        (one concept per position) otherwise."""
+        spec = self.out_concepts_to_intervene_on
+        if torch.is_tensor(spec) or len(spec) == 0 or not isinstance(spec[0], (str, slice)):
+            return None
+        return torch.tensor([g for g, s in enumerate(self._concept_slices) for _ in range(s.start, s.stop)],
+                            dtype=torch.long)
 
     def build_context(
             self,
@@ -401,7 +429,8 @@ class InterventionModule(nn.Module):
             policy_scores,
             sel_idx=self.sel_idx,
             quantile=self.quantile,
-            eps=self.eps
+            eps=self.eps,
+            groups=self.groups,
         ).to(dtype=original_module_predictions.dtype)
 
         if isinstance(self.intervention_strategy, ConceptInterventionStrategy):
@@ -421,7 +450,7 @@ class InterventionModule(nn.Module):
 
 def _locate(
         target: nn.Module,
-        out_concepts_to_intervene_on: Union[List[str], List[int], List[List[int]], torch.Tensor],
+        out_concepts_to_intervene_on: Union[List[str], List[slice], List[int], List[List[int]], torch.Tensor],
         parameter_to_intervene_on: Optional[str],
 ):
     """The layer ``target`` reaches, and what to intervene on in its output."""
@@ -468,10 +497,10 @@ def _locate(
                        f"{parameter_to_intervene_on!r}; available parameters are "
                        f"{sorted(parametrization.keys())}.")
 
-    # the variable's own name stands for all of its members
-    columns = [col for n in names
-               for col in variable.flat_columns(variable.members if n == variable.name else n)]
-    return parametrization[parameter_to_intervene_on], columns
+    # one slice of columns per concept; the variable's own name stands for all of its members
+    members = [m for n in names for m in (variable.members if n == variable.name else [n])]
+    concepts = [slice(columns[0], columns[-1] + 1) for columns in map(variable.flat_columns, members)]
+    return parametrization[parameter_to_intervene_on], concepts
 
 
 @contextmanager
@@ -479,7 +508,7 @@ def intervention(
         target: nn.Module,
         intervention_strategy: Optional[InterventionStrategy] = None,
         intervention_policy: Optional[InterventionPolicy] = None,
-        out_concepts_to_intervene_on: Union[List[str], List[int], List[List[int]], torch.Tensor] = None,
+        out_concepts_to_intervene_on: Union[List[str], List[slice], List[int], List[List[int]], torch.Tensor] = None,
         parameter_to_intervene_on: Optional[str] = None,
         quantile: float = 1.0,
         eps: float = 1e-12,
@@ -494,7 +523,8 @@ def intervention(
     ``target``:
 
     - a layer: ``out_concepts_to_intervene_on`` holds names (if the layer has
-      annotated ``out_concepts``) or positions of its outputs;
+      annotated ``out_concepts``), one ``slice`` of outputs per concept, or
+      positions of its outputs;
     - a :class:`ProbabilisticModel` or a high-level model: it holds names of one
       variable or of members of one plate, which also select the layer (a
       variable's name covers all its members). To use positions, pass the layer;
