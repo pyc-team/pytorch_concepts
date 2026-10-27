@@ -49,6 +49,7 @@ Datasets
    AWA2Dataset
    CUBDataset
    HAM10000Dataset
+   PneumothoraxDataset
 
 Data Modules
 ------------
@@ -68,6 +69,7 @@ Data Modules
    AWA2DataModule
    CUBDataModule
    HAM10000DataModule
+   PneumothoraxDataModule
 
 Environment
 -----------
