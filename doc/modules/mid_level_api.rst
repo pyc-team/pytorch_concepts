@@ -58,6 +58,7 @@ Probabilistic Models
    ProbabilisticModel
    BayesianNetwork
    MarkovNetwork
+   DynamicBayesianNetwork
 
 Inference
 ---------
@@ -76,6 +77,7 @@ Inference
    RejectionSampling
    ImportanceSampling
    VariationalInference
+   DynamicInference
    BaseProposal
    MutilatedNetworkProposal
 
