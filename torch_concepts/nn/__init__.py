@@ -86,6 +86,7 @@ from .modules.mid.factors.potential import ParametricPotential
 from .modules.mid.graph.probabilistic_model import ProbabilisticModel
 from .modules.mid.graph.bayesian_network import BayesianNetwork
 from .modules.mid.graph.markov_network import MarkovNetwork
+from .modules.mid.graph.plot import plot_pgm
 from .modules.mid.variable import Variable, ConceptVariable, EmbeddingVariable
 
 # Inference (mid-level)
@@ -224,6 +225,7 @@ __all__ = [
     "ProbabilisticModel",
     "BayesianNetwork",
     "MarkovNetwork",
+    "plot_pgm",
     "Variable",
     "ConceptVariable",
     "EmbeddingVariable",
