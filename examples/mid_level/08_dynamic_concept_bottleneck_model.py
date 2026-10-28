@@ -17,8 +17,7 @@ two-slice temporal Bayes net, 2TBN). ``DynamicInference`` unrolls it over the
 horizon, one copy of each variable per step (``health_0``, ``health_1``, ...),
 and runs a static engine on that network: a forward engine to train and
 forecast, or an engine that conditions on the evidence, which a query about
-an earlier step given a later one needs. The last section runs the model one
-step at a time instead, by hand.
+an earlier step given a later one needs.
 
 Data: ``WearDataset``, a fleet of machines with two components whose health,
 0 when new, drops at every step; the alarm fires when the mean health drops
