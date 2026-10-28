@@ -9,17 +9,17 @@ from the data, plus a learned *residual* ``r``, and an alarm head reads the
 alarm from the concepts::
 
     c_0 = E_c(x),   h_0 = E_h(x)
-    c_t = f(c_{t-1}) + r_t,   r_t = G([c_{t-1}, h_{t-1}]) - G([c_{t-1}, 0])
+    c_t = f(c_{t-1}) + r_t,   r_t = G([c_{t-1}, h_{t-1}])
     h_t = A [c_{t-1}, c_t, h_{t-1}] + d,   alarm_t ~ Bernoulli(sigmoid(g(c_t)))
 
 with ``c`` the health, ``h`` the hidden state, ``E_c`` and ``E_h`` the two
-encoders, ``G`` the network of the residual, ``A`` and ``d`` the hidden
-update and ``g`` the alarm head. The hidden state carries what the concepts
-miss, and acts only through ``r``, which is zero when the hidden state is
-zero: ``do(r = 0)`` gives back the mechanism alone, and every forecast and
-every alarm passes through the concepts. Every equation is a CPD of a dynamic
-Bayesian network, all of them deterministic but the alarm's;
-``08_dynamic_concept_bottleneck_model.py`` introduces the classes.
+encoders, ``G`` the MLP of the residual, ``A`` and ``d`` the hidden update
+and ``g`` the alarm head. The hidden state carries what the concepts miss,
+and acts only through ``r``: ``do(r = 0)`` gives back the mechanism alone,
+and every forecast and every alarm passes through the concepts. Every
+equation is a CPD of a dynamic Bayesian network, all of them deterministic
+but the alarm's; ``08_dynamic_concept_bottleneck_model.py`` introduces the
+classes.
 
 Data: ``WearDataset``, as in ``08_dynamic_concept_bottleneck_model.py``. A worn
 component wears faster, which the mechanism models; each machine also has a
@@ -42,11 +42,13 @@ from torch_concepts.data import WearDataset
 from torch_concepts.distributions import Delta
 from torch_concepts.env import DATA_ROOT
 from torch_concepts.nn import (
+    MLP,
     CallableConceptToConcept,
     DeterministicInference,
     DynamicBayesianNetwork,
     DynamicInference,
     FixedPrior,
+    LinearConceptToConcept,
     ParametricCPD,
 )
 
@@ -55,10 +57,7 @@ seed_everything(42)
 # %%
 # Data
 # ----
-# One machine per sample: a window of ``W`` steps of ``D`` channels, the two
-# operating conditions and then the sensor readings, and the health of its two
-# components and the alarm at the window's last step and at the ``H`` steps
-# after it, ``(n, H + 1, 3)``.
+# As in ``08_dynamic_concept_bottleneck_model.py``.
 dataset = WearDataset(n_gen=1500, root=str(DATA_ROOT / "wear"))
 W, H, D = dataset.window, dataset.horizon, dataset.input_data.shape[-1]
 x = dataset.input_data
@@ -71,15 +70,14 @@ y_train, y_test = y[:1000], y[1000:]
 # %%
 # Variables
 # ---------
-# All deterministic (``Delta``) but the alarm. The health, the mechanism ``f``
-# and the residual ``r`` are plates of the two components; member names are
-# unique within the model, so each plate prefixes them with its own name.
+# All deterministic (``Delta``) but the alarm. The mechanism ``f`` and the
+# residual ``r`` have the width of the health, one entry per component.
 sensors = EmbeddingVariable("sensors", distribution=Delta, shape=(W, D))
 health = ConceptVariable("health", members=["health_A", "health_B"], distribution=Delta)
 hidden = EmbeddingVariable("hidden", distribution=Delta, size=8)
 alarm = ConceptVariable("alarm", distribution=Bernoulli)
-f = ConceptVariable("f", members=["f_A", "f_B"], distribution=Delta)
-r = ConceptVariable("r", members=["r_A", "r_B"], distribution=Delta)
+f = ConceptVariable("f", distribution=Delta, size=2)
+r = ConceptVariable("r", distribution=Delta, size=2)
 
 # %%
 # Model
@@ -105,33 +103,20 @@ print(
 )
 
 
-class Residual(torch.nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.G = torch.nn.Sequential(
-            torch.nn.Linear(2 + 8, 64), torch.nn.GELU(), torch.nn.Linear(64, 2)
-        )
-
-    def forward(self, health_hidden):
-        # r = G([c, h]) - G([c, 0]): zero when the hidden state is
-        no_hidden = torch.zeros_like(health_hidden[..., 2:])
-        health_only = torch.cat([health_hidden[..., :2], no_hidden], -1)
-        return self.G(health_hidden) - self.G(health_only)
-
-
 class Encoder(torch.nn.Module):
-    def __init__(self, out, width=32):
+    def __init__(self, out):
         super().__init__()
-        self.gru = torch.nn.GRU(D, width, batch_first=True)
-        self.head = torch.nn.Linear(width, out)
+        self.gru = torch.nn.GRU(D, 32, batch_first=True)
+        self.head = torch.nn.Linear(32, out)
 
     def forward(self, window):
         return self.head(self.gru(window)[0][..., -1, :])  # the last step's state
 
 
 wear = CallableConceptToConcept(lambda c: c - a * torch.relu(-c) - b, use_bias=False)
+alarm_head = LinearConceptToConcept(in_concepts=2, out_concepts=1)
 alarm_cpd = ParametricCPD(
-    alarm, parents=[health], parametrization={"logits": torch.nn.Linear(2, 1)}
+    alarm, parents=[health], parametrization={"logits": alarm_head}
 )
 model = DynamicBayesianNetwork(
     variables=[sensors, health, hidden, alarm, f, r],
@@ -146,7 +131,7 @@ model = DynamicBayesianNetwork(
         ParametricCPD(
             r,
             parents=[health.previous(), hidden.previous()],
-            parametrization=Residual(),
+            parametrization=MLP(2 + 8, 64, 2, activation="gelu"),
         ),
         ParametricCPD(
             health,
@@ -179,7 +164,7 @@ engine = DynamicInference(model, DeterministicInference, p_int=1.0)
 optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 health_loss_fn = torch.nn.MSELoss()
 alarm_loss_fn = torch.nn.BCEWithLogitsLoss()
-for epoch in range(300):
+for epoch in range(600):
     optimizer.zero_grad()
     teacher = engine.query(
         {"health": c_train, "alarm": None}, evidence={"sensors": x_train}, horizon=H
@@ -204,8 +189,8 @@ for epoch in range(300):
 # with the residual clamped to zero at every step (``r`` exists at steps 1
 # to ``H``, so its evidence stacks ``H`` steps); and the full model with the
 # true health given at ``t = 4``, from which the forecast and the alarm
-# continue. The residual adds each machine's load, which the fitted
-# mechanism does not know.
+# continue (at ``t = 4`` the query still reports the prediction). The
+# residual adds each machine's load, which the fitted mechanism does not know.
 queries = {  # label: (query, evidence)
     "full model": ({"health": None, "alarm": None}, {"sensors": x_test}),
     "mechanism alone, do(r = 0)": (
