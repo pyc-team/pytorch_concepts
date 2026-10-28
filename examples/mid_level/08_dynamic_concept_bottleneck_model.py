@@ -11,16 +11,16 @@ reads the alarm from the health at every step::
     health_t ~ Normal(f(health_{t-1}), sigma),   t = 1, ..., H
     alarm_t  ~ Bernoulli(sigmoid(g(health_t))),  t = 0, ..., H
 
-The model is a dynamic Bayesian network (DBN): the CPDs of step 0, and the
-CPDs of a step ``t >= 1`` given step ``t - 1``, the same at every step (a
-two-slice temporal Bayes net, 2TBN). ``DynamicInference`` unrolls it over the
-horizon, one copy of each variable per step (``health_0``, ``health_1``, ...),
-and runs a static engine on that network: a forward engine to train and
-forecast, or an engine that conditions on the evidence, which a query about
-an earlier step given a later one needs.
+The model is a dynamic Bayesian network (DBN): the CPDs of step 0, plus the
+CPDs of a step given the step before, the same at every step (a two-slice
+temporal Bayes net, 2TBN). ``DynamicInference`` unrolls the DBN over the
+horizon, with one copy of each variable per step (``health_0``,
+``health_1``, ...), and runs a static engine on the unrolled network: a
+forward engine to train and forecast, and ``RejectionSampling`` to condition
+on a later step.
 
-Data: ``WearDataset``, a fleet of machines with two components whose health,
-0 when new, drops at every step; the alarm fires when the mean health drops
+Data: ``WearDataset``, a fleet of machines with two components whose health is
+0 when new and drops at every step; the alarm fires when the mean health drops
 below a threshold. As in N-CMAPSS, the readings depend on the health through
 operating conditions that drift over time.
 
@@ -57,10 +57,9 @@ seed_everything(42)
 # %%
 # Data
 # ----
-# One machine per sample: a window of ``W`` steps of ``D`` channels, the two
-# operating conditions and then the sensor readings, and the health of its two
-# components and the alarm at the window's last step and at the ``H`` steps
-# after it, ``(n, H + 1, 3)``.
+# Each sample is one machine: a window of ``W`` steps with ``D`` channels, and
+# the health of its two components and the alarm from the last step of the
+# window to ``H`` steps after it, ``(n, H + 1, 3)``.
 dataset = WearDataset(n_gen=1500, root=str(DATA_ROOT / "wear"))
 W, H, D = dataset.window, dataset.horizon, dataset.input_data.shape[-1]
 x = dataset.input_data
@@ -73,7 +72,7 @@ y_train, y_test = y[:1000], y[1000:]
 # %%
 # Variables
 # ---------
-# Every variable once, whatever the steps at which it exists.
+# Each variable is declared once; the DBN makes one copy per step.
 sensors = EmbeddingVariable("sensors", distribution=Delta, shape=(W, D))
 health = ConceptVariable(
     "health", members=["health_A", "health_B"], distribution=Normal
@@ -83,13 +82,12 @@ alarm = ConceptVariable("alarm", distribution=Bernoulli)
 # %%
 # Model
 # -----
-# ``initial`` holds the CPDs of step 0 and ``transition`` those of a step
-# ``t >= 1``, where ``health.previous()`` is the health at step ``t - 1`` and
-# every other parent is at step ``t``. The health is read at the step before,
-# so it is the *interface*: what each step passes to the next. The alarm CPD
-# is one object in both lists, so every step uses the same alarm head.
-# ``GlobalScale`` with ``learnable=False`` keeps ``sigma`` fixed. The window is
-# always observed, so its prior is a placeholder.
+# ``initial`` holds the CPDs of step 0 and ``transition`` those of every later
+# step. In a transition CPD, ``health.previous()`` is the health at step
+# ``t - 1``; the other parents are at step ``t``. The alarm CPD is the same
+# object in both lists, so every step uses one alarm head. ``GlobalScale`` with
+# ``learnable=False`` keeps ``sigma`` fixed, and the window is always observed,
+# so its prior is a placeholder.
 encoder = torch.nn.Sequential(
     torch.nn.Flatten(-2),
     MLPEmbeddingToConcept(
@@ -127,12 +125,11 @@ engine = DynamicInference(model, DeterministicInference, p_int=1.0)
 # %%
 # Training
 # --------
-# A name in a query covers every step at which the variable exists, and its
-# tensor stacks those steps before the event: ``c_train`` is ``(n, H + 1, 2)``,
-# and so is the predicted health. The sensors exist at step 0 only, so their
-# tensor has no time axis. With ``p_int=1`` the true health replaces the
-# prediction before the children of the health read it, and the query still
-# reports the prediction (teacher forcing).
+# A name in the query covers all the steps of its variable: ``c_train`` is
+# ``(n, H + 1, 2)``, and so is the predicted health. The sensors exist only at
+# step 0, so their tensor has no time axis. With ``p_int=1`` the children of
+# the health read the true health, while the query reports the prediction
+# (teacher forcing).
 optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 health_loss_fn = torch.nn.MSELoss()
 alarm_loss_fn = torch.nn.BCEWithLogitsLoss()
@@ -151,8 +148,8 @@ for epoch in range(1000):
 # Evaluation
 # ----------
 # The forecast from the window alone. The error grows with the horizon: the
-# transition reads only the health of the step before, and each machine also
-# has a load, which the sensors show but no concept records.
+# transition reads only the health of the step before, and each machine has a
+# load that no concept records.
 with torch.no_grad():
     out = engine.query(["health", "alarm"], evidence={"sensors": x_test}, horizon=H)
 rmse = ((out.loc["health"] - c_test) ** 2).mean((0, 2)).sqrt()
@@ -164,13 +161,11 @@ print(f"alarm accuracy at t = 0, 4, 8, 12:  {accuracy[::4].numpy().round(3)}")
 # Evidence at a later step
 # ------------------------
 # ``DeterministicInference`` propagates the ``loc`` of the health and ignores
-# its noise. ``RejectionSampling`` samples the health: for each window it draws
-# 2000 trajectories, keeps those that match the evidence, and returns the
-# fraction of them with an alarm at ``t = 4``. Since the health is noisy,
-# observing the alarm at the last step changes the belief about an earlier
-# step. Such a *smoothing* query needs an engine that conditions on the
-# evidence. The key ``("alarm", H)`` is the alarm at step ``H`` only. The
-# windows are those whose forecast leaves that alarm uncertain.
+# its noise. ``RejectionSampling`` draws 2000 trajectories per window and keeps
+# those that match the evidence. The health is noisy, so observing the alarm at
+# step ``H`` changes the belief about the alarm at step 4 (a *smoothing*
+# query). The key ``("alarm", H)`` is the alarm at step ``H`` only; the windows
+# are those whose forecast leaves that alarm uncertain.
 p_last = torch.sigmoid(out.logits["alarm"][:, H]).flatten()
 x_open = x_test[(p_last > 0.2) & (p_last < 0.8)]
 ones, zeros = torch.ones(len(x_open), 1), torch.zeros(len(x_open), 1)
