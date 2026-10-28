@@ -18,8 +18,7 @@ horizon, one copy of each variable per step (``health_0``, ``health_1``, ...),
 and runs the engine of a static model on that network: a forward engine to
 train and forecast, or an engine that conditions on the evidence, which a
 query about an earlier step given a later one needs. The last section runs
-the network of step 0 and that of a transition one step at a time instead,
-by hand.
+the model one step at a time instead, by hand.
 
 Data: ``WearDataset``, a fleet of machines with two components whose health,
 0 when new, drops at every step; the alarm fires when the mean health drops
@@ -188,20 +187,19 @@ for label, given in evidence.items():
 # %%
 # Step by step, by hand
 # ---------------------
-# ``model.initial`` holds a static network per initial step, here step 0 only,
-# and ``model.transition`` the static network of a transition, which reads the
-# step before through the root ``health_prev``. A forward engine on them runs
-# the model one step at a time, with no horizon fixed in advance, and the
-# carried health can be detached to truncate the gradient. The engines take
-# plain tensors as evidence, so ``.tensor`` drops the labels of the carried
-# health. The forecast is the one of ``engine`` above.
-first = DeterministicInference(model.initial[0])
-step = DeterministicInference(model.transition)
+# As a ``BayesianNetwork``, ``model`` is the network of steps 0 and 1, with
+# names per step (``health_0``, ``health_1``). Given the health at step 0, a
+# forward engine stops there, so a query of step 1 runs one transition from
+# that health: the model runs one step at a time, with no horizon fixed in
+# advance, and the carried health can be detached to truncate the gradient.
+# The engines take plain tensors as evidence, so ``.tensor`` drops the labels
+# of the carried health. The forecast is the one of ``engine`` above.
+step = DeterministicInference(model)
 with torch.no_grad():
-    outs = [first.query(["health", "alarm"], evidence={"sensors": x_test})]
+    out_0 = step.query(["health_0"], evidence={"sensors_0": x_test})
+    health = [out_0.loc["health_0"].tensor]
     for t in range(1, H + 1):
-        state = outs[-1].loc["health"].tensor
-        outs.append(step.query(["health", "alarm"], evidence={"health_prev": state}))
-by_hand = torch.stack([o.loc["health"].tensor for o in outs], 1)
-same = torch.allclose(by_hand, out.loc["health"].tensor)
+        out_t = step.query(["health_1"], evidence={"health_0": health[-1]})
+        health.append(out_t.loc["health_1"].tensor)
+same = torch.allclose(torch.stack(health, 1), out.loc["health"].tensor)
 print(f"\nstep by step, by hand: same forecast as unrolled: {same}")

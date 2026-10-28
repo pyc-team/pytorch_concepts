@@ -1,11 +1,11 @@
-"""DynamicBayesianNetwork: ``previous()``, the initial and transition networks,
-the unrolled network, a model of order 2, the DBN as the network of its first
-steps, and the errors of a malformed model.
+"""DynamicBayesianNetwork: ``previous()``, the unrolled network, a model of
+order 2, the DBN as the network of its first steps, and the errors of a
+malformed model.
 
 The model has a window ``x`` at step 0 only; a plate ``c``, a hidden state ``h``
 and a binary ``y`` at every step, with one CPD of ``y`` in both lists; and a
-plate ``u`` from step 1 on. A binary plate ``z`` observed at every step runs the
-engines that unpack the plates.
+plate ``u`` from step 1 on. A binary plate ``z``, with an observation ``o`` at
+every step, runs the engines that unpack the plates.
 """
 import pytest
 import torch
@@ -54,14 +54,15 @@ def test_previous_is_the_variable_one_step_earlier():
         p = v.previous()
         assert type(p) is type(v)
         assert (p.name, p.distribution, p.members, p.shape) == (v.name, v.distribution, v.members, v.shape)
-        assert p._previous_of is v
 
 
-def test_previous_takes_a_variable_or_a_plate():
+def test_previous_takes_a_variable_or_a_plate_and_a_lag_of_at_least_1():
     c = _plate("c")
     for handle in (c.previous(), c.member("c_a")):
         with pytest.raises(ValueError, match="previous"):
             handle.previous()
+    with pytest.raises(ValueError, match="lag"):
+        c.previous(0)
 
 
 def test_a_member_of_the_step_before_as_a_parent():
@@ -71,46 +72,24 @@ def test_a_member_of_the_step_before_as_a_parent():
         initial=[_cpd(x), _cpd(c, x)],
         transition=[_cpd(c, c.previous()), _cpd(d, c.previous().member("c_a"))],
     )
-    parent = dbn.transition.factors["d"].parents[0]
-    assert parent.name == "c_a_prev" and parent.plate is dbn.transition.variables["c_prev"]
     bn = dbn.unroll(2)
     parent = bn.factors["d_2"].parents[0]
     assert parent.name == "c_a_1" and parent.plate is bn.variables["c_1"]
 
 
-# ------------------------------------------------- initial and transition ----
-
-def test_initial_and_transition_networks():
-    dbn = _model()
-    assert dbn.interface == ["c", "h"]
-    assert list(dbn.initial[0].variables) == ["x", "c", "h", "y"]
-    assert list(dbn.transition.variables) == ["c_prev", "h_prev", "c", "h", "y", "u"]
-    assert [p.name for p in dbn.transition.factors["c"].parents] == ["c_prev", "u"]
-
-
-def test_the_step_before_is_an_observed_root_of_the_transition():
-    transition = _model().transition
-    c_prev, cpd = transition.variables["c_prev"], transition.factors["c_prev"]
-    assert c_prev.members == ["c_a_prev", "c_b_prev"]
-    assert type(c_prev) is ConceptVariable and type(transition.variables["h_prev"]) is EmbeddingVariable
-    assert c_prev.distribution is Delta
-    assert cpd.is_root and isinstance(cpd.parametrization["value"], FixedPrior)
-
-
-def test_a_stochastic_interface_variable_enters_the_transition_as_a_delta():
-    z = ConceptVariable("z", distribution=dist.Bernoulli)
+def test_each_step_keeps_the_options_of_its_variable():
+    z = ConceptVariable("z", distribution=dist.RelaxedBernoulli, dist_kwargs={"temperature": 0.5})
     dbn = DynamicBayesianNetwork(
         variables=[z],
         initial=[ParametricCPD(z, parametrization={"logits": LearnablePrior(1)})],
         transition=[ParametricCPD(z, parents=[z.previous()], parametrization={"logits": nn.Linear(1, 1)})],
     )
-    assert dbn.transition.variables["z_prev"].distribution is Delta
+    assert dbn.variables["z_1"].dist_kwargs == {"temperature": 0.5}
 
 
 def test_the_steps_share_their_modules():
     dbn = _model()
-    initial, transition = dbn.initial[0].factors["y"], dbn.transition.factors["y"]
-    assert initial.parametrization["logits"] is transition.parametrization["logits"]
+    assert dbn.factors["y_0"].parametrization["logits"] is dbn.factors["y_1"].parametrization["logits"]
     assert len(list(dbn.parameters())) == 12  # six linear maps, the head of y counted once
 
 
@@ -129,57 +108,41 @@ def test_unroll():
         dbn.unroll(0)
 
 
-def test_previous_with_a_lag():
-    c = _plate("c")
-    p = c.previous(2)
-    assert p._previous_of is c and p._lag == 2 and c.previous()._lag == 1
-    with pytest.raises(ValueError, match="lag"):
-        c.previous(0)
-
-
 def _order_two():
-    """c_0 = e(x); c_1 = f1(c_0); c_t = f2(c_{t-1}, c_{t-2}) for t >= 2."""
+    """c_0 = e(x); c_1 = f1(c_0); c_t = f2(trunk(c_{t-1} + c_{t-2})) for t >= 2."""
     torch.manual_seed(0)
     x, c = EmbeddingVariable("x", distribution=Delta, size=3), _plate("c")
-    e, f1, f2 = nn.Linear(3, 2), nn.Linear(2, 2), nn.Linear(4, 2)
-    dbn = DynamicBayesianNetwork(
+    return DynamicBayesianNetwork(
         [x, c],
-        initial=[
-            [_cpd(x), ParametricCPD(c, parents=[x], parametrization=e)],
-            [ParametricCPD(c, parents=[c.previous()], parametrization=f1)],
-        ],
-        transition=[
-            ParametricCPD(c, parents=[c.previous(), c.previous(2)], parametrization=f2)
-        ],
+        initial=[[_cpd(x), _cpd(c, x)], [_cpd(c, c.previous())]],
+        transition=[ParametricCPD(  # sums its parents by position: they are renamed at every step
+            c, parents=[c.previous(), c.previous(2)], parametrization=nn.Linear(3, 2), trunk=nn.Linear(2, 3),
+            aggregate=lambda parents: sum(parents.values()))],
     )
-    return dbn, (e, f1, f2)
 
 
-def test_order_two_networks():
-    dbn, _ = _order_two()
-    assert len(dbn.initial) == 2 and dbn.interface == ["c"]
-    assert list(dbn.initial[0].variables) == ["x", "c"]
-    assert list(dbn.initial[1].variables) == ["c_prev", "c"]
-    assert list(dbn.transition.variables) == ["c_prev", "c_prev2", "c"]
-    assert dbn.transition.variables["c_prev2"].members == ["c_a_prev2", "c_b_prev2"]
-    assert [p.name for p in dbn.transition.factors["c"].parents] == ["c_prev", "c_prev2"]
-    assert dbn.slices("c", 3) == range(0, 4)
-    assert dbn.slices("x", 3) == range(0, 1)
+def test_order_two():
+    dbn = _order_two()
+    assert dbn.steps("c", 3) == range(0, 4)
+    assert dbn.steps("x", 3) == range(0, 1)
     bn = dbn.unroll(3)
     assert [p.name for p in bn.factors["c_1"].parents] == ["c_0"]
     assert [p.name for p in bn.factors["c_2"].parents] == ["c_1", "c_0"]
     assert [p.name for p in bn.factors["c_3"].parents] == ["c_2", "c_1"]
-    assert len(list(dbn.parameters())) == 6
+    assert {id(p) for p in bn.parameters()} == {id(p) for p in dbn.parameters()}
+    assert len(list(dbn.parameters())) == 8
 
 
 def test_order_two_matches_the_recursion():
-    dbn, (e, f1, f2) = _order_two()
+    dbn = _order_two()
+    e, f1, f2 = (dbn.factors[f"c_{t}"].parametrization["value"] for t in range(3))
+    trunk = dbn.factors["c_2"].trunk
     xs = torch.randn(5, 3)
     out = DynamicInference(dbn).query(["c"], {"x": xs}, horizon=4).value["c"].tensor
     cs = [e(xs)]
     cs.append(f1(cs[0]))
     for t in range(2, 5):
-        cs.append(f2(torch.cat([cs[t - 1], cs[t - 2]], -1)))
+        cs.append(f2(trunk(cs[t - 1] + cs[t - 2])))
     assert out.shape == (5, 5, 2) and torch.allclose(out, torch.stack(cs, 1))
 
 
@@ -204,15 +167,7 @@ def test_order_two_errors():
         DynamicBayesianNetwork([x, c], [step_0, [_cpd(c, c.previous()), _cpd(c)]], kernel)
 
 
-def test_slices():
-    dbn = _model()
-    assert dbn.slices("x", 4) == range(0, 1)
-    assert dbn.slices("c_a", 4) == range(0, 5)
-    assert dbn.slices("y", 4) == range(0, 5)
-    assert dbn.slices("u", 4) == range(1, 5)
-
-
-def test_slices_at_order_two():
+def test_steps():
     # x at step 0 only, c at every step, w at steps 0 and 1 only, v from step 1 on.
     x, c, w, v = EmbeddingVariable("x", distribution=Delta, size=3), _plate("c"), _plate("w"), _plate("v")
     dbn = DynamicBayesianNetwork(
@@ -220,9 +175,9 @@ def test_slices_at_order_two():
         initial=[[_cpd(x), _cpd(c, x), _cpd(w, c)], [_cpd(c, c.previous()), _cpd(w, c), _cpd(v, c)]],
         transition=[_cpd(c, c.previous(), c.previous(2)), _cpd(v, c)],
     )
-    assert [dbn.slices(n, 4) for n in ("x", "c", "w", "v", "v_a")] == [
+    assert [dbn.steps(n, 4) for n in ("x", "c", "w", "v", "v_a")] == [
         range(0, 1), range(0, 5), range(0, 2), range(1, 5), range(1, 5)]
-    assert dbn.slices("w", 1) == range(0, 2) and dbn.slices("v", 1) == range(1, 2)
+    assert dbn.steps("w", 1) == range(0, 2) and dbn.steps("v", 1) == range(1, 2)
     assert list(dbn.unroll(3).variables) == [
         "x_0", "c_0", "w_0", "c_1", "w_1", "v_1", "c_2", "v_2", "c_3", "v_3"]
 
@@ -233,29 +188,37 @@ def _parents(bn):
     return {name: [p.name for p in cpd.parents] for name, cpd in bn.factors.items()}
 
 
-@pytest.mark.parametrize("model, names", [
-    (_model, ["x_0", "c_0", "h_0", "y_0", "c_1", "h_1", "y_1", "u_1"]),
-    (lambda: _order_two()[0], ["x_0", "c_0", "c_1", "c_2"]),  # order 2: steps 0, 1 and 2
+@pytest.mark.parametrize("model, S, names", [
+    (_model, 1, ["x_0", "c_0", "h_0", "y_0", "c_1", "h_1", "y_1", "u_1"]),
+    (_order_two, 2, ["x_0", "c_0", "c_1", "c_2"]),  # order 2: steps 0, 1 and 2
 ])
-def test_the_dbn_is_the_network_of_its_first_steps(model, names):
+def test_the_dbn_is_the_network_of_its_first_steps(model, S, names):
     dbn = model()
-    first = dbn.unroll(len(dbn.initial))
+    first = dbn.unroll(S)
     assert isinstance(dbn, BayesianNetwork)
     assert list(dbn.variables) == list(first.variables) == names
     assert _parents(dbn) == _parents(first)
     assert [v.name for v in dbn.sorted_variables] == [v.name for v in first.sorted_variables]
-    # Its names are per step; the names as passed are those of slices() and DynamicInference.
+    # Its names are per step; the names as passed are those of steps() and DynamicInference.
     assert dbn.resolve("c_a_1") is dbn.variables["c_1"] and "c" not in dbn.queryable_names
 
 
-@pytest.mark.parametrize("model", [_model, lambda: _order_two()[0]])
-def test_a_static_engine_on_the_dbn_gives_its_first_steps(model):
-    dbn, x = model(), torch.randn(5, 3)
-    steps = range(len(dbn.initial) + 1)
+@pytest.mark.parametrize("model, S", [(_model, 1), (_order_two, 2)])
+def test_a_static_engine_on_the_dbn_gives_its_first_steps(model, S):
+    dbn, x, steps = model(), torch.randn(5, 3), range(S + 1)
     static = DeterministicInference(dbn).query([f"c_{t}" for t in steps], {"x_0": x})
-    dynamic = DynamicInference(dbn).query(["c"], {"x": x}, horizon=len(dbn.initial))
+    dynamic = DynamicInference(dbn).query(["c"], {"x": x}, horizon=S)
     assert torch.allclose(torch.stack([static.value[f"c_{t}"].tensor for t in steps], 1),
                           dynamic.value["c"].tensor)
+
+
+def test_a_forward_engine_runs_one_step_from_the_steps_before():
+    # The evidence on c_1 and c_0 stops the engine there: c_2 is the transition from them.
+    dbn = _order_two()
+    f2, trunk = dbn.factors["c_2"].parametrization["value"], dbn.factors["c_2"].trunk
+    c_1, c_0 = torch.randn(5, 2), torch.randn(5, 2)
+    out = DeterministicInference(dbn).query(["c_2"], {"c_1": c_1, "c_0": c_0})
+    assert torch.allclose(out.value["c_2"].tensor, f2(trunk(c_1 + c_0)))
 
 
 def _plated_chain():
@@ -286,9 +249,6 @@ def test_an_engine_that_unpacks_the_plates_runs_on_the_dbn(engine, kwargs):
 def test_the_state_dict_is_that_of_the_first_steps():
     dbn = _model()
     assert list(dbn.state_dict()) == list(dbn.unroll(1).state_dict())
-    # parameters(): those of the networks of the steps, the same objects in the same order
-    nets = [*dbn.initial, dbn.transition]
-    assert [id(p) for p in dbn.parameters()] == list(dict.fromkeys(id(p) for n in nets for p in n.parameters()))
     with torch.no_grad():
         for p in dbn.parameters():
             p.add_(1.0)
@@ -299,7 +259,7 @@ def test_the_state_dict_is_that_of_the_first_steps():
 
 @pytest.mark.parametrize("model, name, steps", [
     (_model, "c_0", [0]), (_model, "c_1", [1, 2, 3]),
-    (lambda: _order_two()[0], "c_1", [1]), (lambda: _order_two()[0], "c_2", [2, 3]),
+    (_order_two, "c_1", [1]), (_order_two, "c_2", [2, 3]),
 ])
 def test_an_intervention_acts_at_the_steps_of_its_cpd(model, name, steps):
     # The intervention hooks the module of the CPD that the name has in the network of the first
@@ -320,16 +280,6 @@ def test_an_intervention_on_a_cpd_in_both_lists_acts_at_every_step():
     assert (y == 0).all()
 
 
-def test_the_network_of_a_step_runs_after_to():
-    # The evidence sets its roots of the step before, whole or by member: by member, the engine
-    # reads the placeholder prior of the rest, which .to() reaches too.
-    dbn, d = _model().double(), torch.float64
-    for evidence in ({"c_prev": torch.randn(5, 2, dtype=d)}, {"c_a_prev": torch.randn(5, 1, dtype=d)}):
-        out = DeterministicInference(dbn.transition).query(
-            ["c"], {**evidence, "h_prev": torch.randn(5, 2, dtype=d)})
-        assert out.value["c"].tensor.dtype == d
-
-
 def test_plot_pgm_draws_the_network_of_the_first_steps(tmp_path):
     pytest.importorskip("matplotlib", reason="plot_pgm needs matplotlib")
     path = tmp_path / "dbn.pdf"
@@ -338,19 +288,19 @@ def test_plot_pgm_draws_the_network_of_the_first_steps(tmp_path):
 
 
 def test_member_names_that_look_like_steps():
-    # The members of b are b_0 and b_1. Per step, b_1 is b at step 1; slices() and the keys of
+    # The members of b are b_0 and b_1. Per step, b_1 is b at step 1; steps() and the keys of
     # DynamicInference take the names as passed, where b_1 is a member of b.
     torch.manual_seed(0)
     x = EmbeddingVariable("x", distribution=Delta, size=3)
     b = ConceptVariable("b", members=["b_0", "b_1"], distribution=Delta)
     dbn = DynamicBayesianNetwork([x, b], initial=[_cpd(x), _cpd(b, x)], transition=[_cpd(b, b.previous())])
-    assert dbn.resolve("b_1") is dbn.variables["b_1"] and dbn.slices("b_1", 3) == range(0, 4)
+    assert dbn.resolve("b_1") is dbn.variables["b_1"] and dbn.steps("b_1", 3) == range(0, 4)
     engine, xs = DynamicInference(dbn), torch.randn(5, 3)
     whole = engine.query(["b"], {"x": xs}, horizon=3).value["b"].tensor
     member = engine.query({"b_1": torch.zeros(5, 4, 1)}, {"x": xs}, horizon=3).value
     assert member.annotations.labels == ["b_1"] and torch.allclose(member.tensor, whole[..., 1:])
     # b_0 given at step 1, which step 2 reads.
-    e, f = (net.factors["b"].parametrization["value"] for net in (dbn.initial[0], dbn.transition))
+    e, f = (dbn.factors[name].parametrization["value"] for name in ("b_0", "b_1"))
     b_1 = torch.cat([torch.zeros(5, 1), f(e(xs))[:, 1:]], -1)
     out = engine.query([("b", 2)], {"x": xs, ("b_0", 1): torch.zeros(5, 1)}, horizon=3)
     assert torch.allclose(out.value["b"].tensor[:, 0], f(b_1))
@@ -373,34 +323,23 @@ def test_previous_parent_in_an_initial_cpd_raises():
 
 def test_cpd_of_another_variable_with_the_same_name_raises():
     c = _plate("c")
-    with pytest.raises(ValueError, match="not the one registered"):
+    with pytest.raises(ValueError, match="not one of `variables`"):
         DynamicBayesianNetwork([c], initial=[_cpd(c)], transition=[_cpd(_plate("c"), c.previous())])
 
 
 @pytest.mark.parametrize("parent", [
-    lambda: _plate("c").previous(),  # another plate called c
+    lambda: _plate("d"),  # a variable not in `variables`
+    lambda: _plate("u"),  # another plate called u
+    lambda: _plate("u").member("u_a"),  # a member of it
+    lambda: _plate("c").previous(),  # previous() of another plate called c
     lambda: _plate("c").previous().member("c_a"),  # a member of it
-    lambda: _plate("d").previous(),  # a variable not in `variables`
+    lambda: _plate("d").previous(),  # previous() of a variable not in `variables`
 ])
-def test_previous_of_a_variable_that_is_not_registered_raises(parent):
-    c = _plate("c")
-    with pytest.raises(ValueError, match=r"comes from previous\(\) of a variable that is not the one"):
-        DynamicBayesianNetwork([c], initial=[_cpd(c)], transition=[_cpd(c, parent())])
-
-
-def test_a_parent_that_is_not_registered_raises():
-    # The network of a step checks the parents at that step, so the DBN builds it before the
-    # network of its first steps, which finds them by name.
-    c, d = _plate("c"), _plate("d")
-    with pytest.raises(ValueError, match="'d' not in variables list"):
-        DynamicBayesianNetwork([c], initial=[_cpd(c)], transition=[_cpd(c, c.previous(), d)])
-
-
-def test_a_parent_of_another_variable_with_the_same_name_raises():
+def test_a_parent_that_is_not_registered_raises(parent):
     c, u = _plate("c"), _plate("u")
-    with pytest.raises(ValueError, match="different Variable instance"):
+    with pytest.raises(ValueError, match="is not one of `variables`"):
         DynamicBayesianNetwork([c, u], initial=[_cpd(c), _cpd(u)],
-                               transition=[_cpd(u), _cpd(c, c.previous(), _plate("u"))])
+                               transition=[_cpd(u), _cpd(c, c.previous(), parent())])
 
 
 def test_variable_without_a_cpd_raises():
@@ -411,8 +350,12 @@ def test_variable_without_a_cpd_raises():
 
 def test_variable_of_step_0_as_a_parent_in_a_transition_cpd_raises():
     x, c = _plate("x"), _plate("c")
-    with pytest.raises(ValueError, match="'x' has no CPD in `transition`"):
+    with pytest.raises(ValueError, match=r"reads 'x' at step 1 \(lag 0\)"):
         DynamicBayesianNetwork([x, c], initial=[_cpd(x), _cpd(c, x)], transition=[_cpd(c, c.previous(), x)])
+    # From step 2 on, x.previous() reads x at step 1, where x does not exist.
+    with pytest.raises(ValueError, match="'x' at step 1"):
+        DynamicBayesianNetwork([x, c], initial=[_cpd(x), _cpd(c, x)],
+                               transition=[_cpd(c, c.previous(), x.previous())])
 
 
 def test_two_cpds_of_a_variable_in_one_list_raise():
@@ -434,13 +377,6 @@ def test_cycle_within_a_step_raises():
 def test_duplicate_names_raise(variables, match):
     with pytest.raises(ValueError, match=match):
         DynamicBayesianNetwork(variables, initial=[], transition=[])
-
-
-def test_a_name_taken_by_a_copy_of_the_step_before_raises():
-    c, c_prev = _plate("c"), _plate("c_prev")
-    with pytest.raises(ValueError, match="taken"):
-        DynamicBayesianNetwork([c, c_prev], initial=[_cpd(c), _cpd(c_prev)],
-                               transition=[_cpd(c, c.previous()), _cpd(c_prev, c.previous())])
 
 
 def test_a_factor_that_is_not_a_cpd_raises():

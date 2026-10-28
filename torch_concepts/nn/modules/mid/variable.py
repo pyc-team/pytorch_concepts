@@ -480,7 +480,7 @@ class Variable(ABC):
     def previous(self, lag: int = 1) -> "Variable":
         """A handle to this variable ``lag`` time steps before, one by default.
 
-        In a transition CPD of a :class:`~torch_concepts.nn.DynamicBayesianNetwork`,
+        In a CPD of step ``t`` of a :class:`~torch_concepts.nn.DynamicBayesianNetwork`,
         for this variable ``z``, ``parents=[z.previous()]`` is the arc from ``z``
         at step ``t - 1`` to the child at step ``t``, and ``z.previous(2)`` reads
         step ``t - 2``. The handle has the name, distribution and members of this

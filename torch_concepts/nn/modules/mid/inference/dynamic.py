@@ -24,36 +24,6 @@ Key = Union[str, Tuple[str, int]]
 _SCHEDULE = ("initial_temperature", "annealing", "annealing_rate", "final_temperature")
 
 
-def _stack(outs: Dict[int, InferenceOutput], leading: torch.Size) -> InferenceOutput:
-    """One output from the outputs of the queried steps, with time as the last leading axis."""
-
-    def layout(out: InferenceOutput) -> dict:
-        """What a step reports: its quantities, and the labels of each."""
-        return {kind: {q: t.annotations.labels for q, t in getattr(out, kind).items()}
-                for kind in ("params", "guide_params")}
-
-    (t0, first), *rest = outs.items()
-    for t, out in rest:
-        if layout(out) != layout(first):
-            raise ValueError(
-                f"Step {t} reports {layout(out)} and step {t0} reports {layout(first)}, but the "
-                "queried names must report the same parameters at every step. A plate observed "
-                "whole at some steps, or CPDs parametrized differently in `initial` and "
-                "`transition`, make them differ: query those steps separately."
-            )
-
-    def stack(tensors: List[AnnotatedTensor]) -> AnnotatedTensor:
-        data = torch.stack([t.tensor for t in tensors], dim=len(leading))
-        return AnnotatedTensor(data, tensors[0].annotations, axis=-1)
-
-    per_step = list(outs.values())
-    return InferenceOutput(
-        params={q: stack([o.params[q] for o in per_step]) for q in first.params},
-        guide_params={q: stack([o.guide_params[q] for o in per_step]) for q in first.guide_params},
-        samples=None if first.samples is None else stack([o.samples for o in per_step]),
-    )
-
-
 class DynamicInference(BaseInference):
     """Any inference engine on a :class:`~torch_concepts.nn.DynamicBayesianNetwork`.
 
@@ -67,8 +37,8 @@ class DynamicInference(BaseInference):
     A key of the query or the evidence is the name of a variable as passed, or
     of one of its members (``c``, ``c_a``), for every step at which its
     variable exists, or a pair ``(name, t)``, for step ``t`` only. The tensor
-    of a name stacks those ``T`` steps before the event,
-    ``(batch, T, *shape)``; that of a pair holds one step, ``(batch, *shape)``,
+    of a name stacks those steps before the event,
+    ``(batch, steps, *shape)``; that of a pair holds one step, ``(batch, *shape)``,
     as does that of a variable of step 0 only, such as an input window. A pair
     overrides the name at its step: for a variable ``z``,
     ``{"z": None, ("z", 4): z4}`` queries ``z`` at every step, with the target
@@ -76,13 +46,15 @@ class DynamicInference(BaseInference):
 
     The output is an :class:`~torch_concepts.nn.InferenceOutput`, as from a
     static engine, with the queried steps on the last leading axis:
-    ``out.value["z"]`` has shape ``(batch, T, width)`` and the labels of
-    ``z``.
+    ``out.value["z"]`` has shape ``(batch, steps, width)`` and the labels of
+    ``z``. ``out.probabilities`` has no step axis: it is the joint
+    probability of the query over all its steps, ``(batch,)``.
 
     A forward engine reads the evidence as an intervention, which acts on its
     step and on the later ones. An engine that conditions on the evidence,
     such as :class:`~torch_concepts.nn.RejectionSampling`, reads it as an
-    observation, so the evidence at a step also changes the steps before.
+    observation, so the evidence at a step also changes the belief about the
+    steps before.
 
     Parameters
     ----------
@@ -96,30 +68,25 @@ class DynamicInference(BaseInference):
         ``lambda bn, **kw: ImportanceSampling(bn, proposal=Q(bn), **kw)``,
         with ``Q`` a proposal class such as
         :class:`~torch_concepts.nn.MutilatedNetworkProposal`. ``bn`` is a new
-        network at each horizon, so what reads its variables, a proposal or
-        the guides of ``VariationalInference``, is built on it, inside the
-        function. The modules they hold are not in the ``parameters()``,
+        network at each horizon, so build inside the function what refers to
+        its variables, such as a proposal or the guide CPDs of
+        ``VariationalInference``, but the learnable modules they hold once,
+        outside it. Those modules are not in the ``parameters()``,
         ``state_dict()``, ``.to()`` or ``eval()`` of ``DynamicInference``:
-        build those once, outside the function, and train them together with
-        ``pgm.parameters()``.
+        train them together with ``pgm.parameters()``.
     **engine_kwargs
         Passed to ``engine``, e.g. ``p_int=1.0`` or ``n_samples=1000``.
         ``p_int`` and the options of the temperature schedule, such as
-        ``annealing``, are also those of ``DynamicInference``, as for a static
-        engine. The engine runs on the unrolled network, so an option that
-        names variables uses their names there, one per step:
-        ``activations={f"z_{t}": fn for t in range(horizon + 1)}``.
-
-    Attributes
-    ----------
-    engines : dict
-        The engines built so far, one per horizon.
+        ``annealing``, also set those of ``DynamicInference``. The engine runs
+        on the unrolled network, so an option that names variables uses their
+        names there, one per step up to the longest horizon ``H``:
+        ``activations={f"z_{t}": fn for t in range(H + 1)}``.
 
     Notes
     -----
     Like any engine, ``DynamicInference`` is an ``nn.Module`` that holds the
     DBN as ``pgm``: ``parameters()`` are those of the DBN, and
-    ``state_dict()`` holds them and the temperature reached in training, not
+    ``state_dict()`` holds the DBN and the temperature reached in training, not
     the engines of the horizons. The engines of the horizons read the
     temperature of ``DynamicInference``, so set the schedule, and call
     ``eval()`` and ``temperature_step()``, on ``DynamicInference`` itself.
@@ -180,7 +147,7 @@ class DynamicInference(BaseInference):
         super().__init__(pgm, **{k: engine_kwargs[k] for k in (*_SCHEDULE, "p_int") if k in engine_kwargs})
         self.engine = DeterministicInference if engine is None else engine
         self.engine_kwargs = engine_kwargs
-        self.engines: Dict[int, BaseInference] = {}
+        self._engines: Dict[int, BaseInference] = {}
 
     def __repr__(self) -> str:
         return self._format_repr(engine=self.engine)
@@ -188,7 +155,7 @@ class DynamicInference(BaseInference):
     def clear_cache(self) -> None:
         """Drop the query caches and the engines, which the next queries build again."""
         super().clear_cache()
-        self.engines.clear()
+        self._engines.clear()
 
     def query(
         self,
@@ -201,27 +168,13 @@ class DynamicInference(BaseInference):
         """Query the DBN over steps ``0..horizon``.
 
         The keys of ``query`` and ``evidence``, and the shapes of their tensors,
-        are those of the class docstring. ``n_samples`` sets the batch of a
+        are described in the class docstring. ``n_samples`` sets the batch of a
         query without any tensor, as for a static forward engine; otherwise the
         tensors of the query and the evidence set the leading shape.
-
-        Raises
-        ------
-        ValueError
-            If ``horizon`` is below 1, a name is unknown, a step is outside the
-            steps of its name, a value is not a tensor or lacks its time axis,
-            the tensors disagree on their leading shape, the queried names are
-            queried at different steps, a name is both queried and observed at
-            a step, the evidence of a step names a plate and its members, or
-            the engine of a new horizon has a temperature schedule of its own.
-        TypeError
-            If a key is neither a name nor a ``(name, t)`` pair.
         """
         if horizon < 1:
             raise ValueError(f"horizon must be at least 1, got {horizon}.")
-        if isinstance(query, list):
-            query = dict.fromkeys(query)
-        q = self._by_step(query, horizon, "query")
+        q = self._by_step(self._normalize_query(query), horizon, "query")
         e = self._by_step(evidence or {}, horizon, "evidence")
         names = list(dict.fromkeys(n for step in q for n in step))
         steps = [t for t in range(horizon + 1) if q[t]]
@@ -244,21 +197,22 @@ class DynamicInference(BaseInference):
                     f"The evidence at step {t} names {both} and their plate: give the "
                     "whole plate or some of its members."
                 )
-        leading = self._leading(q, e, n_samples)
 
         def flat(per_step: List[Dict]) -> Dict[str, Optional[torch.Tensor]]:
             """The per-step dicts as one dict of the unrolled network, keyed ``name_t``."""
             return {_at(n, t): v for t, step in enumerate(per_step) for n, v in step.items()}
 
         kwargs = {} if n_samples is None else {"n_samples": n_samples}
-        out = self._engine(horizon).query(flat(q), flat(e), **kwargs)
-        return self._split(out, names, steps, leading)
+        engine, fq, fe = self._engine(horizon), flat(q), flat(e)
+        out = engine.query(fq, fe, **kwargs)
+        # The leading shape as the engine reads it, once the query has checked the tensors.
+        return self._stack(out, names, steps, engine._query_leading_shape(fq, fe, n_samples))
 
     __call__ = query
 
     def _engine(self, horizon: int) -> BaseInference:
         """The engine on the network unrolled over ``horizon``, built on first use."""
-        engine = self.engines.get(horizon)
+        engine = self._engines.get(horizon)
         if engine is None:
             engine = self.engine(self.pgm.unroll(horizon), **self.engine_kwargs)
             own = {k: getattr(engine, k) for k in _SCHEDULE
@@ -269,7 +223,7 @@ class DynamicInference(BaseInference):
                     "read the temperature of DynamicInference: pass the schedule to "
                     "DynamicInference, which passes it on to the engine."
                 )
-            self.engines[horizon] = engine
+            self._engines[horizon] = engine
         # Shared at every query: .to() and load_state_dict(assign=True) replace the buffer.
         engine._temperature = self._temperature
         return engine
@@ -291,7 +245,9 @@ class DynamicInference(BaseInference):
                 continue
             if key not in dbn._templates:
                 raise ValueError(f"Unknown {what} name {key!r}; the names are {known}.")
-            steps = dbn.slices(key, horizon)
+            steps = dbn.steps(key, horizon)
+            if value is not None and not isinstance(value, torch.Tensor):
+                raise ValueError(f"{what}[{key!r}] must be a Tensor, got {type(value).__name__}.")
             if value is None or steps == range(1):  # a variable of step 0 only has no time axis
                 values = [value] * len(steps)
             else:
@@ -308,11 +264,13 @@ class DynamicInference(BaseInference):
             name, t = key[0], int(key[1])
             if name not in dbn._templates:
                 raise ValueError(f"Unknown {what} name {name!r}; the names are {known}.")
-            steps = dbn.slices(name, horizon)
+            steps = dbn.steps(name, horizon)
             if t not in steps:
                 raise ValueError(
                     f"{name!r} exists at steps {steps.start}..{steps.stop - 1}, not at {t}."
                 )
+            if value is not None and not isinstance(value, torch.Tensor):
+                raise ValueError(f"{what}[{key!r}] must be a Tensor, got {type(value).__name__}.")
             per_step[t][name] = value
         return per_step
 
@@ -320,8 +278,6 @@ class DynamicInference(BaseInference):
         self, name: str, value: torch.Tensor, steps: range, what: str
     ) -> Tuple[torch.Tensor, ...]:
         """The per-step tensors of ``value``, whose time axis precedes the event of ``name``."""
-        if not isinstance(value, torch.Tensor):
-            raise ValueError(f"{what}[{name!r}] must be a Tensor, got {type(value).__name__}.")
         v = self.pgm._templates[name]
         event = tuple(v.shape if name == v.name else v.member_shape)
         axis = value.dim() - len(event) - 1
@@ -334,58 +290,42 @@ class DynamicInference(BaseInference):
             )
         return value.unbind(axis)
 
-    def _leading(self, q: List[Dict], e: List[Dict], n_samples: Optional[int]) -> torch.Size:
-        """The leading shape of the query: that of its tensors, which must agree.
-
-        Without any tensor, ``n_samples`` observations.
-        """
-        found = {}
-        for per_step in (e, q):
-            for t, step in enumerate(per_step):
-                for name, value in step.items():
-                    if isinstance(value, torch.Tensor):
-                        v = self.pgm._templates[name]
-                        shape = tuple(v.leading_of(value, member=None if name == v.name else name))
-                        found.setdefault(shape, (name, t))
-        if len(found) > 1:
-            raise ValueError("Mismatched leading (batch) dimensions: " + ", ".join(
-                f"{name!r} at step {t} has {shape}" for shape, (name, t) in found.items()) + ".")
-        if found:
-            return torch.Size(next(iter(found)))
-        return torch.Size([1 if n_samples is None else int(n_samples)])
-
-    def _split(
+    def _stack(
         self, out: InferenceOutput, names: List[str], steps: List[int], leading: torch.Size
     ) -> InferenceOutput:
-        """The output of the unrolled network, split back into the queried steps."""
-        if not out.params and out.samples is None:  # an estimator reports a probability only
-            return InferenceOutput(probabilities=out.probabilities)
+        """The output of the unrolled network, with the queried steps on the last leading axis.
 
+        Labelled as in the model: ``c_a`` for ``c_a_0``, ``c_a_1``, ...
+        """
         # Each queried label once, as a static engine reports it (a plate and one of its members).
         resolve = self.pgm._templates.__getitem__
         members = {n: resolve(n).members if n == resolve(n).name else [n] for n in names}
+        labels = dict.fromkeys(m for n in names for m in members[n])
+        suffix = len(_at("", steps[0]))
 
-        def at_step(tensor: Optional[AnnotatedTensor], t: int) -> Optional[AnnotatedTensor]:
-            """The queried labels of step ``t`` in ``tensor``, renamed to the names of the model."""
-            if tensor is None:
-                return None
-            known = tensor.annotations.label_to_index
-            labels = [label for label in dict.fromkeys(_at(m, t) for n in names for m in members[n])
-                      if label in known]
-            if not labels:
-                return None
-            view, suffix = tensor[labels], len(_at("", t))
-            renamed = view.annotations.rename(lambda label: label[:-suffix])
-            return AnnotatedTensor(view.tensor, renamed, axis=-1)
+        def stack(kind: str, tensors: Dict[str, AnnotatedTensor]) -> Dict[str, AnnotatedTensor]:
+            stacked = {}
+            for quantity, tensor in tensors.items():
+                known = tensor.annotations.label_to_index
+                found = {t: [m for m in labels if _at(m, t) in known] for t in steps}
+                first = found[steps[0]]
+                for t in steps:
+                    if found[t] != first:
+                        raise ValueError(
+                            f"{kind}[{quantity!r}] holds {found[t]} at step {t} and {first} at "
+                            f"step {steps[0]}, but the queried names must report the same "
+                            "parameters at every step. A plate with all its members observed "
+                            "at some steps, or CPDs parametrized differently in `initial` and "
+                            "`transition`, make them differ: query those steps separately."
+                        )
+                if first:  # none for a quantity of names that are not queried
+                    views = [tensor[[_at(m, t) for m in first]] for t in steps]
+                    data = torch.stack([v.tensor for v in views], dim=len(leading))
+                    renamed = views[0].annotations.rename(lambda label: label[:-suffix])
+                    stacked[quantity] = AnnotatedTensor(data, renamed, axis=-1)
+            return stacked
 
-        def split(tensors: Dict[str, AnnotatedTensor], t: int) -> Dict[str, AnnotatedTensor]:
-            views = {quantity: at_step(tensor, t) for quantity, tensor in tensors.items()}
-            return {quantity: view for quantity, view in views.items() if view is not None}
-
-        stacked = _stack({
-            t: InferenceOutput(params=split(out.params, t), guide_params=split(out.guide_params, t),
-                               samples=at_step(out.samples, t))
-            for t in steps
-        }, leading)
-        stacked.probabilities = out.probabilities
-        return stacked
+        samples = stack("samples", {} if out.samples is None else {"samples": out.samples})
+        return InferenceOutput(params=stack("params", out.params),
+                               guide_params=stack("guide_params", out.guide_params),
+                               samples=samples.get("samples"), probabilities=out.probabilities)

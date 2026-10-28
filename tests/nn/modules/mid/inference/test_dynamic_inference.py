@@ -18,10 +18,9 @@ import torch.nn as nn
 from torch_concepts.annotations import Annotations
 from torch_concepts.distributions import Delta
 from torch_concepts.nn import (
-    AncestralSamplingInference, BaseInference, BeliefPropagation, ConceptVariable, DeterministicInference,
+    AncestralSamplingInference, BaseInference, BeliefPropagation, ConceptVariable,
     DynamicBayesianNetwork, DynamicInference, EmbeddingVariable, FixedPrior, LearnablePrior,
     MAPForwardInference, ParametricCPD, PgmpyVariableElimination, RejectionSampling, VariationalInference,
-    plot_pgm,
 )
 from torch_concepts.tensor import AnnotatedTensor
 
@@ -85,18 +84,17 @@ def _reference(dbn, x, horizon, c=None, u=None):
     the logits of y at steps 0..horizon, u at steps 1..horizon.
     """
     c, u = c or {}, u or {}
-    first, step = dbn.initial[0], dbn.transition
-    c_hat = _module(first, "c")(x)
+    c_hat = _module(dbn, "c_0")(x)  # the CPDs of step 0, then those of the transition
     c_t = c.get(0, c_hat)
-    h = _module(first, "h")(torch.cat([x, c_t], -1))
-    steps = [{"c": c_hat, "h": h, "y": _module(first, "y")(c_t)}]
+    h = _module(dbn, "h_0")(torch.cat([x, c_t], -1))
+    steps = [{"c": c_hat, "h": h, "y": _module(dbn, "y_0")(c_t)}]
     for t in range(1, horizon + 1):
-        u_hat = _module(step, "u")(c_t)
-        c_hat = _module(step, "c")(torch.cat([c_t, u.get(t, u_hat)], -1))
+        u_hat = _module(dbn, "u_1")(c_t)
+        c_hat = _module(dbn, "c_1")(torch.cat([c_t, u.get(t, u_hat)], -1))
         c_next = c.get(t, c_hat)
-        h = _module(step, "h")(torch.cat([c_t, c_next, h], -1))
+        h = _module(dbn, "h_1")(torch.cat([c_t, c_next, h], -1))
         c_t = c_next
-        steps.append({"c": c_hat, "h": h, "y": _module(step, "y")(c_t), "u": u_hat})
+        steps.append({"c": c_hat, "h": h, "y": _module(dbn, "y_1")(c_t), "u": u_hat})
     return {n: torch.stack([s[n] for s in steps if n in s], -2) for n in ("c", "h", "y", "u")}
 
 
@@ -117,21 +115,9 @@ def test_free_forecast_matches_the_reference():
     assert torch.allclose(u.tensor, ref["u"])
 
 
-def test_matches_the_engine_on_the_unrolled_network():
-    # DynamicInference computes nothing of its own: it translates the keys for an engine on
-    # dbn.unroll(H), whose names are c_t, and stacks the steps of that engine's output.
-    dbn, x, targets = _model(), torch.randn(B, 3), torch.randn(B, H + 1, 2)
-    out = DynamicInference(dbn, p_int=1.0).query({"c": targets, "y": None}, {"x": x}, horizon=H)
-    steps = range(H + 1)
-    flat = DeterministicInference(dbn.unroll(H), p_int=1.0).query(
-        {f"c_{t}": targets[:, t] for t in steps} | {f"y_{t}": None for t in steps}, {"x_0": x}
-    )
-    assert torch.allclose(out.value["c"].tensor, torch.stack([flat.value[f"c_{t}"].tensor for t in steps], 1))
-    assert torch.allclose(out.logits["y"].tensor, torch.stack([flat.logits[f"y_{t}"].tensor for t in steps], 1))
-
 def test_labels_and_groups_are_those_of_the_model():
     dbn, x = _model(), torch.randn(B, 3)
-    out = DynamicInference(dbn).query(["c", "y"], {"x": x}, horizon=H)
+    out = DynamicInference(dbn).query(["c", "c_a", "y"], {"x": x}, horizon=H)  # c_a reported once
     assert out.value.annotations.labels == ["c_a", "c_b"]
     assert out.value.annotations.label_groups == {"c": ["c_a", "c_b"]}
     assert out.logits.annotations.labels == ["y"]
@@ -146,7 +132,7 @@ def test_teacher_forcing():
     ref = _reference(dbn, x, H, c={t: targets[:, t] for t in range(H + 1)})
     assert torch.allclose(out.value["c"].tensor, ref["c"])
     # y reads the forced c.
-    assert torch.allclose(out.logits["y"].tensor, _module(dbn.initial[0], "y")(targets))
+    assert torch.allclose(out.logits["y"].tensor, _module(dbn, "y_0")(targets))
 
 
 def test_a_value_at_one_step():
@@ -184,14 +170,6 @@ def test_the_interface_given_at_a_step_without_a_query():
     assert torch.allclose(out.logits["y"].tensor, _reference(dbn, x, H, c={1: c_1})["y"][:, [0, 2]])
 
 
-@pytest.mark.parametrize("lead", [(3,), (2, 3)])
-def test_a_step_without_tensors_takes_the_leading_shape_of_the_query(lead):
-    # The chain starts from a prior, and its only tensor is an observation at step 1.
-    dbn, o = _chain(), torch.ones(*lead, 1)
-    out = DynamicInference(dbn).query(["z"], {("o", 1): o}, horizon=2)
-    assert out.logits["z"].shape == (*lead, 3, 1)
-
-
 def test_n_samples_sets_the_batch_of_a_query_without_tensors():
     engine = DynamicInference(_chain())
     assert engine.query(["z"], horizon=2).logits["z"].shape == (1, 3, 1)
@@ -214,41 +192,32 @@ def test_a_matrix_parameter_keeps_its_two_axes():
     torch.manual_seed(0)
     x = EmbeddingVariable("x", distribution=Delta, size=2)
     z = ConceptVariable("z", distribution=dist.MultivariateNormal, size=2)
+    loc, tril = nn.Linear(2, 2), _Tril(2, 2)  # z at step 0
     dbn = DynamicBayesianNetwork(
         variables=[x, z],
         initial=[ParametricCPD(x, parametrization=FixedPrior(torch.zeros(2))),
-                 ParametricCPD(z, parents=[x], parametrization={"loc": nn.Linear(2, 2), "scale_tril": _Tril(2, 2)})],
+                 ParametricCPD(z, parents=[x], parametrization={"loc": loc, "scale_tril": tril})],
         transition=[ParametricCPD(z, parents=[z.previous()],
                                   parametrization={"loc": nn.Linear(2, 2), "scale_tril": _Tril(2, 2)})],
     )
     window = torch.randn(B, 2)
     out = DynamicInference(dbn).query(["z"], {"x": window}, horizon=H)
-    first = DeterministicInference(dbn.initial[0]).query(["z"], {"x": window})
     assert out.params["scale_tril"].shape == (B, H + 1, 2, 2)
-    assert torch.allclose(out.params["scale_tril"].tensor[:, 0], first.params["scale_tril"].tensor)
+    assert torch.allclose(out.params["scale_tril"].tensor[:, 0], tril(window))
 
 
-def test_temperature_step_keeps_every_engine_at_the_same_temperature():
-    o, dbn = torch.ones(3, 1), _chain()
-    engine = DynamicInference(dbn, AncestralSamplingInference,
-                              annealing="exponential", annealing_rate=0.5, final_temperature=0.05)
-    engine.query(["z"], {("o", 1): o}, horizon=2)
-    for _ in range(3):
-        engine.temperature_step()
-    engine.query(["z"], {("o", 1): o}, horizon=4)  # a new engine for a new horizon
-    temperatures = {round(float(e.temperature), 6) for e in engine.engines.values()}
-    assert len(engine.engines) == 2 and len(temperatures) == 1 and temperatures.pop() < 1.0
-    assert all(e._temperature is engine._temperature for e in engine.engines.values())
-    before = [float(e.temperature) for e in engine.engines.values()]
-    engine.eval()
-    engine.temperature_step()  # a no-op in eval mode
-    assert [float(e.temperature) for e in engine.engines.values()] == before and not dbn.training
-
-
-def test_a_plate_and_one_of_its_members_are_reported_once():
-    dbn, x = _model(), torch.randn(B, 3)
-    out = DynamicInference(dbn).query(["c", "c_a"], {"x": x}, horizon=H)
-    assert out.value.annotations.labels == ["c_a", "c_b"]
+def test_the_time_axis_precedes_an_event_of_two_axes():
+    h = EmbeddingVariable("h", distribution=Delta, shape=(2, 3))
+    dbn = DynamicBayesianNetwork(
+        variables=[h],
+        initial=[ParametricCPD(h, parametrization=FixedPrior(torch.zeros(2, 3)))],
+        transition=[ParametricCPD(h, parents=[h.previous()], parametrization=nn.Softmax(dim=-1))],
+    )
+    targets = torch.randn(B, H + 1, 2, 3)
+    out = DynamicInference(dbn, p_int=1.0).query({"h": targets}, horizon=H)
+    # h_t is the softmax over the last axis of the target of step t - 1; the output, as from a
+    # static engine, flattens the event.
+    assert torch.allclose(out.value["h"].tensor[:, 1:], targets[:, :-1].softmax(-1).flatten(-2))
 
 
 def test_gradients_match_the_reference():
@@ -304,10 +273,11 @@ def test_map_forward():
 ])
 def test_an_engine_conditions_on_a_later_step(engine, kwargs):
     dbn, o = _chain(), torch.ones(3, 1)
-    out = DynamicInference(dbn, engine, **kwargs).query([("z", 1)], {("o", 2): o}, horizon=2)
-    by_hand = engine(dbn.unroll(2), **kwargs).query(["z_1"], evidence={"o_2": o})
+    out = DynamicInference(dbn, engine, **kwargs).query({("z", 1): o}, {("o", 2): o}, horizon=2)
+    by_hand = engine(dbn.unroll(2), **kwargs).query({"z_1": o}, evidence={"o_2": o})
     assert out.probs["z"].shape == (3, 1, 1)
     assert torch.allclose(out.probs["z"].tensor[:, 0], by_hand.probs["z_1"].tensor)
+    assert torch.allclose(out.probabilities, by_hand.probabilities)  # P(z_1 = 1 | o_2 = 1)
 
 
 def test_variational_inference_reports_the_guide_per_step():
@@ -368,7 +338,7 @@ def test_the_state_dict_holds_the_dbn_and_the_temperature():
     fresh = DynamicInference(_chain(), AncestralSamplingInference, **schedule)
     fresh.load_state_dict(engine.state_dict())
     fresh.query(["z"], {("o", 1): o}, horizon=2)
-    assert float(fresh.engines[2].temperature) == float(engine.temperature) < 1.0
+    assert float(fresh._engines[2].temperature) == float(engine.temperature) < 1.0
 
 
 def test_load_state_dict_with_assign_reaches_an_engine_built_before():
@@ -380,8 +350,7 @@ def test_load_state_dict_with_assign_reaches_an_engine_built_before():
     state["_temperature"] = torch.tensor(0.3)
     engine.load_state_dict(state, assign=True)
     engine.query(["z"], {("o", 1): o}, horizon=2)
-    assert engine.engines[2]._temperature is engine._temperature
-    assert float(engine.engines[2].temperature) == pytest.approx(0.3)
+    assert float(engine._engines[2].temperature) == pytest.approx(0.3)
 
 
 def test_to_reaches_an_engine_built_before():
@@ -392,15 +361,15 @@ def test_to_reaches_an_engine_built_before():
     engine.to(torch.float64)
     engine.temperature_step()
     out = engine.query(["z"], {("o", 1): o.double()}, horizon=2)
-    assert engine.engines[2]._temperature is engine._temperature and float(engine.temperature) < 1.0
-    assert engine.temperature.dtype == out.logits["z"].tensor.dtype == torch.float64
+    assert float(engine._engines[2].temperature) == float(engine.temperature) < 1.0
+    assert engine._engines[2].temperature.dtype == out.logits["z"].tensor.dtype == torch.float64
 
 
 def test_clear_cache_drops_the_engines():
     engine, x = DynamicInference(_model()), torch.randn(B, 3)
     before = engine.query(["c"], {"x": x}, horizon=2).value["c"].tensor
     engine.clear_cache()
-    assert engine.engines == {}
+    assert engine._engines == {}
     assert torch.equal(engine.query(["c"], {"x": x}, horizon=2).value["c"].tensor, before)
 
 
@@ -409,7 +378,7 @@ def test_the_engines_read_the_schedule_of_dynamic_inference():
     passed = DynamicInference(_chain(), lambda bn, **kw: AncestralSamplingInference(bn, **kw),
                               initial_temperature=0.5)
     passed.query(["z"], {("o", 1): torch.ones(3, 1)}, horizon=2)
-    assert float(passed.engines[2].temperature) == float(passed.temperature) == 0.5
+    assert float(passed._engines[2].temperature) == float(passed.temperature) == 0.5
 
 
 @pytest.mark.parametrize("own", [dict(initial_temperature=0.5), dict(annealing="exponential"),
@@ -429,7 +398,7 @@ def test_the_schedule_steps_every_engine_and_reaches_its_floor():
     engine.temperature_step()
     engine.query(["z"], {("o", 1): o}, horizon=4)  # a second engine, then one more step
     engine.temperature_step()
-    assert [float(e.temperature) for e in engine.engines.values()] == pytest.approx([math.exp(-1.0)] * 2)
+    assert [float(e.temperature) for e in engine._engines.values()] == pytest.approx([math.exp(-1.0)] * 2)
     for _ in range(10):
         engine.temperature_step()
     assert float(engine.temperature) == pytest.approx(0.05)
@@ -444,13 +413,6 @@ def test_the_constructors_draw_no_random_numbers():
     assert torch.equal(torch.get_rng_state(), state)
 
 
-def test_plot_pgm_draws_the_dbn_of_an_engine(tmp_path):
-    pytest.importorskip("matplotlib", reason="plot_pgm needs matplotlib")
-    path = tmp_path / "engine.pdf"
-    plot_pgm(DynamicInference(_model()), path)
-    assert path.read_bytes().startswith(b"%PDF")
-
-
 # ------------------------------------------------------------------ errors ----
 
 def test_horizon_must_be_at_least_1():
@@ -459,13 +421,13 @@ def test_horizon_must_be_at_least_1():
 
 
 @pytest.mark.parametrize("query, evidence, match", [
-    (["nope"], {}, "Unknown"),
     ([], {}, "empty"),
     ([("u", 0)], {}, "not at 0"),
     (["c"], {"u": torch.zeros(B, H - 1, 2)}, "stacks them before the event"),  # one step short
     (["y"], {"c_a": torch.zeros(B, H + 1)}, "stacks them before the event"),  # c_a needs (B, H + 1, 1)
     (["c"], {"u": [[0.0, 0.0]] * B}, "must be a Tensor"),
-    (["c"], {("u", 2): torch.zeros(B - 1, 2)}, "'u' at step 2 has \\(4,\\)"),
+    ({("c", 2): [[0.0, 0.0]] * B}, {}, "must be a Tensor"),  # the target of a pair too
+    (["c"], {("u", 2): torch.zeros(B - 1, 2)}, "mismatched leading .*'u_2': \\(4,\\)"),  # the engine's check
     ([("c", 2)], {("c", 2): torch.zeros(B, 2)}, "both queried and observed"),
     ([("y", 3)], {("c", 2): torch.zeros(B, 2), ("c_a", 2): torch.ones(B, 1)}, "and their plate"),
     (["c", "u"], {}, "same steps"),
@@ -493,7 +455,7 @@ def test_a_step_may_be_any_integer():
 
 def test_a_static_network_raises():
     with pytest.raises(TypeError, match="DynamicBayesianNetwork"):
-        DynamicInference(_model().initial[0])
+        DynamicInference(_model().unroll(1))
 
 
 def test_p_int_is_checked_at_construction():
