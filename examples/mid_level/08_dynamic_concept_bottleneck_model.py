@@ -184,23 +184,3 @@ print(f"\nmean over the {len(x_open)} test windows with 0.2 < P(alarm_H = 1) < 0
 for label, given in evidence.items():
     p = sampler.query({("alarm", 4): ones}, evidence=given, horizon=H).probabilities
     print(f"  {label:32s} {p.mean():.3f}")
-
-# %%
-# Step by step, by hand
-# ---------------------
-# As a ``BayesianNetwork``, ``model`` is the network of steps 0 and 1, with
-# names per step (``health_0``, ``health_1``). Given the health at step 0, a
-# forward engine stops there, so a query of step 1 runs one transition from
-# that health: the model runs one step at a time, with no horizon fixed in
-# advance, and the carried health can be detached to truncate the gradient.
-# The engines take plain tensors as evidence, so ``.tensor`` drops the labels
-# of the carried health. The forecast is the one of ``engine`` above.
-step = DeterministicInference(model)
-with torch.no_grad():
-    out_0 = step.query(["health_0"], evidence={"sensors_0": x_test})
-    health = [out_0.loc["health_0"].tensor]
-    for t in range(1, H + 1):
-        out_t = step.query(["health_1"], evidence={"health_0": health[-1]})
-        health.append(out_t.loc["health_1"].tensor)
-same = torch.allclose(torch.stack(health, 1), out.loc["health"].tensor)
-print(f"\nstep by step, by hand: same forecast as unrolled: {same}")

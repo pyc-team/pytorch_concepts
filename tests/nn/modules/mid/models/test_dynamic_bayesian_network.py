@@ -212,15 +212,6 @@ def test_a_static_engine_on_the_dbn_gives_its_first_steps(model, S):
                           dynamic.value["c"].tensor)
 
 
-def test_a_forward_engine_runs_one_step_from_the_steps_before():
-    # The evidence on c_1 and c_0 stops the engine there: c_2 is the transition from them.
-    dbn = _order_two()
-    f2, trunk = dbn.factors["c_2"].parametrization["value"], dbn.factors["c_2"].trunk
-    c_1, c_0 = torch.randn(5, 2), torch.randn(5, 2)
-    out = DeterministicInference(dbn).query(["c_2"], {"c_1": c_1, "c_0": c_0})
-    assert torch.allclose(out.value["c_2"].tensor, f2(trunk(c_1 + c_0)))
-
-
 def _plated_chain():
     """A binary plate z, of members z_a and z_b, and a binary observation o of it at every step."""
     torch.manual_seed(0)

@@ -125,12 +125,6 @@ class DynamicBayesianNetwork(BayesianNetwork):
     variables as passed (the *template variables* of Koller and Friedman,
     2009), at any horizon.
 
-    With the steps before given as evidence, a forward engine runs a step of
-    the DBN alone, such as the transition from a given ``c_0`` to ``c_1`` in
-    the first example below. The model then runs one step at a time, with no
-    horizon fixed in advance, as in
-    ``examples/mid_level/08_dynamic_concept_bottleneck_model.py``.
-
     A transition can also read further back: ``z.previous(2)`` is ``z`` at
     step ``t - 2``, and the transition then gives
     :math:`p(Z_t \\mid Z_{t-1}, Z_{t-2})`. Such a transition cannot run at
