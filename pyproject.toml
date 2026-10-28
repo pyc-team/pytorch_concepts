@@ -36,6 +36,8 @@ data = [
     "transformers",
     "litellm",
     "tables",
+    "kagglehub",
+    "pydicom",
 ]
 tests = [
     "pytest-cov",

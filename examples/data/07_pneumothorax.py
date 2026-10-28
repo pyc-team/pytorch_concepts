@@ -44,7 +44,7 @@ print(f"concepts: {tuple(batch['concepts']['c'].shape)}")
 # ------------------
 CONCEPTS = [
     "a chest x-ray with a visible pleural line",
-    "a chest x-ray with absent peripheral lung markings",
+    "a chest x-ray with peripheral lung markings",
     "a chest x-ray with apical hyperlucency",
     "a chest x-ray with a deep sulcus sign",
     "a chest x-ray with mediastinal shift",
