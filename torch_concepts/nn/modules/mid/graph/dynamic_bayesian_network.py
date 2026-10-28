@@ -8,7 +8,6 @@ import copy
 from typing import Callable, Dict, List, Tuple
 
 import torch
-import torch.nn as nn
 
 from .....distributions import Delta
 from ...low.priors import FixedPrior
@@ -59,7 +58,68 @@ def _clone(cpd: ParametricCPD, child: Variable, parents: List[Variable]) -> Para
     )
 
 
-class DynamicBayesianNetwork(nn.Module):
+def _network(cpds: List[ParametricCPD], templates: Dict[str, Variable]) -> BayesianNetwork:
+    """The static network of one step: its CPDs, with their modules, where a parent
+    ``c.previous(lag)`` is an observed root, ``c_prev`` or ``c_prev2`` and so on."""
+    prev: Dict[Tuple[str, int], Variable] = {}
+
+    def read(p: Variable) -> Variable:
+        base, lag = _lagged(p)
+        if not lag:
+            return p
+        if (base.name, lag) not in prev:
+            prev[(base.name, lag)] = _copy(base, lambda m: _prev(m, lag), Delta)
+        v = prev[(base.name, lag)]
+        return v if p._plate is None else v.member(_prev(p.name, lag))
+
+    clones = [_clone(cpd, cpd.variable, [read(p) for p in cpd.parents]) for cpd in cpds]
+    roots = list(prev.values())
+    taken = [
+        m for v in roots for m in dict.fromkeys([v.name, *v.members])
+        if m in templates
+    ]
+    if taken:
+        raise ValueError(
+            f"Names {taken} are taken: the network of a step names the steps before with "
+            "the suffix '_prev'. Rename those variables or members."
+        )
+    here = {cpd.name for cpd in cpds}
+    return BayesianNetwork(
+        [*roots, *(v for v in dict.fromkeys(templates.values()) if v.name in here)],
+        [ParametricCPD(v, parametrization=FixedPrior(torch.zeros(v.shape))) for v in roots]
+        + clones,
+    )
+
+
+def _unrolled(
+    lists: List[List[ParametricCPD]], templates: Dict[str, Variable], horizon: int
+) -> Tuple[List[Variable], List[ParametricCPD]]:
+    """The variables and CPDs of steps ``0..horizon``: ``lists[s]`` for step ``s``, and the
+    last list for every later step, all with the modules of the CPDs passed."""
+    S, has = len(lists) - 1, [{cpd.name for cpd in cpds} for cpds in lists]
+    variables = dict.fromkeys(templates.values())  # each variable once, in the order passed
+    copies = {
+        (v.name, t): _copy(v, lambda m: _at(m, t))
+        for t in range(horizon + 1)
+        for v in variables
+        if v.name in has[min(t, S)]
+    }
+
+    def read(p: Variable, t: int) -> Variable:
+        """A parent of a CPD at step ``t`` as the unrolled network holds it."""
+        base, lag = _lagged(p)
+        v = copies[(base.name, t - lag)]
+        return v if p._plate is None else v.member(_at(p.name, t - lag))
+
+    factors = [
+        _clone(cpd, copies[(cpd.name, t)], [read(p, t) for p in cpd.parents])
+        for t in range(horizon + 1)
+        for cpd in lists[min(t, S)]
+    ]
+    return list(copies.values()), factors
+
+
+class DynamicBayesianNetwork(BayesianNetwork):
     """Directed graphical model over discrete time steps (dynamic Bayesian network).
 
     A dynamic Bayesian network (DBN) models variables that evolve over time
@@ -72,8 +132,8 @@ class DynamicBayesianNetwork(nn.Module):
 
     where each factor is a product of CPDs, one per variable of the step: the
     DBN takes those of :math:`p(Z_0)` as ``initial``, and those of
-    :math:`p(Z_t \\mid Z_{t-1})` as ``transition``. Every step from 1 on uses
-    the same transition CPDs, and so the same parameters.
+    :math:`p(Z_t \\mid Z_{t-1})` as ``transition``. Every later step uses the
+    same transition CPDs, and so the same parameters.
 
     A transition CPD reads the step before through ``previous()``: for a
     variable ``z``, the parent ``z.previous()`` is ``z`` at step ``t - 1``,
@@ -94,9 +154,20 @@ class DynamicBayesianNetwork(nn.Module):
     and :attr:`transition` for a later step, where the step before is an
     observed root, ``z_prev`` for ``z.previous()``. :meth:`unroll` builds
     instead the network of a whole horizon, with a copy of each variable per
-    step (``z_0``, ``z_1``, ...), which
+    step at which it exists (``z_0``, ``z_1``, ...), which
     :class:`~torch_concepts.nn.DynamicInference` queries with any inference
     engine.
+
+    As a :class:`BayesianNetwork`, the DBN is the network of its first steps:
+    :meth:`unroll` over one step per list of ``initial`` and one transition,
+    steps 0 and 1 in the first example below. It is the shortest unrolling
+    that uses every list of CPDs, and it gives the distribution of the DBN
+    over those steps. Its :attr:`variables` and :attr:`factors` are named per
+    step (``x_0``, ``c_0``, ``c_1``), so a static engine, or
+    :func:`~torch_concepts.nn.plot_pgm`, works on it as on any network.
+    :class:`~torch_concepts.nn.DynamicInference` takes the names of the
+    variables as passed (the *template variables* of Koller and Friedman,
+    2009), at any horizon.
 
     A transition can also read further back: ``z.previous(2)`` is ``z`` at
     step ``t - 2``, and the transition then gives
@@ -108,7 +179,8 @@ class DynamicBayesianNetwork(nn.Module):
     Parameters
     ----------
     variables : list of Variable
-        All random variables of the model, each once. Names must be unique.
+        The variables of the model, each once and without a step. Names must
+        be unique.
     initial : list of ParametricCPD
         The CPDs of step 0, one per variable that exists at step 0; or a list
         of such lists, one per step, when the first steps have CPDs of their
@@ -119,16 +191,20 @@ class DynamicBayesianNetwork(nn.Module):
     Attributes
     ----------
     variables : dict
-        The variables, ``{name: variable}``.
+        The variables of the network of the first steps, one copy per step at
+        which each exists: ``x_0``, ``c_0``, ``c_1``.
+    factors : ModuleDict
+        Their CPDs, keyed like :attr:`variables`, with the modules of the CPDs
+        passed.
     interface : list of str
-        Names of the variables read through ``previous()``: the state that each
-        step passes to the next.
-    initial : ModuleList of BayesianNetwork
-        The networks of the first steps, ``initial[0]`` for step 0.
+        Names of the variables that a later step reads through ``previous()``.
+    initial : list of BayesianNetwork
+        One network per step before the transition, ``initial[0]`` for step 0.
     transition : BayesianNetwork
-        The network of a later step, where the steps before are observed
-        roots: ``z_prev`` for ``z.previous()``, ``z_prev2`` for
-        ``z.previous(2)``.
+        The network of a later step. In it, and in the networks of
+        :attr:`initial` after step 0, the steps before are roots that the
+        evidence sets, 0 without it (a placeholder prior): ``z_prev`` for
+        ``z.previous()``, ``z_prev2`` for ``z.previous(2)``.
 
     Raises
     ------
@@ -138,21 +214,29 @@ class DynamicBayesianNetwork(nn.Module):
 
     Notes
     -----
-    The networks that the DBN builds rename the parents of each CPD,
-    ``z_prev`` or ``z_3`` for ``z``, so an ``aggregate`` function should read
-    its parents by position, e.g. with ``parents.values()``.
+    The DBN, and the networks that it builds, rename the parents of each CPD,
+    ``z_0``, ``z_prev`` or ``z_3`` for ``z``, so an ``aggregate`` function
+    should read its parents by position, e.g. with ``parents.values()``.
 
     To set a variable at one step, give its value at that step as evidence: a
     forward engine reads it as an intervention (see
     :class:`~torch_concepts.nn.DynamicInference`). ``intervention()`` hooks
-    the module of a CPD, so it acts at every step that uses that CPD; its
-    target is :attr:`transition` or a network of :attr:`initial`, not the DBN.
+    the module of a CPD instead, so it acts at every step that runs that
+    module, whichever CPD holds it. Its target can be the DBN, or a
+    ``DynamicInference`` on it, with the names of the network of the first
+    steps: in the first example below, ``c_0`` hooks the CPD of step 0, and
+    ``c_1`` that of the transition, which runs at every step from 1 on; in
+    the second, ``c_1`` hooks the CPD of step 1, and ``c_2`` that of the
+    transition. On a CPD in every list, it acts at every step.
 
     References
     ----------
     Murphy, K. "Dynamic Bayesian Networks: Representation, Inference and
     Learning", PhD thesis, UC Berkeley, 2002.
     https://www.cs.ubc.ca/~murphyk/Thesis/thesis.html
+
+    Koller, D. and Friedman, N. "Probabilistic Graphical Models: Principles
+    and Techniques", MIT Press, 2009, chapter 6.
 
     Examples
     --------
@@ -174,6 +258,8 @@ class DynamicBayesianNetwork(nn.Module):
     ...     ParametricCPD(c, parents=[c.previous()], parametrization=torch.nn.Linear(1, 1)),
     ... ]
     >>> dbn = DynamicBayesianNetwork([x, c], step_0, transition)
+    >>> list(dbn.variables)
+    ['x_0', 'c_0', 'c_1']
     >>> list(dbn.transition.variables)
     ['c_prev', 'c']
     >>> list(dbn.unroll(2).variables)
@@ -186,6 +272,8 @@ class DynamicBayesianNetwork(nn.Module):
     >>> transition = [ParametricCPD(c, parents=[c.previous(), c.previous(2)],
     ...     parametrization=torch.nn.Linear(2, 1))]
     >>> dbn = DynamicBayesianNetwork([x, c], [step_0, step_1], transition)
+    >>> list(dbn.variables)
+    ['x_0', 'c_0', 'c_1', 'c_2']
     >>> list(dbn.transition.variables)
     ['c_prev', 'c_prev2', 'c']
     >>> [p.name for p in dbn.unroll(3).factors["c_3"].parents]
@@ -198,7 +286,6 @@ class DynamicBayesianNetwork(nn.Module):
         initial: List[ParametricCPD],
         transition: List[ParametricCPD],
     ):
-        super().__init__()
         variables, initial, transition = list(variables), list(initial), list(transition)
         # The CPDs of the first steps: one list for step 0 alone, or one list per step.
         if initial and isinstance(initial[0], (list, tuple)):
@@ -206,21 +293,20 @@ class DynamicBayesianNetwork(nn.Module):
         else:
             initial = [initial]
         S = len(initial)
-        self.variables: Dict[str, Variable] = {v.name: v for v in variables}
-        if len(self.variables) != len(variables):
+        by_name: Dict[str, Variable] = {v.name: v for v in variables}
+        if len(by_name) != len(variables):
             raise ValueError("Duplicate variable names in `variables`.")
 
         # Every name addresses one variable, at whatever step it is read.
-        self._addressable: Dict[str, Variable] = {}
+        templates: Dict[str, Variable] = {}
         for v in variables:
             for name in dict.fromkeys([v.name, *v.members]):
-                if name in self._addressable:
+                if name in templates:
                     raise ValueError(
-                        f"Name {name!r} is used by both {self._addressable[name].name!r} and "
+                        f"Name {name!r} is used by both {templates[name].name!r} and "
                         f"{v.name!r}. Variable and member names must be unique."
                     )
-                self._addressable[name] = v
-        self._queryable_names = frozenset(self._addressable)
+                templates[name] = v
 
         # lists[s] holds the CPDs of step s < S, lists[S] those of every step t >= S.
         lists = [*initial, transition]
@@ -230,13 +316,13 @@ class DynamicBayesianNetwork(nn.Module):
                     "DynamicBayesianNetwork takes ParametricCPD instances, "
                     f"got {type(cpd).__name__}."
                 )
-            if self.variables.get(cpd.name) is not cpd.variable:
+            if by_name.get(cpd.name) is not cpd.variable:
                 raise ValueError(
                     f"CPD {cpd.name!r}: its variable is not the one registered in "
                     "`variables`. Pass the same object."
                 )
         has = [{cpd.name for cpd in cpds} for cpds in lists]
-        for n in self.variables:
+        for n in by_name:
             steps = [s for s, names in enumerate(has) if n in names]
             if not steps:
                 raise ValueError(f"Variable {n!r} has no CPD in `initial` or `transition`.")
@@ -259,14 +345,14 @@ class DynamicBayesianNetwork(nn.Module):
                 for p in cpd.parents:
                     base, lag = _lagged(p)
                     if not lag:
-                        if base.name in self.variables and base.name not in has[s]:
+                        if base.name in by_name and base.name not in has[s]:
                             raise ValueError(
                                 f"CPD {cpd.name!r} of `{where(s)}` reads {base.name!r} at its "
                                 f"own step, but {base.name!r} has no CPD in `{where(s)}`, so it "
                                 "does not exist at that step."
                             )
                         continue
-                    if self.variables.get(base.name) is not base:
+                    if by_name.get(base.name) is not base:
                         raise ValueError(
                             f"CPD {cpd.name!r}: parent {p.name!r} comes from previous() of a "
                             "variable that is not the one registered in `variables`. Pass the "
@@ -285,63 +371,47 @@ class DynamicBayesianNetwork(nn.Module):
                             f"{missing[0]} (lag {lag}), where it does not exist{hint}."
                         )
                     lagged.add(base.name)
-        self.interface: List[str] = [n for n in self.variables if n in lagged]
 
-        self.initial = nn.ModuleList([self._network(cpds) for cpds in initial])
-        self.transition = self._network(transition)
-        # Kept for unroll(). Plain lists, so not registered: the networks above hold the modules.
-        self._cpds = lists
+        # Step networks first: they check the parents of each step, which _unrolled finds by name.
+        nets = [_network(cpds, templates) for cpds in lists]
+        super().__init__(*_unrolled(lists, templates, S))  # the network of steps 0..S
+        self._templates = templates
+        self.interface: List[str] = [n for n in by_name if n in lagged]
+        # Plain lists, so not registered: state_dict() would list their modules again.
+        self._steps, self._cpds = nets, lists
 
-    def _network(self, cpds: List[ParametricCPD]) -> BayesianNetwork:
-        """The static network of one step: its CPDs, with their modules, where a parent
-        ``c.previous(lag)`` is an observed root, ``c_prev`` or ``c_prev2`` and so on."""
-        prev: Dict[Tuple[str, int], Variable] = {}
-
-        def read(p: Variable) -> Variable:
-            base, lag = _lagged(p)
-            if not lag:
-                return p
-            if (base.name, lag) not in prev:
-                prev[(base.name, lag)] = _copy(base, lambda m: _prev(m, lag), Delta)
-            v = prev[(base.name, lag)]
-            return v if p._plate is None else v.member(_prev(p.name, lag))
-
-        clones = [_clone(cpd, cpd.variable, [read(p) for p in cpd.parents]) for cpd in cpds]
-        roots = list(prev.values())
-        taken = [
-            m for v in roots for m in dict.fromkeys([v.name, *v.members])
-            if m in self._addressable
-        ]
-        if taken:
-            raise ValueError(
-                f"Names {taken} are taken: the network of a step names the steps before with "
-                "the suffix '_prev'. Rename those variables or members."
-            )
-        here = {cpd.name for cpd in cpds}
-        return BayesianNetwork(
-            [*roots, *(v for v in self.variables.values() if v.name in here)],
-            [ParametricCPD(v, parametrization=FixedPrior(torch.zeros(v.shape))) for v in roots]
-            + clones,
-        )
+    def _apply(self, fn, recurse=True):
+        # The networks of the steps follow .to() too: the placeholder priors of their roots
+        # are theirs alone.
+        super()._apply(fn, recurse)
+        for net in self._steps:
+            net._apply(fn, recurse)
+        return self
 
     @property
-    def queryable_names(self) -> frozenset:
-        """Names that a query or the evidence can use, the variables and their members."""
-        return self._queryable_names
+    def initial(self) -> List[BayesianNetwork]:
+        """One network per step before the transition, ``initial[0]`` for step 0."""
+        return self._steps[:-1]
 
-    def resolve(self, name: str) -> Variable:
-        """The variable called ``name``, or the plate of the member called ``name``."""
-        return self._addressable[name]
+    @property
+    def transition(self) -> BayesianNetwork:
+        """The network of a later step."""
+        return self._steps[-1]
 
     def slices(self, name: str, horizon: int) -> range:
-        """The time slices (steps) of ``0..horizon`` at which ``name`` exists, as a ``range``."""
-        name, nets = self.resolve(name).name, [*self.initial, self.transition]
+        """The time slices (steps) of ``0..horizon`` at which ``name`` exists, as a ``range``.
+
+        ``name`` is the name of a variable as passed, or of one of its members, as in the keys
+        of :class:`~torch_concepts.nn.DynamicInference`, not a name per step such as ``c_1``.
+        """
+        name, nets = self._templates[name].name, [*self.initial, self.transition]
         steps = [s for s, net in enumerate(nets) if name in net.variables]
         last = horizon if steps[-1] == len(self.initial) else steps[-1]
         return range(steps[0], min(last, horizon) + 1)
 
     def unroll(self, horizon: int) -> BayesianNetwork:
-        """The network of steps ``0..horizon``, with one copy of each variable per step.
+        """The network of steps ``0..horizon``, with one copy of each variable per
+        step at which it exists.
 
         Variable ``c`` at step ``t`` is ``c_t``, and its member ``c1`` is
         ``c1_t``. The CPDs of every step hold the modules of this DBN, so the
@@ -352,23 +422,4 @@ class DynamicBayesianNetwork(nn.Module):
         """
         if horizon < 1:
             raise ValueError(f"horizon must be at least 1, got {horizon}.")
-        copies = {
-            (n, t): _copy(v, lambda m: _at(m, t))
-            for t in range(horizon + 1)
-            for n, v in self.variables.items()
-            if t in self.slices(n, horizon)
-        }
-
-        def read(p: Variable, t: int) -> Variable:
-            """A parent of a CPD at step ``t`` as the unrolled network holds it."""
-            base, lag = _lagged(p)
-            v = copies[(base.name, t - lag)]
-            return v if p._plate is None else v.member(_at(p.name, t - lag))
-
-        S = len(self.initial)
-        factors = [
-            _clone(cpd, copies[(cpd.name, t)], [read(p, t) for p in cpd.parents])
-            for t in range(horizon + 1)
-            for cpd in self._cpds[min(t, S)]
-        ]
-        return BayesianNetwork(list(copies.values()), factors)
+        return BayesianNetwork(*_unrolled(self._cpds, self._templates, horizon))

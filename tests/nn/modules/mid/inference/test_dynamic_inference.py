@@ -1,11 +1,14 @@
 """DynamicInference against the recursion of the model written in plain torch
-with the same modules.
+with the same modules, and as an engine: an ``nn.Module`` that holds the DBN,
+with one temperature for the engines of every horizon.
 
 The model is the one of ``test_dynamic_bayesian_network.py``: a window ``x`` at
 step 0 only; a plate ``c``, a hidden state ``h`` and a binary ``y`` at every
 step; a plate ``u`` from step 1 on. A binary chain runs the engines that
-condition on the evidence.
+condition on the evidence, and those with a temperature schedule.
 """
+import math
+
 import numpy as np
 import pytest
 import torch
@@ -15,9 +18,10 @@ import torch.nn as nn
 from torch_concepts.annotations import Annotations
 from torch_concepts.distributions import Delta
 from torch_concepts.nn import (
-    AncestralSamplingInference, BeliefPropagation, ConceptVariable, DeterministicInference,
+    AncestralSamplingInference, BaseInference, BeliefPropagation, ConceptVariable, DeterministicInference,
     DynamicBayesianNetwork, DynamicInference, EmbeddingVariable, FixedPrior, LearnablePrior,
     MAPForwardInference, ParametricCPD, PgmpyVariableElimination, RejectionSampling, VariationalInference,
+    plot_pgm,
 )
 from torch_concepts.tensor import AnnotatedTensor
 
@@ -234,10 +238,11 @@ def test_temperature_step_keeps_every_engine_at_the_same_temperature():
     engine.query(["z"], {("o", 1): o}, horizon=4)  # a new engine for a new horizon
     temperatures = {round(float(e.temperature), 6) for e in engine.engines.values()}
     assert len(engine.engines) == 2 and len(temperatures) == 1 and temperatures.pop() < 1.0
+    assert all(e._temperature is engine._temperature for e in engine.engines.values())
     before = [float(e.temperature) for e in engine.engines.values()]
-    dbn.eval()
+    engine.eval()
     engine.temperature_step()  # a no-op in eval mode
-    assert [float(e.temperature) for e in engine.engines.values()] == before
+    assert [float(e.temperature) for e in engine.engines.values()] == before and not dbn.training
 
 
 def test_a_plate_and_one_of_its_members_are_reported_once():
@@ -338,6 +343,114 @@ def test_rejection_sampling():
     assert ((p >= 0) & (p <= 1)).all()
 
 
+# --------------------------------------------------------------- as an engine ----
+
+def test_dynamic_inference_is_an_engine_on_the_dbn():
+    dbn, x = _model(), torch.randn(B, 3)
+    engine = DynamicInference(dbn)
+    assert isinstance(engine, BaseInference) and isinstance(engine, nn.Module) and engine.pgm is dbn
+    assert [id(p) for p in engine.parameters()] == [id(p) for p in dbn.parameters()]
+    assert repr(engine) == "DynamicInference(engine=DeterministicInference)" and engine.name == "DynamicInference"
+    # called as it is queried, with the horizon
+    assert torch.equal(engine(["c"], {"x": x}, horizon=2).value["c"].tensor,
+                       engine.query(["c"], {"x": x}, horizon=2).value["c"].tensor)
+
+
+def test_the_state_dict_holds_the_dbn_and_the_temperature():
+    o, schedule = torch.ones(3, 1), dict(annealing="exponential", annealing_rate=0.5, final_temperature=0.05)
+    engine = DynamicInference(_chain(), AncestralSamplingInference, **schedule)
+    keys = {"_temperature", *(f"pgm.{k}" for k in engine.pgm.state_dict())}
+    assert set(engine.state_dict()) == keys
+    for horizon in (2, 3):  # the engines of the horizons are not in it
+        engine.query(["z"], {("o", 1): o}, horizon=horizon)
+    engine.temperature_step()
+    assert set(engine.state_dict()) == keys
+    fresh = DynamicInference(_chain(), AncestralSamplingInference, **schedule)
+    fresh.load_state_dict(engine.state_dict())
+    fresh.query(["z"], {("o", 1): o}, horizon=2)
+    assert float(fresh.engines[2].temperature) == float(engine.temperature) < 1.0
+
+
+def test_load_state_dict_with_assign_reaches_an_engine_built_before():
+    # load_state_dict(assign=True) replaces the buffer of the temperature, as .to() does.
+    o = torch.ones(3, 1)
+    engine = DynamicInference(_chain(), AncestralSamplingInference)
+    engine.query(["z"], {("o", 1): o}, horizon=2)
+    state = engine.state_dict()
+    state["_temperature"] = torch.tensor(0.3)
+    engine.load_state_dict(state, assign=True)
+    engine.query(["z"], {("o", 1): o}, horizon=2)
+    assert engine.engines[2]._temperature is engine._temperature
+    assert float(engine.engines[2].temperature) == pytest.approx(0.3)
+
+
+def test_to_reaches_an_engine_built_before():
+    # .to() replaces the buffer of the temperature, which the next query gives to the engine.
+    o = torch.ones(3, 1)
+    engine = DynamicInference(_chain(), AncestralSamplingInference, annealing="exponential", annealing_rate=0.5)
+    engine.query(["z"], {("o", 1): o}, horizon=2)
+    engine.to(torch.float64)
+    engine.temperature_step()
+    out = engine.query(["z"], {("o", 1): o.double()}, horizon=2)
+    assert engine.engines[2]._temperature is engine._temperature and float(engine.temperature) < 1.0
+    assert engine.temperature.dtype == out.logits["z"].tensor.dtype == torch.float64
+
+
+def test_clear_cache_drops_the_engines():
+    engine, x = DynamicInference(_model()), torch.randn(B, 3)
+    before = engine.query(["c"], {"x": x}, horizon=2).value["c"].tensor
+    engine.clear_cache()
+    assert engine.engines == {}
+    assert torch.equal(engine.query(["c"], {"x": x}, horizon=2).value["c"].tensor, before)
+
+
+def test_the_engines_read_the_schedule_of_dynamic_inference():
+    # A function that takes the options of DynamicInference reads its schedule.
+    passed = DynamicInference(_chain(), lambda bn, **kw: AncestralSamplingInference(bn, **kw),
+                              initial_temperature=0.5)
+    passed.query(["z"], {("o", 1): torch.ones(3, 1)}, horizon=2)
+    assert float(passed.engines[2].temperature) == float(passed.temperature) == 0.5
+
+
+@pytest.mark.parametrize("own", [dict(initial_temperature=0.5), dict(annealing="exponential"),
+                                 dict(annealing_rate=0.5), dict(final_temperature=0.05)])
+def test_an_engine_with_a_schedule_of_its_own_raises(own):
+    engine = DynamicInference(_chain(), lambda bn: AncestralSamplingInference(bn, **own))
+    for _ in range(2):  # at every query: the engine is not kept
+        with pytest.raises(ValueError, match="pass the schedule to DynamicInference"):
+            engine.query(["z"], {("o", 1): torch.ones(3, 1)}, horizon=2)
+
+
+def test_the_schedule_steps_every_engine_and_reaches_its_floor():
+    o = torch.ones(3, 1)
+    engine = DynamicInference(_chain(), AncestralSamplingInference,
+                              annealing="exponential", annealing_rate=0.5, final_temperature=0.05)
+    engine.query(["z"], {("o", 1): o}, horizon=2)
+    engine.temperature_step()
+    engine.query(["z"], {("o", 1): o}, horizon=4)  # a second engine, then one more step
+    engine.temperature_step()
+    assert [float(e.temperature) for e in engine.engines.values()] == pytest.approx([math.exp(-1.0)] * 2)
+    for _ in range(10):
+        engine.temperature_step()
+    assert float(engine.temperature) == pytest.approx(0.05)
+
+
+def test_the_constructors_draw_no_random_numbers():
+    # so that building a model does not change the random numbers of what follows
+    c = _plate("c")
+    initial, transition = [_cpd(c)], [_cpd(c, c.previous())]
+    state = torch.get_rng_state()
+    DynamicInference(DynamicBayesianNetwork([c], initial, transition))
+    assert torch.equal(torch.get_rng_state(), state)
+
+
+def test_plot_pgm_draws_the_dbn_of_an_engine(tmp_path):
+    pytest.importorskip("matplotlib", reason="plot_pgm needs matplotlib")
+    path = tmp_path / "engine.pdf"
+    plot_pgm(DynamicInference(_model()), path)
+    assert path.read_bytes().startswith(b"%PDF")
+
+
 # ------------------------------------------------------------------ errors ----
 
 def test_horizon_must_be_at_least_1():
@@ -356,6 +469,10 @@ def test_horizon_must_be_at_least_1():
     ([("c", 2)], {("c", 2): torch.zeros(B, 2)}, "both queried and observed"),
     ([("y", 3)], {("c", 2): torch.zeros(B, 2), ("c_a", 2): torch.ones(B, 1)}, "and their plate"),
     (["c", "u"], {}, "same steps"),
+    # the names listed are those of the model, not those of the network of its first steps
+    ([("nope", 2)], {}, r"Unknown query name 'nope'; the names are \['c', 'c_a', 'c_b', 'h', 'u'"),
+    (["c"], {("nope", 1): torch.zeros(B, 2)}, "Unknown evidence name 'nope'"),
+    (["c_2"], {}, "Unknown query name 'c_2'"),  # c at step 2 is ("c", 2)
 ])
 def test_invalid_queries_raise(query, evidence, match):
     with pytest.raises(ValueError, match=match):
@@ -377,3 +494,26 @@ def test_a_step_may_be_any_integer():
 def test_a_static_network_raises():
     with pytest.raises(TypeError, match="DynamicBayesianNetwork"):
         DynamicInference(_model().initial[0])
+
+
+def test_p_int_is_checked_at_construction():
+    with pytest.raises(ValueError, match="p_int"):
+        DynamicInference(_model(), p_int=2.0)
+    assert DynamicInference(_model(), p_int=1.0).p_int == 1.0
+
+
+def test_steps_that_report_different_parameters_raise():
+    # z is parametrized by its logits at step 0 and by its probabilities after.
+    z = ConceptVariable("z", distribution=dist.Bernoulli)
+    dbn = DynamicBayesianNetwork(
+        variables=[z],
+        initial=[ParametricCPD(z, parametrization={"logits": LearnablePrior(1)})],
+        transition=[ParametricCPD(z, parents=[z.previous()],
+                                  parametrization={"probs": nn.Sequential(nn.Linear(1, 1), nn.Sigmoid())})],
+    )
+    engine = DynamicInference(dbn)
+    with pytest.raises(ValueError, match="same parameters at every step"):
+        engine.query(["z"], horizon=2)
+    # Queried separately, as the message says.
+    assert engine.query([("z", 0)], horizon=2).logits["z"].shape == (1, 1, 1)
+    assert engine.query([("z", 1), ("z", 2)], horizon=2).probs["z"].shape == (1, 2, 1)
