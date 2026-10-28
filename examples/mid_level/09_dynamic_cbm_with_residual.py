@@ -9,17 +9,16 @@ from the data, plus a learned *residual* ``r``, and an alarm head reads the
 alarm from the concepts::
 
     c_0 = E_c(x),   h_0 = E_h(x)
-    c_t = f(c_{t-1}) + r_t,   r_t = G([c_{t-1}, h_{t-1}])
+    c_t = f(c_{t-1}) + r_t,   r_t = MLP([c_{t-1}, h_{t-1}])
     h_t = A [c_{t-1}, c_t, h_{t-1}] + d,   alarm_t ~ Bernoulli(sigmoid(g(c_t)))
 
 with ``c`` the health, ``h`` the hidden state, ``E_c`` and ``E_h`` the two
-encoders, ``G`` the MLP of the residual, ``A`` and ``d`` the hidden update
-and ``g`` the alarm head. The hidden state carries what the concepts miss,
-and acts only through ``r``: ``do(r = 0)`` gives back the mechanism alone,
-and every forecast and every alarm passes through the concepts. Every
-equation is a CPD of a dynamic Bayesian network, all of them deterministic
-but the alarm's; ``08_dynamic_concept_bottleneck_model.py`` introduces the
-classes.
+encoders, ``A`` and ``d`` the hidden update and ``g`` the alarm head. The
+hidden state carries what the concepts miss, and acts only through ``r``:
+``do(r = 0)`` gives back the mechanism alone, and every forecast and every
+alarm passes through the concepts. Every equation is a CPD of a dynamic
+Bayesian network, all of them deterministic but the alarm's;
+``08_dynamic_concept_bottleneck_model.py`` introduces the classes.
 
 Data: ``WearDataset``, as in ``08_dynamic_concept_bottleneck_model.py``. A worn
 component wears faster, which the mechanism models; each machine also has a
