@@ -6,17 +6,20 @@ SIIM-ACR contains chest radiographs with a native binary ``pneumothorax``
 concept. Downloading requires Kaggle credentials; a community DICOM re-host is
 several GB, even when this example uses only 256 samples.
 
-The example also scores a small set of concepts with CLIP. The standardized
-scores are relative to this example's samples, not clinical probabilities.
+The example also scores a small set of concepts with CXR-CLIP, a CLIP pretrained
+on chest radiographs and their reports. Its checkpoint (``r50_mcc.tar``, CC BY-NC
+4.0) is downloaded by hand from https://github.com/Soombit-ai/cxr-clip into
+``~/.cache/pyc/cxr_clip``. The standardized scores are relative to this example's
+samples, not clinical probabilities.
 """
 # %%
 from torch_concepts import seed_everything
 from torch_concepts.data import PneumothoraxDataModule
 from torch_concepts.data.generation import ConceptGenerationPipeline
-from torch_concepts.data.generation.annotators import CLIPAnnotator
+from torch_concepts.data.generation.annotators import CXRCLIPAnnotator
 from torch_concepts.data.generation.calibrators import SigmoidCalibrator
 from torch_concepts.data.generation.generators import FixedConceptGenerator
-from torch_concepts.env import DATA_ROOT
+from torch_concepts.env import CACHE, DATA_ROOT
 
 seed_everything(42)
 
@@ -56,15 +59,15 @@ pipeline = ConceptGenerationPipeline(
         types=["binary"] * len(CONCEPTS),
         cardinalities=[1] * len(CONCEPTS),
     ),
-    annotators=CLIPAnnotator(
-        model_name="openai/clip-vit-large-patch14",
+    annotators=CXRCLIPAnnotator(
+        checkpoint=CACHE / "cxr_clip" / "r50_mcc.tar",
         prompt_template="{}",
         batch_size=8,
         show_progress=True,
     ),
     calibrator=SigmoidCalibrator(standardize=True),
 )
-generated = pipeline(dm.dataset)["CLIPAnnotator"]
+generated = pipeline(dm.dataset)["CXRCLIPAnnotator"]
 print(f"Generated: {tuple(generated.shape)}")
 
 for index, label in enumerate(generated.annotation.labels):

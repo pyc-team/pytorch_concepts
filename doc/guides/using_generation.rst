@@ -167,6 +167,12 @@ Pipeline steps
 
       annotator = CLIPAnnotator(model_name="openai/clip-vit-base-patch32", batch_size=64)
 
+   For chest radiographs,
+   :class:`~torch_concepts.data.generation.annotators.CXRCLIPAnnotator` scores
+   with CXR-CLIP, pretrained on chest X-rays and their reports, from a checkpoint
+   downloaded by hand (see the
+   :doc:`pneumothorax example </auto_examples/data/07_pneumothorax>`).
+
    See :doc:`Annotations and tensors </modules/low_level_api>`.
 
 

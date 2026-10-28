@@ -71,6 +71,8 @@ All on Color-MNIST (`digit` and `color` as concepts, `parity` as task), except w
 | [03_color_mnist](data/03_color_mnist.py) | Color-MNIST with and without a color shortcut |
 | [04_celeba_embeddings](data/04_celeba_embeddings.py) | Computing backbone embeddings once and training on them (CelebA) |
 | [05_label_free_concepts](data/05_label_free_concepts.py) | Generating concepts with an LLM and CLIP (needs an LLM API key) |
+| [06_ham10000](data/06_ham10000.py) | Native skin-lesion concepts, and concepts scored by CLIP (HAM10000, a few GB) |
+| [07_pneumothorax](data/07_pneumothorax.py) | A native pneumothorax label, and concepts scored by CXR-CLIP (SIIM-ACR; needs Kaggle credentials and the CXR-CLIP checkpoint) |
 
 `steerling/` holds examples for the Steerling language model (needs the `steerling` package and ~16 GB of
 weights).
