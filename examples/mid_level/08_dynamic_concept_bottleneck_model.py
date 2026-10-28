@@ -15,10 +15,10 @@ The model is a dynamic Bayesian network (DBN): the CPDs of step 0, and the
 CPDs of a step ``t >= 1`` given step ``t - 1``, the same at every step (a
 two-slice temporal Bayes net, 2TBN). ``DynamicInference`` unrolls it over the
 horizon, one copy of each variable per step (``health_0``, ``health_1``, ...),
-and runs the engine of a static model on that network: a forward engine to
-train and forecast, or an engine that conditions on the evidence, which a
-query about an earlier step given a later one needs. The last section runs
-the model one step at a time instead, by hand.
+and runs a static engine on that network: a forward engine to train and
+forecast, or an engine that conditions on the evidence, which a query about
+an earlier step given a later one needs. The last section runs the model one
+step at a time instead, by hand.
 
 Data: ``WearDataset``, a fleet of machines with two components whose health,
 0 when new, drops at every step; the alarm fires when the mean health drops
@@ -45,6 +45,9 @@ from torch_concepts.nn import (
     DynamicInference,
     FixedPrior,
     GlobalScale,
+    LinearConceptToConcept,
+    MLPConceptToConcept,
+    MLPEmbeddingToConcept,
     ParametricCPD,
     RejectionSampling,
     Sequential,
@@ -83,25 +86,24 @@ alarm = ConceptVariable("alarm", distribution=Bernoulli)
 # -----
 # ``initial`` holds the CPDs of step 0 and ``transition`` those of a step
 # ``t >= 1``, where ``health.previous()`` is the health at step ``t - 1`` and
-# every other parent is at step ``t``. A transition may also read older steps,
-# ``health.previous(2)`` for ``t - 2``: ``initial`` then holds one list of CPDs
-# per step before the transition starts. The health is read at the step before,
+# every other parent is at step ``t``. The health is read at the step before,
 # so it is the *interface*: what each step passes to the next. The alarm CPD
 # is one object in both lists, so every step uses the same alarm head.
 # ``GlobalScale`` with ``learnable=False`` keeps ``sigma`` fixed. The window is
 # always observed, so its prior is a placeholder.
 encoder = torch.nn.Sequential(
     torch.nn.Flatten(-2),
-    torch.nn.Linear(W * D, 64),
-    torch.nn.GELU(),
-    torch.nn.Linear(64, 2),
+    MLPEmbeddingToConcept(
+        in_embeddings=W * D, out_concepts=2, hidden_size=64, activation="gelu"
+    ),
 )
 noise = Sequential(GlobalScale(2, init=0.1, learnable=False), torch.nn.Softplus())
+alarm_head = LinearConceptToConcept(in_concepts=2, out_concepts=1)
 alarm_cpd = ParametricCPD(
-    alarm, parents=[health], parametrization={"logits": torch.nn.Linear(2, 1)}
+    alarm, parents=[health], parametrization={"logits": alarm_head}
 )
-dynamics = torch.nn.Sequential(
-    torch.nn.Linear(2, 32), torch.nn.GELU(), torch.nn.Linear(32, 2)
+dynamics = MLPConceptToConcept(
+    in_concepts=2, out_concepts=2, hidden_size=32, activation="gelu"
 )
 model = DynamicBayesianNetwork(
     variables=[sensors, health, alarm],
