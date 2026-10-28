@@ -34,6 +34,7 @@ from .datasets.dsprites_regression import DSpritesRegressionDataset
 from .datasets.awa2 import AWA2Dataset
 from .datasets.cub import CUBDataset
 from .datasets.ham10000 import HAM10000Dataset
+from .datasets.wear import WearDataset
 
 # Re-export datamodules for convenient access
 from .datamodules.bnlearn import BnLearnDataModule
@@ -76,6 +77,7 @@ __all__ = [
     "AWA2Dataset",
     "CUBDataset",
     "HAM10000Dataset",
+    "WearDataset",
 
     # DataModules
     "BnLearnDataModule",

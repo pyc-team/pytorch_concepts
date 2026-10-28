@@ -231,6 +231,9 @@ class Variable(ABC):
         }
         # Set on a member view returned by ``member()``; points back to the plate.
         self._plate: Optional["Variable"] = None
+        # Set on the handle returned by ``previous()``: the variable, and how many steps back.
+        self._previous_of: Optional["Variable"] = None
+        self._lag: int = 0
 
     @property
     def is_plate(self) -> bool:
@@ -472,6 +475,38 @@ class Variable(ABC):
         )
         # Set the back-reference to the owning plate.
         view._plate = self
+        return view
+
+    def previous(self, lag: int = 1) -> "Variable":
+        """A handle to this variable ``lag`` time steps before, one by default.
+
+        In a CPD of step ``t`` of a :class:`~torch_concepts.nn.DynamicBayesianNetwork`,
+        for this variable ``z``, ``parents=[z.previous()]`` is the arc from ``z``
+        at step ``t - 1`` to the child at step ``t``, and ``z.previous(2)`` reads
+        step ``t - 2``. The handle has the name, distribution and members of this
+        variable; for a single member, take it from the handle, as in
+        ``z.previous().member("z1")``.
+        """
+        if self._plate is not None or self._previous_of is not None:
+            raise ValueError(
+                f"{type(self).__name__}({self.name!r}): previous() takes a variable "
+                "or a plate, not a member or a handle from previous(). For a member "
+                "of the previous step use plate.previous().member(name); for an "
+                "older step, previous(lag)."
+            )
+        if lag < 1:
+            raise ValueError(f"lag must be at least 1, got {lag}.")
+        layout = (
+            {"size": self.member_size, "members": self.members}
+            if self.is_plate else {"shape": self.member_shape}
+        )
+        view = type(self)(
+            self.name,
+            distribution=self.distribution,
+            dist_kwargs=copy.deepcopy(self.dist_kwargs),
+            **layout,
+        )
+        view._previous_of, view._lag = self, lag
         return view
 
     @property

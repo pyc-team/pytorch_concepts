@@ -86,6 +86,7 @@ from .modules.mid.factors.potential import ParametricPotential
 from .modules.mid.graph.probabilistic_model import ProbabilisticModel
 from .modules.mid.graph.bayesian_network import BayesianNetwork
 from .modules.mid.graph.markov_network import MarkovNetwork
+from .modules.mid.graph.dynamic_bayesian_network import DynamicBayesianNetwork
 from .modules.mid.graph.plot import plot_pgm
 from .modules.mid.variable import Variable, ConceptVariable, EmbeddingVariable
 
@@ -110,6 +111,8 @@ from .modules.mid.inference.torch.belief_propagation import BeliefPropagation
 from .modules.mid.inference.pgmpy.variable_elimination import PgmpyVariableElimination
 # pyro
 from .modules.mid.inference.pyro.variational import VariationalInference
+# any engine on a dynamic Bayesian network
+from .modules.mid.inference.dynamic import DynamicInference
 
 # Intervention module and context manager
 from .modules.low.base.intervention import InterventionModule, intervention
@@ -225,6 +228,7 @@ __all__ = [
     "ProbabilisticModel",
     "BayesianNetwork",
     "MarkovNetwork",
+    "DynamicBayesianNetwork",
     "plot_pgm",
     "Variable",
     "ConceptVariable",
@@ -247,6 +251,7 @@ __all__ = [
     "PyroBaseInference",
     "PgmpyBaseInference",
     "VariationalInference",
+    "DynamicInference",
 
     # Interventions
     "InterventionModule",
