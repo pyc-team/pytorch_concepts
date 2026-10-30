@@ -57,17 +57,26 @@ seed_everything(42)
 # %%
 # Data
 # ----
-# Each sample is one machine: a window of ``W`` steps with ``D`` channels, and
-# the health of its two components and the alarm from the last step of the
-# window to ``H`` steps after it, ``(n, H + 1, 3)``.
-dataset = WearDataset(n_gen=1500, root=str(DATA_ROOT / "wear"))
-W, H, D = dataset.window, dataset.horizon, dataset.input_data.shape[-1]
-x = dataset.input_data
-c = dataset.concepts[["health_A", "health_B"]]
-y = dataset.concepts[["alarm"]]
-x_train, x_test = x[:1000], x[1000:]
-c_train, c_test = c[:1000], c[1000:]
-y_train, y_test = y[:1000], y[1000:]
+# Each machine runs for 30 steps, enough for almost all of them to reach the
+# alarm. A sample is a window of ``W + H`` steps of one machine: ``D``
+# channels, the health of its two components and the alarm. A window starts
+# every 2 steps, so the samples cover every stage of wear. The model reads the
+# first ``W`` steps, ``x``, and forecasts the health ``c`` and the alarm ``y``
+# from the last of them to ``H`` steps after it. The windows of a machine
+# overlap, so the split is by machine: ``dataset.series`` is the machine of
+# each window, and the last 500 machines are only for testing.
+W, H = 8, 12
+dataset = WearDataset(
+    n_gen=1500, n_steps=30, window=W + H, stride=2, root=str(DATA_ROOT / "wear")
+)
+x = dataset.input_data[:, :W]
+c = dataset.concepts[:, W - 1:][["health_A", "health_B"]]
+y = dataset.concepts[:, W - 1:][["alarm"]]
+train, test = dataset.series < 1000, dataset.series >= 1000
+x_train, x_test = x[train], x[test]
+c_train, c_test = c[train], c[test]
+y_train, y_test = y[train], y[test]
+D = dataset.input_data.shape[-1]
 
 # %%
 # Variables
@@ -125,31 +134,31 @@ engine = DynamicInference(model, DeterministicInference, p_int=1.0)
 # %%
 # Training
 # --------
-# A name in the query covers all the steps of its variable: ``c_train`` is
-# ``(n, H + 1, 2)``, and so is the predicted health. The sensors exist only at
-# step 0, so their tensor has no time axis. With ``p_int=1`` the children of
+# A name in the query covers all the steps of its variable: ``c`` is
+# ``(batch, H + 1, 2)``, and so is the predicted health. The sensors exist only
+# at step 0, so their tensor has no time axis. With ``p_int=1`` the children of
 # the health read the true health, while the query reports the prediction
 # (teacher forcing).
 optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 health_loss_fn = torch.nn.MSELoss()
 alarm_loss_fn = torch.nn.BCEWithLogitsLoss()
-for epoch in range(1000):
-    optimizer.zero_grad()
-    out = engine.query(
-        {"health": c_train, "alarm": None}, evidence={"sensors": x_train}, horizon=H
-    )
-    health_loss = health_loss_fn(out.loc["health"], c_train)
-    alarm_loss = alarm_loss_fn(out.logits["alarm"], y_train)
-    loss = health_loss + alarm_loss
-    loss.backward()
-    optimizer.step()
+for epoch in range(25):
+    for batch in torch.randperm(len(x_train)).split(100):  # shuffled minibatches
+        x, c, y = x_train[batch], c_train[batch], y_train[batch]
+        optimizer.zero_grad()
+        out = engine.query({"health": c, "alarm": None}, evidence={"sensors": x}, horizon=H)
+        health_loss = health_loss_fn(out.loc["health"], c)
+        alarm_loss = alarm_loss_fn(out.logits["alarm"], y)
+        loss = health_loss + alarm_loss
+        loss.backward()
+        optimizer.step()
 
 # %%
 # Evaluation
 # ----------
-# The forecast from the window alone. The error grows with the horizon: the
-# transition reads only the health of the step before, and each machine has a
-# load that no concept records.
+# The forecast from the sensors alone, on the test windows. The error grows
+# with the horizon: the transition reads only the health of the step before,
+# and each machine has a load that no concept records.
 with torch.no_grad():
     out = engine.query(["health", "alarm"], evidence={"sensors": x_test}, horizon=H)
 rmse = ((out.loc["health"] - c_test) ** 2).mean((0, 2)).sqrt()

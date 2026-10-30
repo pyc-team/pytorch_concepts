@@ -19,6 +19,7 @@ supervision to a dataset.
    :nosignatures:
 
    ConceptDataset
+   DynamicConceptDataset
 
 .. autosummary::
    :toctree: generated

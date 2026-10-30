@@ -22,9 +22,9 @@ classes.
 
 Data: ``WearDataset``, as in ``08_dynamic_concept_bottleneck_model.py``. A worn
 component wears faster, which the mechanism models. Each machine also has a
-load that no concept records, so the hidden state has to estimate it. The
-readings depend on the health through operating conditions that drift over
-time, so both encoders are small recurrent networks (GRU).
+load that no concept records, so the hidden state has to estimate it. It reads
+the load from how fast the health drops along the window, so the window has
+several steps and both encoders are small recurrent networks (GRU).
 
 References: Murphy, "Dynamic Bayesian Networks: Representation, Inference and
 Learning", PhD thesis, UC Berkeley, 2002; Arias Chao et al., "Aircraft Engine
@@ -56,15 +56,20 @@ seed_everything(42)
 # %%
 # Data
 # ----
-# As in ``08_dynamic_concept_bottleneck_model.py``.
-dataset = WearDataset(n_gen=1500, root=str(DATA_ROOT / "wear"))
-W, H, D = dataset.window, dataset.horizon, dataset.input_data.shape[-1]
-x = dataset.input_data
-c = dataset.concepts[["health_A", "health_B"]]
-y = dataset.concepts[["alarm"]]
-x_train, x_test = x[:1000], x[1000:]
-c_train, c_test = c[:1000], c[1000:]
-y_train, y_test = y[:1000], y[1000:]
+# As in ``08_dynamic_concept_bottleneck_model.py``: windows of ``W + H`` steps,
+# split by machine.
+W, H = 8, 12
+dataset = WearDataset(
+    n_gen=1500, n_steps=30, window=W + H, stride=2, root=str(DATA_ROOT / "wear")
+)
+x = dataset.input_data[:, :W]
+c = dataset.concepts[:, W - 1:][["health_A", "health_B"]]
+y = dataset.concepts[:, W - 1:][["alarm"]]
+train, test = dataset.series < 1000, dataset.series >= 1000
+x_train, x_test = x[train], x[test]
+c_train, c_test = c[train], c[test]
+y_train, y_test = y[train], y[test]
+D = dataset.input_data.shape[-1]
 
 # %%
 # Variables
@@ -83,7 +88,7 @@ r = ConceptVariable("r", distribution=Delta, size=2)
 # -----
 # The mechanism lowers the health at every step by ``a * relu(-c) + b``, so a
 # worn component wears faster. Its rates are fitted once per component, by
-# least squares on the first transition of every training machine, and then
+# least squares on the first forecast step of every training window, and then
 # stay fixed. The fit does not see the load, so it finds the average law of the
 # fleet: the data follows ``a = dataset.alpha`` and ``b = 0``, plus the load of
 # each machine.
@@ -150,7 +155,7 @@ engine = DynamicInference(model, DeterministicInference, p_int=1.0)
 # %%
 # Training
 # --------
-# Two queries per epoch. The first uses teacher forcing, as in
+# Two queries per batch. The first uses teacher forcing, as in
 # ``08_dynamic_concept_bottleneck_model.py``: the concept encoder fits step 0
 # and the alarm head reads true concepts. With the true health at two
 # consecutive steps, the hidden update can read the wear of each step, and so
@@ -160,28 +165,26 @@ engine = DynamicInference(model, DeterministicInference, p_int=1.0)
 optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
 health_loss_fn = torch.nn.MSELoss()
 alarm_loss_fn = torch.nn.BCEWithLogitsLoss()
-for epoch in range(600):
-    optimizer.zero_grad()
-    teacher = engine.query(
-        {"health": c_train, "alarm": None}, evidence={"sensors": x_train}, horizon=H
-    )
-    free = engine.query(
-        {"health": None, ("health", 0): c_train[:, 0]},
-        evidence={"sensors": x_train},
-        horizon=H,
-    )
-    loss = (
-        health_loss_fn(teacher.value["health"], c_train)
-        + alarm_loss_fn(teacher.logits["alarm"], y_train)
-        + health_loss_fn(free.value["health"], c_train)
-    )
-    loss.backward()
-    optimizer.step()
+for epoch in range(50):
+    for batch in torch.randperm(len(x_train)).split(100):  # shuffled minibatches
+        x, c, y = x_train[batch], c_train[batch], y_train[batch]
+        optimizer.zero_grad()
+        teacher = engine.query({"health": c, "alarm": None}, evidence={"sensors": x}, horizon=H)
+        free = engine.query(
+            {"health": None, ("health", 0): c[:, 0]}, evidence={"sensors": x}, horizon=H
+        )
+        loss = (
+            health_loss_fn(teacher.value["health"], c)
+            + alarm_loss_fn(teacher.logits["alarm"], y)
+            + health_loss_fn(free.value["health"], c)
+        )
+        loss.backward()
+        optimizer.step()
 
 # %%
 # Evaluation
 # ----------
-# Three forecasts of the test machines: the full model; the mechanism alone,
+# Three forecasts on the test windows: the full model; the mechanism alone,
 # with ``r = 0`` at every step (``r`` exists at steps 1 to ``H``, so its
 # evidence has ``H`` steps); and the full model with the true health given at
 # ``t = 4``, from which the forecast and the alarm go on (the row still reports
