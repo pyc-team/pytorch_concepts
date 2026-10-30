@@ -25,7 +25,8 @@ class DynamicConceptDataset(ConceptDataset):
     Attributes:
         n_series (int): Number of series, ``N``.
         start (Tensor): First step of each sample, for splits in time.
-        series (Tensor): Series of each sample, for splits by series.
+        series (Tensor): Series of each sample, for splits by series; None
+            with ``flatten_series=False``.
 
     Args:
         input_data: Input series, ``(T, N, F)`` or ``(T, F)``.
@@ -34,6 +35,10 @@ class DynamicConceptDataset(ConceptDataset):
         window: Steps per sample (default: ``T``).
         stride: Steps from the start of one window to the start of the next
             (default: ``window``, so windows do not overlap).
+        flatten_series: Flatten the series into the sample axis, one series
+            per sample (default: True). If False, each sample holds all the
+            series, ``(window, N, F)`` and ``(window, N, C)``, as in
+            torch-spatiotemporal.
         **kwargs: Passed to :class:`ConceptDataset`.
 
     Example:
@@ -58,6 +63,7 @@ class DynamicConceptDataset(ConceptDataset):
         annotations: Optional[Annotations] = None,
         window: Optional[int] = None,
         stride: Optional[int] = None,
+        flatten_series: bool = True,
         **kwargs,
     ):
         if input_data.dim() == 2:  # a single series
@@ -67,13 +73,14 @@ class DynamicConceptDataset(ConceptDataset):
         window = window or n_steps
         stride = stride or window
 
-        def samples(series):  # (T, N, ...) -> (n_windows * N, window, ...)
-            return series.unfold(0, window, stride).movedim(-1, 2).flatten(0, 1)
+        def samples(series):  # (T, N, ...)
+            windows = series.unfold(0, window, stride)  # (n_windows, N, ..., window)
+            return windows.movedim(-1, 2).flatten(0, 1) if flatten_series else windows.movedim(-1, 1)
 
         inputs = samples(input_data)  # unfold raises if window > T
-        self.start, self.series = torch.cartesian_prod(
-            torch.arange(0, n_steps - window + 1, stride), torch.arange(self.n_series)
-        ).T
+        self.start, self.series = torch.arange(0, n_steps - window + 1, stride), None
+        if flatten_series:
+            self.start, self.series = torch.cartesian_prod(self.start, torch.arange(self.n_series)).T
         super().__init__(
             inputs, samples(concepts) if concepts is not None else None, annotations, **kwargs
         )
@@ -81,4 +88,5 @@ class DynamicConceptDataset(ConceptDataset):
     def _subset_rows(self, indices) -> None:
         """Subset the samples and keep ``start`` and ``series`` aligned with them."""
         super()._subset_rows(indices)
-        self.start, self.series = self.start[indices], self.series[indices]
+        self.start = self.start[indices]
+        self.series = self.series[indices] if self.series is not None else None

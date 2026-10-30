@@ -42,6 +42,16 @@ def test_sliding_windows_are_a_view_of_the_series():
     assert dataset.input_data.untyped_storage().data_ptr() == x.untyped_storage().data_ptr()
 
 
+def test_samples_with_all_the_series():
+    x, c = series()
+    dataset = DynamicConceptDataset(x, c, ANNOTATIONS, window=10, stride=5, flatten_series=False)
+    assert tuple(dataset.input_data.shape) == (5, 10, 4, 3)       # 5 windows, each with the 4 series
+    assert torch.equal(dataset.input_data[1], x[5:15])             # steps 5 to 14 of every series
+    assert torch.equal(dataset.start, torch.arange(0, 21, 5)) and dataset.series is None
+    ConceptDataModule(dataset, max_samples=3, seed=0)
+    assert len(dataset.start) == 3 and dataset.series is None
+
+
 def test_a_single_series_and_inputs_only():
     x, c = series()
     single = DynamicConceptDataset(x[:, 0], c[:, 0], ANNOTATIONS, window=10, stride=1)
