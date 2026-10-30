@@ -118,6 +118,43 @@ class ConceptBottleneckModel(BipartiteModel):
             train_inference_kwargs,
         )
 
+    def _linear_heads(self):
+        """Resolve the supported deterministic continuous → categorical heads."""
+        concepts = self.intermediate_concept_names
+        if (not concepts or self.plate is False or len(self.task_names) != 1
+                or any(self.concept_annotations.concept(name).type != "continuous"
+                       or self.concept_annotations.concept(name).cardinality != 1
+                       or self.distribution_of(name) is not Delta for name in concepts)
+                or self.concept_annotations.concept(self.task_names[0]).type != "categorical"
+                or self.distribution_of(self.task_names[0]) is not OneHotCategorical):
+            raise ValueError("Linear heads require plated scalar Delta concepts and one categorical task.")
+        encoder = self.pgm.factors["concepts"].parametrization["value"]
+        classifier = self.pgm.factors["tasks"].parametrization["logits"]
+        if not isinstance(encoder, LinearEmbeddingToConcept) or not isinstance(classifier, LinearConceptToConcept):
+            raise ValueError("Linear heads require the standard CBM linear parametrizations.")
+        return encoder, classifier
+
+    @torch.no_grad()
+    def set_linear_heads(self, concept_weight, concept_bias, task_weight, task_bias):
+        """Install fitted heads for scalar deterministic concepts and one task.
+
+        Rows follow ``intermediate_concept_names`` and task state order; task
+        columns follow the same concept order. All shapes and finite values are
+        checked before copying. Other CBM configurations are unsupported.
+        The caller supplies any normalization already folded into the heads.
+        """
+        encoder, classifier = self._linear_heads()
+        pairs = ((encoder.encoder.weight, concept_weight), (encoder.encoder.bias, concept_bias),
+                 (classifier.predictor.weight, task_weight), (classifier.predictor.bias, task_bias))
+        for parameter, value in pairs:
+            if not isinstance(value, torch.Tensor) or value.shape != parameter.shape:
+                raise ValueError(f"Linear head shape must be {tuple(parameter.shape)}.")
+            if not torch.isfinite(value).all():
+                raise ValueError("Linear head parameters must be finite.")
+        for parameter, value in pairs:
+            parameter.copy_(value)
+        return self
+
     def _input_latent_block(self):
         """Raw input → latent block.
 
