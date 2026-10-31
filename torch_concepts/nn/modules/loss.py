@@ -10,9 +10,21 @@ from torch import nn
 from .utils import TYPES, by_type, check_collection
 from .outputs import (CONTINUOUS_QUANTITIES, DISCRETE_QUANTITIES, InferenceOutput,
                       resolve_quantity, supervised_subset)
-from ..functional import concept_orthogonality
+from ..functional import concept_orthogonality, cosine_cubed_similarity
 from ...concept_graph import ConceptGraph
 from ...tensor import AnnotatedTensor
+
+
+class CosineCubedLoss(nn.Module):
+    """Negative mean cosine-cubed alignment for sample-by-concept tensors.
+
+    Minimizing this LF-CBM objective aligns projected activations (``input``)
+    with reference similarities (``target``). It can also be supplied as the
+    continuous loss in :class:`ConceptLoss`.
+    """
+
+    def forward(self, input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+        return -cosine_cubed_similarity(input, target).mean()
 
 
 def _get_forward_signature(module: nn.Module):
