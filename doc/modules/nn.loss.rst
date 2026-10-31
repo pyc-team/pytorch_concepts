@@ -21,5 +21,6 @@ for how they fit together.
    KLDivergenceLoss
    OrthogonalityLoss
    NLLProbLoss
+   CosineCubedLoss
    L1LogitRegularizer
    LossWeightWarmup

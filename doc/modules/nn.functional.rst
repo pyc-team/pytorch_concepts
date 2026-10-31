@@ -15,6 +15,7 @@ Concept Operations
 
    grouped_concept_exogenous_mixture
    concept_orthogonality
+   cosine_cubed_similarity
    selection_eval
    confidence_selection
    soft_select

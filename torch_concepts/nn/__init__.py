@@ -31,6 +31,7 @@ from .modules.mid.activations import DefaultActivation
 
 # Encoders
 from .modules.low.encoders.linear import LinearEmbeddingToConcept
+from .modules.low.encoders.aligned import AlignedEmbeddingToConcept
 from .modules.low.encoders.mlp import MLPEmbeddingToConcept
 from .modules.low.encoders.whitening import ConceptWhitening, WhitenedEmbeddingToConcept
 from .modules.low.encoders.cav import CAVEmbeddingToConcept
@@ -39,6 +40,7 @@ from .modules.low.encoders.cav import CAVEmbeddingToConcept
 from .modules.low.predictors.call import CallableConceptToConcept
 from .modules.low.predictors.hypernet import HyperlinearConceptEmbeddingToConcept
 from .modules.low.predictors.linear import LinearConceptToConcept
+from .modules.low.predictors.sparse import SparseLinearConceptToConcept
 from .modules.low.predictors.mlp import MLPConceptToConcept
 from .modules.low.predictors.mix import MixConceptEmbeddingToConcept, \
     MixConceptEmbeddings
@@ -53,7 +55,7 @@ from .modules.low.graph.wanda import WANDAGraphLearner
 # Loss functions
 from .modules.loss import PyCLoss, ConceptLoss, ConceptSubset, WeightedConceptLoss, \
     DepthWeightedConceptLoss, L1LogitRegularizer, CompositeLoss, \
-    MSEReconstructionLoss, KLDivergenceLoss, OrthogonalityLoss, NLLProbLoss
+    MSEReconstructionLoss, KLDivergenceLoss, OrthogonalityLoss, NLLProbLoss, CosineCubedLoss
 
 # Training callbacks
 from .modules.callbacks import LossWeightWarmup
@@ -149,6 +151,7 @@ __all__ = [
 
     # Encoder classes
     "LinearEmbeddingToConcept",
+    "AlignedEmbeddingToConcept",
     "MLPEmbeddingToConcept",
     "ConceptWhitening",
     "WhitenedEmbeddingToConcept",
@@ -156,6 +159,7 @@ __all__ = [
 
     # Predictor classes
     "LinearConceptToConcept",
+    "SparseLinearConceptToConcept",
     "MLPConceptToConcept",
     "CallableConceptToConcept",
     "HyperlinearConceptEmbeddingToConcept",
@@ -186,6 +190,7 @@ __all__ = [
     "KLDivergenceLoss",
     "OrthogonalityLoss",
     "NLLProbLoss",
+    "CosineCubedLoss",
 
     # Training callbacks
     "LossWeightWarmup",

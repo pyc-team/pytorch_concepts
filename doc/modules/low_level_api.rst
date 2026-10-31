@@ -59,6 +59,7 @@ Encoders
    :nosignatures:
 
    LinearEmbeddingToConcept
+   AlignedEmbeddingToConcept
    MLPEmbeddingToConcept
    LinearEmbeddingEncoder
    MLPEmbeddingEncoder
@@ -75,6 +76,7 @@ Predictors
    :nosignatures:
 
    LinearConceptToConcept
+   SparseLinearConceptToConcept
    MLPConceptToConcept
    CallableConceptToConcept
    HyperlinearConceptEmbeddingToConcept
