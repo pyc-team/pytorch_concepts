@@ -5,8 +5,8 @@ Backbone utilities for feature extraction.
   device resolution, freeze semantics, cache filename, common properties,
   and the per-source loader registry. Not instantiable directly.
 - :class:`ImageBackbone` — image embeddings. Built-in sources:
-  ``'torchvision'`` (ResNet, VGG, EfficientNet, DenseNet) and
-  ``'huggingface'`` (DINOv2, ViT, ...).
+  ``'torchvision'`` (ResNet, VGG, EfficientNet, DenseNet),
+  ``'huggingface'`` (DINOv2, ViT, ...), and ``'openai_clip'`` (RN50, ViT, ...).
 - :class:`TextBackbone` — text embeddings. Built-in source:
   ``'huggingface'`` (``AutoTokenizer`` + ``AutoModel``), with mean / CLS /
   no pooling.
@@ -375,16 +375,20 @@ class ImageBackbone(Backbone):
     ----------
     name : str
         Model name: HuggingFace ('facebook/dinov2-base', ...) or
-        torchvision ('resnet50', 'vgg16', ...).
+        torchvision ('resnet50', 'vgg16', ...), or OpenAI CLIP ('RN50', ...).
     device : str, optional
         Device string; auto-detected if None.
     freeze : bool, default True
         Freeze parameters (see :class:`Backbone`).
     source : str, default 'auto'
         Which registered source to load from (``'torchvision'``,
-        ``'huggingface'``, or a custom key). ``'auto'`` infers from the
+        ``'huggingface'``, ``'openai_clip'``, or a custom key). ``'auto'`` infers from the
         name; pass it explicitly for HuggingFace models the heuristic does
         not recognize.
+        ``'openai_clip'`` requires the optional OpenAI CLIP package, uses its
+        original PIL preprocessing, and returns unnormalized image features.
+        Tensor inputs for that source must contain floating-point pixels in
+        ``[0, 1]``; lists of PIL images are also accepted.
 
     Examples
     --------
@@ -453,6 +457,29 @@ def _load_torchvision_source(name: str, device: torch.device) -> BackboneSpec:
         out_features = model(torch.zeros(1, 3, 224, 224, device=device)).shape[-1]
 
     return BackboneSpec(model, preprocess, embed, out_features)
+
+
+@ImageBackbone.register_source("openai_clip")
+def _load_openai_clip_source(name: str, device: torch.device) -> BackboneSpec:
+    """OpenAI CLIP visual encoder with its original image preprocessing."""
+    import clip
+    from torchvision.transforms.functional import to_pil_image
+
+    model, preprocess = clip.load(name, device=device)
+
+    def embed(visual, preprocess, x):
+        single = isinstance(x, torch.Tensor) and x.ndim == 3
+        if isinstance(x, torch.Tensor):
+            if single:
+                x = x.unsqueeze(0)
+            # Recover original pixels from [0, 1] tensors before PIL transforms.
+            pixels = (x.detach().cpu() * 255).round().to(torch.uint8)
+            x = [to_pil_image(image) for image in pixels]
+        images = torch.stack([preprocess(image) for image in x])
+        features = visual(images.to(next(visual.parameters()))).float()
+        return features[0] if single else features
+
+    return BackboneSpec(model.visual, preprocess, embed, model.visual.output_dim)
 
 
 class TextBackbone(Backbone):
