@@ -25,6 +25,30 @@ from torch_concepts.tensor import AnnotatedTensor
 from .modules.low.semantic import CMRSemantic
 
 
+def cosine_cubed_similarity(input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """Compare sample-by-concept activation patterns columnwise.
+
+    Center each column, cube its entries, then compute cosine similarity.
+    This is the LF-CBM alignment measure, rather than the cube of a cosine.
+    Constant columns have similarity zero. Targets are evaluated in float32,
+    matching the reference pseudo-supervision; input gradients are preserved.
+
+    Args:
+        input: Projected activations of shape ``(samples, concepts)``.
+        target: Reference similarities with the same shape.
+
+    Returns:
+        One similarity per concept, of shape ``(concepts,)``.
+    """
+    centered_target = (target.float() - target.float().mean(0, keepdim=True)).pow(3)
+    centered_input = (input - input.mean(0, keepdim=True)).pow(3)
+    target_norm = centered_target.norm(dim=0, keepdim=True)
+    input_norm = centered_input.norm(dim=0, keepdim=True)
+    target_unit = centered_target / torch.where(target_norm == 0, 1., target_norm)
+    input_unit = centered_input / torch.where(input_norm == 0, 1., input_norm)
+    return (target_unit * input_unit).sum(0)
+
+
 def _default_concept_names(n_concepts: int) -> Dict[int, List[str]]:
     """
     Generate default concept names for a given shape.
