@@ -425,26 +425,20 @@ def test_horizon_must_be_at_least_1():
     ([("u", 0)], {}, "not at 0"),
     (["c"], {"u": torch.zeros(B, H - 1, 2)}, "stacks them before the event"),  # one step short
     (["y"], {"c_a": torch.zeros(B, H + 1)}, "stacks them before the event"),  # c_a needs (B, H + 1, 1)
-    (["c"], {"u": [[0.0, 0.0]] * B}, "must be a Tensor"),
-    ({("c", 2): [[0.0, 0.0]] * B}, {}, "must be a Tensor"),  # the target of a pair too
-    (["c"], {("u", 2): torch.zeros(B - 1, 2)}, "mismatched leading .*'u_2': \\(4,\\)"),  # the engine's check
-    ([("c", 2)], {("c", 2): torch.zeros(B, 2)}, "both queried and observed"),
-    ([("y", 3)], {("c", 2): torch.zeros(B, 2), ("c_a", 2): torch.ones(B, 1)}, "and their plate"),
-    (["c", "u"], {}, "same steps"),
-    # the names listed are those of the model, not those of the network of its first steps
-    ([("nope", 2)], {}, r"Unknown query name 'nope'; the names are \['c', 'c_a', 'c_b', 'h', 'u'"),
-    (["c"], {("nope", 1): torch.zeros(B, 2)}, "Unknown evidence name 'nope'"),
-    (["c_2"], {}, "Unknown query name 'c_2'"),  # c at step 2 is ("c", 2)
+    # the names listed are those of the model, not those of the network of steps 0 and 1
+    ([("nope", 2)], {}, r"Unknown name 'nope'; the names are \['c', 'c_a', 'c_b', 'h', 'u'"),
+    (["c"], {("nope", 1): torch.zeros(B, 2)}, "Unknown name 'nope'"),
+    (["c_2"], {}, "Unknown name 'c_2'"),  # c at step 2 is ("c", 2)
+    # stacked steps that report different parameters
+    (["c", "u"], {}, "same parameters"),  # u does not exist at step 0
+    (["c"], {("c", 2): torch.zeros(B, 2)}, "same parameters"),  # c is observed at step 2
+    # the checks of the engine, on the names per step
+    (["c"], {("u", 2): torch.zeros(B - 1, 2)}, "mismatched leading .*'u_2': \\(4,\\)"),
+    ([("y", 3)], {("c", 2): torch.zeros(B, 2), ("c_a", 2): torch.ones(B, 1)}, "names both the plate 'c_2'"),
 ])
 def test_invalid_queries_raise(query, evidence, match):
     with pytest.raises(ValueError, match=match):
         DynamicInference(_model()).query(query, {"x": torch.randn(B, 3), **evidence}, horizon=H)
-
-
-@pytest.mark.parametrize("key", [("c", "2"), ("c", True), ("c", 2, 0)])
-def test_a_malformed_key_raises(key):
-    with pytest.raises(TypeError, match="pair"):
-        DynamicInference(_model()).query([key], {"x": torch.randn(B, 3)}, horizon=H)
 
 
 def test_a_step_may_be_any_integer():
@@ -474,7 +468,7 @@ def test_steps_that_report_different_parameters_raise():
                                   parametrization={"probs": nn.Sequential(nn.Linear(1, 1), nn.Sigmoid())})],
     )
     engine = DynamicInference(dbn)
-    with pytest.raises(ValueError, match="same parameters at every step"):
+    with pytest.raises(ValueError, match="same parameters"):
         engine.query(["z"], horizon=2)
     # Queried separately, as the message says.
     assert engine.query([("z", 0)], horizon=2).logits["z"].shape == (1, 1, 1)

@@ -5,7 +5,6 @@ through its unrolled network.
 
 from __future__ import annotations
 
-import numbers
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import torch
@@ -22,6 +21,11 @@ Key = Union[str, Tuple[str, int]]
 
 #: The options of the temperature schedule, which DynamicInference sets for its engines.
 _SCHEDULE = ("initial_temperature", "annealing", "annealing_rate", "final_temperature")
+
+
+def _flat(per_step: List[Dict]) -> Dict[str, Optional[torch.Tensor]]:
+    """The per-step dicts as one dict of the unrolled network, keyed ``name_t``."""
+    return {_at(n, t): v for t, step in enumerate(per_step) for n, v in step.items()}
 
 
 class DynamicInference(BaseInference):
@@ -99,9 +103,9 @@ class DynamicInference(BaseInference):
 
     Examples
     --------
-    The first example of :class:`~torch_concepts.nn.DynamicBayesianNetwork`:
-    an input ``x`` gives a concept ``c`` at step 0, and a linear map moves
-    ``c`` forward. A forecast of ``c`` at steps 0 to 4, for 8 inputs:
+    The example of :class:`~torch_concepts.nn.DynamicBayesianNetwork`: an
+    input ``x`` gives a concept ``c`` at step 0, and a linear map moves ``c``
+    forward. A forecast of ``c`` at steps 0 to 4, for 8 inputs:
 
     >>> import torch
     >>> from torch_concepts.distributions import Delta
@@ -139,15 +143,21 @@ class DynamicInference(BaseInference):
         engine: Optional[Callable[..., BaseInference]] = None,
         **engine_kwargs,
     ):
+        # --- Checks ---
+        # Only a DBN can be unrolled; a static network takes an engine directly.
         if not isinstance(pgm, DynamicBayesianNetwork):
             raise TypeError(
                 f"DynamicInference runs on a DynamicBayesianNetwork, got {type(pgm).__name__}; "
                 "query a static network with an engine directly."
             )
-        super().__init__(pgm, **{k: engine_kwargs[k] for k in (*_SCHEDULE, "p_int") if k in engine_kwargs})
+
+        # --- Engine options ---
+        # p_int and the schedule are those of DynamicInference too: engines read its temperature.
+        shared = {k: engine_kwargs[k] for k in (*_SCHEDULE, "p_int") if k in engine_kwargs}
+        super().__init__(pgm, **shared)
         self.engine = DeterministicInference if engine is None else engine
         self.engine_kwargs = engine_kwargs
-        self._engines: Dict[int, BaseInference] = {}
+        self._engines: Dict[int, BaseInference] = {}  # one per horizon, built on first use
 
     def __repr__(self) -> str:
         return self._format_repr(engine=self.engine)
@@ -172,39 +182,22 @@ class DynamicInference(BaseInference):
         query without any tensor, as for a static forward engine; otherwise the
         tensors of the query and the evidence set the leading shape.
         """
-        if horizon < 1:
-            raise ValueError(f"horizon must be at least 1, got {horizon}.")
-        q = self._by_step(self._normalize_query(query), horizon, "query")
-        e = self._by_step(evidence or {}, horizon, "evidence")
+        # --- Query and evidence per step ---
+        engine = self._engine(horizon)  # first, so that unroll() checks the horizon
+        q = self._by_step(self._normalize_query(query), horizon)
+        e = self._by_step(evidence or {}, horizon)
         names = list(dict.fromkeys(n for step in q for n in step))
         steps = [t for t in range(horizon + 1) if q[t]]
+
+        # --- Checks ---
+        # Nothing to stack without a queried step. The engine checks the rest: the names per
+        # step, the tensors and their leading shapes.
         if not steps:
             raise ValueError("The query is empty.")
-        if any(len(q[t]) != len(names) for t in steps):
-            asked = {n: [t for t in steps if n in q[t]] for n in names}
-            raise ValueError(
-                f"Queried names must be queried at the same steps, got {asked}. Query "
-                "them in separate calls."
-            )
-        resolve = self.pgm._templates.__getitem__
-        for t in range(horizon + 1):
-            observed = [n for n in q[t] if n in e[t] or resolve(n).name in e[t]]
-            if observed:
-                raise ValueError(f"{observed} at step {t} are both queried and observed.")
-            both = [n for n in e[t] if resolve(n).name != n and resolve(n).name in e[t]]
-            if both:
-                raise ValueError(
-                    f"The evidence at step {t} names {both} and their plate: give the "
-                    "whole plate or some of its members."
-                )
 
-        def flat(per_step: List[Dict]) -> Dict[str, Optional[torch.Tensor]]:
-            """The per-step dicts as one dict of the unrolled network, keyed ``name_t``."""
-            return {_at(n, t): v for t, step in enumerate(per_step) for n, v in step.items()}
-
-        kwargs = {} if n_samples is None else {"n_samples": n_samples}
-        engine, fq, fe = self._engine(horizon), flat(q), flat(e)
-        out = engine.query(fq, fe, **kwargs)
+        # --- Query of the unrolled network ---
+        fq, fe = _flat(q), _flat(e)
+        out = engine.query(fq, fe, **({} if n_samples is None else {"n_samples": n_samples}))
         # The leading shape as the engine reads it, once the query has checked the tensors.
         return self._stack(out, names, steps, engine._query_leading_shape(fq, fe, n_samples))
 
@@ -215,6 +208,10 @@ class DynamicInference(BaseInference):
         engine = self._engines.get(horizon)
         if engine is None:
             engine = self.engine(self.pgm.unroll(horizon), **self.engine_kwargs)
+
+            # --- Checks ---
+            # No schedule of its own: the engine reads the temperature of DynamicInference
+            # (below), so a schedule set by an engine function would be silently ignored.
             own = {k: getattr(engine, k) for k in _SCHEDULE
                    if getattr(engine, k) != getattr(self, k)}
             if own:
@@ -223,71 +220,61 @@ class DynamicInference(BaseInference):
                     "read the temperature of DynamicInference: pass the schedule to "
                     "DynamicInference, which passes it on to the engine."
                 )
+
             self._engines[horizon] = engine
         # Shared at every query: .to() and load_state_dict(assign=True) replace the buffer.
         engine._temperature = self._temperature
         return engine
 
-    def _by_step(
-        self, container: Dict[Key, Optional[torch.Tensor]], horizon: int, what: str
-    ) -> List[Dict]:
+    def _by_step(self, container: Dict[Key, Optional[torch.Tensor]], horizon: int) -> List[Dict]:
         """One ``{name: value}`` dict per step ``0..horizon``.
 
-        A pair ``(name, t)`` overrides the name at step ``t``.
+        A name sets every step at which its variable exists, a pair ``(name, t)`` step ``t``.
         """
         dbn, per_step = self.pgm, [{} for _ in range(horizon + 1)]
-        known, pairs = sorted(dbn._templates), []
-        for key, value in container.items():
-            # An AnnotatedTensor as its tensor; the labels are not read.
-            value = getattr(value, "tensor", value)
-            if not isinstance(key, str):
-                pairs.append((key, value))
-                continue
-            if key not in dbn._templates:
-                raise ValueError(f"Unknown {what} name {key!r}; the names are {known}.")
-            steps = dbn.steps(key, horizon)
-            if value is not None and not isinstance(value, torch.Tensor):
-                raise ValueError(f"{what}[{key!r}] must be a Tensor, got {type(value).__name__}.")
-            if value is None or steps == range(1):  # a variable of step 0 only has no time axis
-                values = [value] * len(steps)
-            else:
-                values = self._unstack(key, value, steps, what)
-            for t, v in zip(steps, values):
-                per_step[t][key] = v
-        for key, value in pairs:
-            if not (isinstance(key, tuple) and len(key) == 2 and isinstance(key[0], str)
-                    and isinstance(key[1], numbers.Integral) and not isinstance(key[1], bool)):
-                raise TypeError(
-                    f"A {what} key is a name or a (name, step) pair with an integer step, "
-                    f"got {key!r}."
-                )
-            name, t = key[0], int(key[1])
+        # Names first, then pairs, which override them at their step.
+        for key, value in sorted(container.items(), key=lambda item: isinstance(item[0], tuple)):
+            name, t = key if isinstance(key, tuple) else (key, None)
+
+            # --- Checks ---
+            # A name of the model as passed (c), not a name per step (c_1).
             if name not in dbn._templates:
-                raise ValueError(f"Unknown {what} name {name!r}; the names are {known}.")
+                raise ValueError(f"Unknown name {name!r}; the names are {sorted(dbn._templates)}.")
             steps = dbn.steps(name, horizon)
-            if t not in steps:
+            # A pair names a step at which its variable exists.
+            if t is not None and t not in steps:
                 raise ValueError(
-                    f"{name!r} exists at steps {steps.start}..{steps.stop - 1}, not at {t}."
+                    f"{name!r} exists at steps {steps.start}..{steps.stop - 1}, not at {t!r}."
                 )
-            if value is not None and not isinstance(value, torch.Tensor):
-                raise ValueError(f"{what}[{key!r}] must be a Tensor, got {type(value).__name__}.")
-            per_step[t][name] = value
+
+            # --- Value at each step ---
+            value = getattr(value, "tensor", value)  # an AnnotatedTensor as its tensor
+            if t is not None:  # a pair: its step
+                per_step[t][name] = value
+            elif value is None or steps == range(1):  # no tensor, or no time axis (step 0 only)
+                for s in steps:
+                    per_step[s][name] = value
+            else:  # a name: its tensor stacks its steps
+                for s, v in zip(steps, self._unstack(name, value, steps)):
+                    per_step[s][name] = v
         return per_step
 
-    def _unstack(
-        self, name: str, value: torch.Tensor, steps: range, what: str
-    ) -> Tuple[torch.Tensor, ...]:
+    def _unstack(self, name: str, value: torch.Tensor, steps: range) -> Tuple[torch.Tensor, ...]:
         """The per-step tensors of ``value``, whose time axis precedes the event of ``name``."""
         v = self.pgm._templates[name]
         event = tuple(v.shape if name == v.name else v.member_shape)
-        axis = value.dim() - len(event) - 1
+        axis = value.dim() - len(event) - 1  # the time axis
+
+        # --- Checks ---
+        # The event last, and one entry per step on the axis before it.
         if axis < 0 or tuple(value.shape[axis + 1:]) != event or value.shape[axis] != len(steps):
             raise ValueError(
-                f"{what}[{name!r}] has shape {tuple(value.shape)}, but {name!r} exists at steps "
+                f"{name!r} has shape {tuple(value.shape)}, but it exists at steps "
                 f"{steps.start}..{steps.stop - 1}, so its tensor stacks them before the event: "
                 f"(*leading, {len(steps)}, {', '.join(map(str, event))}). For one step, key it "
                 f"as ({name!r}, t)."
             )
+
         return value.unbind(axis)
 
     def _stack(
@@ -304,20 +291,27 @@ class DynamicInference(BaseInference):
         suffix = len(_at("", steps[0]))
 
         def stack(kind: str, tensors: Dict[str, AnnotatedTensor]) -> Dict[str, AnnotatedTensor]:
+            """``tensors`` with the steps stacked, and the labels of the model."""
             stacked = {}
             for quantity, tensor in tensors.items():
+                # The queried labels that the tensor holds at each step.
                 known = tensor.annotations.label_to_index
                 found = {t: [m for m in labels if _at(m, t) in known] for t in steps}
                 first = found[steps[0]]
+
+                # --- Checks ---
+                # Every step holds the same labels, so that the steps stack.
                 for t in steps:
                     if found[t] != first:
                         raise ValueError(
                             f"{kind}[{quantity!r}] holds {found[t]} at step {t} and {first} at "
-                            f"step {steps[0]}, but the queried names must report the same "
-                            "parameters at every step. A plate with all its members observed "
-                            "at some steps, or CPDs parametrized differently in `initial` and "
+                            f"step {steps[0]}, but the queried steps must report the same "
+                            "parameters. Names queried at different steps, or observed at some "
+                            "of them, or CPDs parametrized differently in `initial` and "
                             "`transition`, make them differ: query those steps separately."
                         )
+
+                # --- Steps stacked ---
                 if first:  # none for a quantity of names that are not queried
                     views = [tensor[[_at(m, t) for m in first]] for t in steps]
                     data = torch.stack([v.tensor for v in views], dim=len(leading))
