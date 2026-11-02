@@ -1,9 +1,9 @@
-"""Tests for WearDataset: a fleet of machines with concepts over time."""
+"""Tests for WearDataset and WearDataModule: a fleet of machines with concepts over time."""
 import os
 
 import torch
 
-from torch_concepts.data.base.datamodule import ConceptDataModule
+from torch_concepts.data import WearDataModule
 from torch_concepts.data.datasets.wear import ALARM_THRESHOLD, WearDataset
 
 
@@ -42,13 +42,21 @@ def test_seed_and_cache(tmp_path):
     assert not torch.equal(other.input_data, dataset.input_data)
 
 
-def test_windows_and_batches(tmp_path):
+def test_windows(tmp_path):
     series = WearDataset(root=str(tmp_path), n_gen=40, n_steps=12)
     dataset = WearDataset(root=str(tmp_path), n_gen=40, n_steps=12, window=4)
     assert len(dataset) == 3 * 40                             # 3 windows of each machine
     assert torch.equal(dataset.input_data[40 * 2 + 5], series.input_data[5, 8:12])
-    datamodule = ConceptDataModule(dataset, batch_size=8, seed=0)
+
+
+def test_datamodule_splits_by_machine(tmp_path):
+    datamodule = WearDataModule(root=str(tmp_path), n_gen=40, n_steps=12, window=4, stride=2, batch_size=8)
     datamodule.setup("fit")
+    machines = [datamodule.dataset.series[split.indices].unique() for split in
+                (datamodule.trainset, datamodule.valset, datamodule.testset)]
+    assert [len(m) for m in machines] == [28, 4, 8]           # 70%, 10% and 20% of the machines
+    assert len(torch.cat(machines).unique()) == 40            # each machine in one split only
+    assert datamodule.train_len + datamodule.val_len + datamodule.test_len == 5 * 40  # 5 windows each
     concepts = next(iter(datamodule.train_dataloader()))["concepts"]["c"]
     assert tuple(concepts.shape) == (8, 4, 3)
     assert tuple(concepts[["alarm"]].shape) == (8, 4, 1)
