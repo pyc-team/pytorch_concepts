@@ -16,11 +16,16 @@ from .dataset import ConceptDataset
 class DynamicConceptDataset(ConceptDataset):
     """A ConceptDataset whose samples are windows of time series.
 
-    The inputs are ``N`` series of ``T`` steps, ``(T, N, F)``, and the
-    optional concepts are series over the same steps, ``(T, N, C)``. Each
-    sample is ``window`` consecutive steps of one series, ``(window, F)`` and
-    ``(window, C)``; the model picks which steps it observes and which it
-    predicts. Steps left over at the end are dropped.
+    The inputs are ``N`` series of ``T`` steps and ``F`` channels,
+    ``(T, N, F)``, and the optional concepts are ``C`` concepts over the same
+    steps and series, ``(T, N, C)``. Each series is cut into windows of
+    ``window`` consecutive steps, one every ``stride`` steps; steps left over
+    at the end are dropped. The windows are then flattened with the series
+    into the sample axis: each sample is one window of one series,
+    ``(window, F)`` and ``(window, C)``, so there are ``n_windows * N``
+    samples. With ``flatten_series=False``, each sample is instead one window
+    of all the series, ``(window, N, F)`` and ``(window, N, C)``. The model
+    picks which steps of a sample it observes and which it predicts.
 
     Attributes:
         n_series (int): Number of series, ``N``.
@@ -29,31 +34,32 @@ class DynamicConceptDataset(ConceptDataset):
             with ``flatten_series=False``.
 
     Args:
-        input_data: Input series, ``(T, N, F)`` or ``(T, F)``.
+        input_data: Input series, ``(T, N, F)``, or ``(T, F)`` for one series.
         concepts: Optional concept series, ``(T, N, C)`` or ``(T, C)``.
         annotations: Concept metadata, as in :class:`ConceptDataset`.
         window: Steps per sample (default: ``T``).
         stride: Steps from the start of one window to the start of the next
             (default: ``window``, so windows do not overlap).
-        flatten_series: Flatten the series into the sample axis, one series
-            per sample (default: True). If False, each sample holds all the
-            series, ``(window, N, F)`` and ``(window, N, C)``, as in
-            torch-spatiotemporal.
+        flatten_series: One series per sample (default: True), or all the
+            series in each sample (False).
         **kwargs: Passed to :class:`ConceptDataset`.
 
     Example:
         >>> import torch
         >>> from torch_concepts import Annotations
         >>> from torch_concepts.data.base import DynamicConceptDataset
-        >>> x, c = torch.randn(100, 3, 4), torch.randn(100, 3, 2)  # 3 series of 100 steps
+        >>> x = torch.randn(10, 3, 5)  # T = 10 steps, N = 3 series, F = 5 channels
+        >>> c = torch.randn(10, 3, 2)  # C = 2 concepts
         >>> annotations = Annotations(labels=["a", "b"], cardinalities=[1, 1], types=["continuous"] * 2)
-        >>> dataset = DynamicConceptDataset(x, c, annotations, window=10, stride=5)
-        >>> dataset.input_data.shape  # 19 windows of each series
-        torch.Size([57, 10, 4])
+        >>> dataset = DynamicConceptDataset(x, c, annotations, window=4, stride=1)
+        >>> dataset.input_data.shape  # 7 windows of each of the 3 series
+        torch.Size([21, 4, 5])
         >>> dataset.concepts.shape
-        torch.Size([57, 10, 2])
-        >>> dataset.n_series
-        3
+        torch.Size([21, 4, 2])
+        >>> windows = DynamicConceptDataset(
+        ...     x, c, annotations, window=4, stride=1, flatten_series=False)
+        >>> windows.input_data.shape  # 7 windows, each with the 3 series
+        torch.Size([7, 4, 3, 5])
     """
 
     def __init__(
@@ -66,23 +72,28 @@ class DynamicConceptDataset(ConceptDataset):
         flatten_series: bool = True,
         **kwargs,
     ):
-        if input_data.dim() == 2:  # a single series
+        if input_data.dim() == 2:  # one series, (T, F): a series axis of size 1
             input_data = input_data.unsqueeze(1)
             concepts = concepts.unsqueeze(1) if concepts is not None else None
         n_steps, self.n_series = input_data.shape[:2]
         window = window or n_steps
         stride = stride or window
 
-        def samples(series):  # (T, N, ...)
+        def samples(series: Tensor) -> Tensor:
+            """The windows of ``series`` (T, N, ...) as samples. unfold() raises if window > T."""
             windows = series.unfold(0, window, stride)  # (n_windows, N, ..., window)
-            return windows.movedim(-1, 2).flatten(0, 1) if flatten_series else windows.movedim(-1, 1)
+            if flatten_series:
+                return windows.movedim(-1, 2).flatten(0, 1)  # (n_windows * N, window, ...)
+            return windows.movedim(-1, 1)  # (n_windows, window, N, ...)
 
-        inputs = samples(input_data)  # unfold raises if window > T
+        # The first step of each sample, and with flatten_series its series, in the order
+        # of the samples: window by window, and within a window series by series.
         self.start, self.series = torch.arange(0, n_steps - window + 1, stride), None
         if flatten_series:
             self.start, self.series = torch.cartesian_prod(self.start, torch.arange(self.n_series)).T
         super().__init__(
-            inputs, samples(concepts) if concepts is not None else None, annotations, **kwargs
+            samples(input_data), samples(concepts) if concepts is not None else None,
+            annotations, **kwargs,
         )
 
     def _subset_rows(self, indices) -> None:

@@ -45,46 +45,54 @@ def _wear(n, n_steps, n_sensors, seed):
 
 
 class WearDataset(DynamicConceptDataset):
-    """Synthetic dataset of machines whose two components wear out, with concepts over time.
+    """Synthetic fleet of machines whose two components wear out, with concepts over time.
 
-    Each of the ``n_gen`` machines runs for ``n_steps`` steps, and at every
-    step has two operating conditions, noisy sensor readings, the health of
-    its two components and an alarm. The health ``c`` of a component starts at
-    or below 0 (0 is new), and at every step it drops by ``alpha * relu(-c)``
-    plus a load of the machine, so a worn component wears faster. The sensors
-    show the load, but no concept records it. The alarm fires when the mean
-    health of the two components drops below ``ALARM_THRESHOLD = -0.45``.
+    Each of the ``n_gen`` machines runs for ``n_steps`` steps. At every step it
+    has two operating conditions and ``n_sensors`` noisy sensor readings (the
+    inputs), and three concepts:
 
-    The dataset is modelled on N-CMAPSS. Like the flight conditions of an
-    aircraft engine, two operating conditions drift from step to step and
-    change every reading: its baseline, and how strongly it responds to health
-    and load. Reading the health from the sensors means undoing the
-    conditions, a nonlinear task.
+    - ``health_A`` and ``health_B`` (continuous): the health of the two
+      components, from -0.4 to 0 at the first step (0 is new). At every step
+      it drops by ``alpha * relu(-health)`` plus a load of the machine: a worn
+      component wears faster, and the load shows in the sensors, but no
+      concept records it.
+    - ``alarm`` (binary): 1 when the mean health is below ``ALARM_THRESHOLD = -0.45``.
 
-    By default a sample is the whole series of one machine. Its inputs are
-    ``(n_steps, 2 + n_sensors)``, the two conditions then the readings, and
-    its concepts ``(n_steps, 3)`` hold ``health_A`` and ``health_B``
-    (continuous) and ``alarm`` (binary). The graph is that of one step, where
-    the health of each component drives the alarm; across steps, each health
-    also depends on its value at the step before.
+    As in N-CMAPSS [1]_, the operating conditions drift over time and set both
+    the baseline of every reading and how strongly it responds to the health,
+    so reading the health from the sensors is a nonlinear task.
+
+    A sample is a window of ``window`` steps of one machine, one every
+    ``stride`` steps, as in
+    :class:`~torch_concepts.data.base.DynamicConceptDataset`; by default the
+    whole series. With ``n_windows = (n_steps - window) // stride + 1``:
+
+    - ``input_data`` is ``(n_gen * n_windows, window, 2 + n_sensors)``: the two
+      conditions, then the readings;
+    - ``concepts`` is ``(n_gen * n_windows, window, 3)``;
+    - ``series`` and ``start`` are the machine and the first step of each sample.
+
+    The graph is that of one step: each health drives the alarm. Across steps,
+    each health also depends on its value at the step before.
 
     Parameters
     ----------
     root : str, optional
-        Directory to store and load the generated data. If None, defaults to
-        ``'./data/toy_datasets/wear'``.
+        Directory to store and load the generated data. Default: None
+        (``./data/toy_datasets/wear``).
     seed : int, optional
         Random seed of the generation. Default: 42
     n_gen : int, optional
         Number of machines. Default: 1500
     n_steps : int, optional
-        Number of steps of each series. Default: 20
+        Number of steps of each machine. Default: 20
     n_sensors : int, optional
-        Number of sensor channels, besides the two conditions. Default: 14
-    window, stride : int, optional
-        Samples of ``window`` steps, one every ``stride`` steps, as in
-        :class:`~torch_concepts.data.base.DynamicConceptDataset`. Default: None
-        (the whole series).
+        Number of sensor readings per step, besides the two conditions. Default: 14
+    window : int, optional
+        Steps per sample. Default: None (``n_steps``, the whole series).
+    stride : int, optional
+        Steps from the start of one window to the start of the next.
+        Default: None (``window``, so windows do not overlap).
     concept_subset : list of str, optional
         Subset of concept names to use. Default: None (all concepts).
 
@@ -95,19 +103,20 @@ class WearDataset(DynamicConceptDataset):
 
     References
     ----------
-    Arias Chao et al. "Aircraft Engine Run-to-Failure Dataset under Real
-    Flight Conditions for Prognostics and Diagnostics", Data 2021.
-    https://doi.org/10.3390/data6010005
+    .. [1] Arias Chao, M., et al. "Aircraft Engine Run-to-Failure Dataset under
+           Real Flight Conditions for Prognostics and Diagnostics", Data 2021.
+           https://doi.org/10.3390/data6010005
 
     Examples
     --------
     >>> from torch_concepts.data import WearDataset
-    >>> dataset = WearDataset(n_gen=100, n_steps=12)
+    >>> dataset = WearDataset(n_gen=100, n_steps=12)  # one sample per machine
     >>> dataset.input_data.shape
     torch.Size([100, 12, 16])
-    >>> dataset.concepts[["health_A", "health_B"]].shape
-    torch.Size([100, 12, 2])
-    >>> WearDataset(n_gen=100, n_steps=12, window=4).input_data.shape  # 3 windows per machine
+    >>> dataset.concepts.shape
+    torch.Size([100, 12, 3])
+    >>> dataset = WearDataset(n_gen=100, n_steps=12, window=4)  # 3 windows per machine
+    >>> dataset.input_data.shape
     torch.Size([300, 4, 16])
     """
 
@@ -152,7 +161,9 @@ class WearDataset(DynamicConceptDataset):
         pass
 
     def build(self):
-        input_data, concepts, names, graph = _wear(self.n_gen, self.n_steps, self.n_sensors, self.seed)
+        input_data, concepts, names, graph = _wear(
+            self.n_gen, self.n_steps, self.n_sensors, self.seed
+        )
         types = ['binary' if name.startswith('alarm') else 'continuous' for name in names]
         annotations = Annotations(labels=names, cardinalities=[1] * len(names), types=types)
         torch.save({
