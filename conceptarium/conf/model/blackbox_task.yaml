@@ -3,6 +3,6 @@ defaults:
   - _self_
 
 model_cls:
-  _target_: "torch_concepts.nn.BlackBoxTaskOnly"
+  _target_: "torch_concepts.nn.BlackBoxModel"
 
   task_names: ${dataset.default_task_names}

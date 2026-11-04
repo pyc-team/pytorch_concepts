@@ -39,7 +39,7 @@ Configuration-Driven Experimentation
 
 Conceptarium uses YAML configuration files to define all experiment parameters. No Python coding required:
 
-- **Models**: Select and configure any |pyc_logo| PyC model (CBM, CEM, CB-VAE, BlackBox, etc.)
+- **Models**: Select and configure any |pyc_logo| PyC model (CBM, CEM, CB-VAE, BlackBoxModel, etc.)
 - **Datasets**: Use built-in datasets (CUB-200, CelebA, ...) or add custom ones
 - **Training**: Configure optimizer, scheduler, and Lightning Trainer settings
 - **Tracking**: Automatic logging to |wandb_logo| W&B for visualization and comparison
@@ -447,7 +447,7 @@ Detailed Guides
         - _self_
 
       model_cls:
-        _target_: torch_concepts.nn.BlackBox
+        _target_: torch_concepts.nn.BlackBoxModel
 
    **Common Model Parameters**
 

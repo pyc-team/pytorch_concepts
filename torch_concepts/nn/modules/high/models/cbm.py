@@ -26,16 +26,13 @@ import torch
 from torch.distributions import Bernoulli, OneHotCategorical, Normal
 
 from .....annotations import Annotations
-from .....distributions import Delta
 from ...low.encoders.linear import LinearEmbeddingToConcept
 from ...low.lazy import LazyConstructor
 from ...low.predictors.linear import LinearConceptToConcept
-from ...low.priors import LearnablePrior
 from ...mid.inference.base import BaseInference
 from ...mid.inference.torch.deterministic import DeterministicInference
 from ...mid.graph.bayesian_network import BayesianNetwork
 from ...mid.factors.cpd import ParametricCPD
-from ...mid.variable import EmbeddingVariable
 from ...mid.distributions import DEFAULT_DIST_KWARGS
 from ..base.bipartite import BipartiteModel
 
@@ -118,27 +115,6 @@ class ConceptBottleneckModel(BipartiteModel):
             train_inference_kwargs,
         )
 
-    def _input_latent_block(self):
-        """Raw input → latent block.
-
-        Returns ``(input_var, latent_var, input_cpd, latent_cpd)``: the raw
-        ``input`` enters the PGM as evidence and the backbone runs *inside* the
-        PGM as the ``latent | input`` CPD.
-        """
-        input_var = EmbeddingVariable("input", distribution=Delta, shape=self.input_size)
-        latent_var = EmbeddingVariable("latent", distribution=Delta, size=self.latent_size)
-        input_cpd = ParametricCPD(
-            input_var,
-            parents=[],
-            parametrization=LearnablePrior(input_var.shape),
-        )
-        latent_cpd = ParametricCPD(
-            latent_var,
-            parents=[input_var],
-            parametrization=self.backbone,
-        )
-        return input_var, latent_var, input_cpd, latent_cpd
-    
     def _build_model(self) -> BayesianNetwork:
         """Assemble the CBM Bayesian network: ``input → latent → concepts → tasks``.
 

@@ -70,7 +70,7 @@ from .modules.metrics import ConceptMetrics, compute_cace, intervention_curve
 from .modules.outputs import InferenceOutput
 
 # Models (high-level)
-from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
+from .modules.high.models.blackbox import BlackBoxModel
 from .modules.high.models.cbm import ConceptBottleneckModel
 from .modules.high.models.cem import ConceptEmbeddingModel
 from .modules.high.models.cbvae import ConceptBottleneckVAE
@@ -209,8 +209,7 @@ __all__ = [
     "InferenceOutput",
 
     # Models (high-level)
-    "BlackBox",
-    "BlackBoxTaskOnly",
+    "BlackBoxModel",
     "ConceptBottleneckModel",
     "ConceptEmbeddingModel",
     "ConceptBottleneckVAE",
