@@ -92,4 +92,6 @@ outputs/
 
 # analysis
 results/
-examples/experiments/*.png
+# local-only example folders
+examples/experiments/
+examples/standard-model/
