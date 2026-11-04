@@ -8,7 +8,7 @@ from typing import Tuple, Union
 import torch
 from torch import Tensor
 
-from ..base.scaler import Scaler
+from torch_concepts.data.base.scaler import Scaler
 
 def zeros_to_one_(scale: Union[float, Tensor]) -> Union[float, Tensor]:
     """Set to 1 scales of near-constant features to avoid division by zero.
@@ -82,18 +82,35 @@ class StandardScaler(Scaler):
         super(StandardScaler, self).__init__()
         self.axis = axis
 
-    def fit(self, x: Tensor) -> "StandardScaler":
+    def fit(self, x: Tensor, dim: int | None = None) -> "StandardScaler":
         """Compute mean and standard deviation along specified dimension.
         Args:
             x: Input tensor to compute statistics from.
+            dim: Reduction dimension for this call. None uses the configured axis
+                without changing it.
         Returns:
             self: The fitted scaler instance for method chaining.
         """
-        self.mean = x.mean(dim=self.axis, keepdim=True)
-        self.std = x.std(dim=self.axis, keepdim=True)
+        reduction_axis: int | tuple[int, ...] = self.axis if dim is None else dim
+        self.mean: Tensor = x.mean(dim=reduction_axis, keepdim=True)
+        self.std: Tensor = x.std(dim=reduction_axis, keepdim=True)
 
         self.std = zeros_to_one_(self.std)
         return self
+
+    def fit_transform(self, x: Tensor, dim: int | None = None) -> Tensor:
+        """Fit and transform using the configured axis unless dim is supplied.
+
+        Args:
+            x: Input tensor to fit and transform.
+            dim: Reduction dimension for this call. None uses the configured axis
+                without changing it.
+
+        Returns:
+            Standardized tensor with the same shape as the input.
+        """
+        self.fit(x=x, dim=dim)
+        return self.transform(x=x)
 
     def transform(self, x: Tensor) -> Tensor:
         """Standardize the input tensor using fitted statistics.
