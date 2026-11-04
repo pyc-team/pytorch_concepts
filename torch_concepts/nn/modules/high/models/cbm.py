@@ -173,15 +173,17 @@ class ConceptBottleneckModel(BipartiteModel):
                 for c in concepts
             ],
         )
-        # concepts → tasks: every concept group is a parent of every task.
+        # concepts → tasks: every concept group is a parent of every task. The predictors get
+        # the parents' annotations, so their weights read by concept name (named_weight).
+        parents = self.concept_annotations.subset([m for c in concepts for m in c.members])
         predictors = ParametricCPD(
             variable=tasks,
             parents=concepts,
             parametrization=[
                 self._flexible_parametrization(
                     variable=t,
-                    first=LazyConstructor(LinearConceptToConcept),
-                    second=LazyConstructor(LinearConceptToConcept),
+                    first=LazyConstructor(LinearConceptToConcept, in_concepts=parents),
+                    second=LazyConstructor(LinearConceptToConcept, in_concepts=parents),
                 )
                 for t in tasks
             ],
