@@ -26,6 +26,11 @@ IMAGE_COLUMNS = {
     "cropped": "cropped_image_file_path",
     "mask": "roi_mask_file_path",
 }
+IMAGE_DESCRIPTIONS = {
+    "full": "full mammogram images",
+    "cropped": "cropped images",
+    "mask": "roi mask images",
+}
 CATEGORICAL_STATES = {
     "breast_density": ("1", "2", "3", "4", "0"),
     "assessment": ("0", "1", "2", "3", "4", "5"),
@@ -242,25 +247,44 @@ class CBISDDSMDataset(ConceptDataset):
             self._download_file(f"{NBIA_URL}?{query}", archive_path)
             with zipfile.ZipFile(archive_path) as archive:
                 members = [member for member in archive.infolist() if member.filename.endswith(".dcm")]
+                headers = {}
+
+                def read_header(member):
+                    if member not in headers:
+                        with archive.open(member) as source:
+                            try:
+                                header = pydicom.dcmread(source, stop_before_pixels=True)
+                            except pydicom.errors.InvalidDicomError as exc:
+                                raise ValueError(f"Invalid downloaded DICOM: {member.filename}.") from exc
+                        if (header.get("StudyInstanceUID"), header.get("SeriesInstanceUID")) != (study, series):
+                            raise ValueError(f"Downloaded DICOM UIDs disagree with {study}/{series}.")
+                        headers[member] = header
+                    return headers[member]
+
                 selected = []
-                for filename in dict.fromkeys(filenames):
+                requested = list(dict.fromkeys(filenames))
+                for filename in requested:
                     matches = [m for m in members if PurePosixPath(m.filename).name == filename]
-                    if not matches and len(members) == 1 and len(set(filenames)) == 1:
+                    if not matches and len(members) == 1 and len(requested) == 1:
                         matches = members
+                    elif not matches and len(requested) == 1:
+                        # NBIA can rename instances in a mixed crop/mask series.
+                        # Use an explicit product label, never archive position,
+                        # InstanceNumber (often identical), or image dimensions.
+                        matches = [
+                            member for member in members
+                            if " ".join(str(read_header(member).get("SeriesDescription", "")).lower().split())
+                            == IMAGE_DESCRIPTIONS[self.image_type]
+                        ]
                     if len(matches) != 1:
                         raise ValueError(
                             f"Cannot uniquely map CSV instance {study}/{series}/{filename} "
                             f"to API filenames {[m.filename for m in members]}. "
+                            f"No unique filename or SeriesDescription match for {self.image_type}. "
                             "Crop/mask identity cannot be inferred from archive order."
                         )
                     member = matches[0]
-                    with archive.open(member) as source:
-                        try:
-                            header = pydicom.dcmread(source, stop_before_pixels=True)
-                        except pydicom.errors.InvalidDicomError as exc:
-                            raise ValueError(f"Invalid downloaded DICOM: {member.filename}.") from exc
-                    if (header.get("StudyInstanceUID"), header.get("SeriesInstanceUID")) != (study, series):
-                        raise ValueError(f"Downloaded DICOM UIDs disagree with {study}/{series}.")
+                    read_header(member)
                     temporary = Path(directory) / filename
                     with archive.open(member) as source, temporary.open("wb") as output:
                         shutil.copyfileobj(source, output)

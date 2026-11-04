@@ -62,15 +62,24 @@ suffixes using an independently verified mapping. The loader does not guess an
 instance from directory order, a numeric filename, or image dimensions.
 
 The automatic downloader checks StudyInstanceUID and SeriesInstanceUID in each
-selected DICOM header before retaining it. An API member must match the CSV
-filename exactly. If a series contains only one DICOM and only one filename is
+selected DICOM header before retaining it. An exact CSV filename match takes
+priority. If a series contains only one DICOM and only one filename is
 requested, that unique instance can be saved under the CSV name. For multi-image
-series with incompatible filenames, acquisition stops with manual instructions.
+series with incompatible filenames and a single requested filename, the downloader
+requires exactly one DICOM whose SeriesDescription identifies the selected
+product: ``cropped images``, ``ROI mask images``, or ``full mammogram images``
+(ignoring case and extra whitespace). All inspected headers must match the
+requested study and series UIDs. The selected instance is saved under the CSV
+filename, retaining its original DICOM header and SOPInstanceUID. Missing or
+duplicate product labels, or multiple requested filenames without exact matches,
+still stop acquisition with manual instructions.
 In a live check on 16 October 2026, the API returned a crop/mask series as
 ``00000001.dcm`` and ``00000002.dcm``, while the CSV used ``000000.dcm`` and
 ``000001.dcm``. Both instances had InstanceNumber 1, so that field could not
-establish a unique filename mapping either. The downloader does not rename by
-position, swap columns, or infer the intended file from image appearance.
+establish a unique filename mapping either. The two DICOM headers explicitly
+identify the mask and crop via SeriesDescription; that label supplies the
+fallback mapping. The downloader does not rename by position or infer the
+intended file from image appearance.
 See the `official NBIA download API documentation
 <https://wiki.cancerimagingarchive.net/display/Public/NBIA+Search+REST+API+Guide>`_.
 
@@ -297,8 +306,10 @@ image reference unresolved; this does not demonstrate a defect in the release.
 The `TFDS loader
 <https://github.com/tensorflow/datasets/blob/master/tensorflow_datasets/image_classification/cbis_ddsm.py>`_
 also documents possible crop/mask column reversals and incompatible dimensions.
-This implementation maps the official columns directly and does not swap images
-or discard rows based on dimensions. Content ambiguities require source review;
+Exact filename matches map the official columns directly. When API filenames
+differ, the header-based fallback selects the requested image product rather
+than reconstructing the original filename order. No rows are discarded based
+on dimensions. Content ambiguities require source review;
 the selected column alone cannot guarantee that a mislabeled source file is
 the intended product. The authors' `DDSM curation tooling
 <https://github.com/fjeg/ddsm_tools>`_ provides additional provenance.

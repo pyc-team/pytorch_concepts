@@ -1,51 +1,40 @@
 """
-CBIS-DDSM
-=========
+CBIS-DDSM: training a concept bottleneck model
+=============================================
 
-CBIS-DDSM holds scanned-film mammograms with native radiological concepts and
-three pathology states. Each sample describes an abnormality on one breast/view.
-``CBISDDSMDataset`` loads the official training and test CSVs separately.
+Load the official mass training/test splits and train an ImageNet-pretrained
+DenseNet121 CBM using native shape, margin, and breast-density labels. The task
+is binary malignancy, derived from the dataset's original pathology states.
+Train on every training image and report ROC AUC on every test image.
 
-Like the HAM10000 example, a ``FixedConceptGenerator`` proposes a vocabulary,
-``CLIPAnnotator`` scores the images, and ``SigmoidCalibrator`` converts cosine
-similarities into probabilities. A dog and a cat are added as sanity checks.
-
-Data: up to 256 training mass crops. The datasets first try to download the
-official mass train/test CSVs and missing image series from TCIA. If downloading
-fails or the API filenames cannot be mapped uniquely to the CSV, the error asks
-for manual acquisition from https://www.cancerimagingarchive.net/collection/cbis-ddsm/.
-Put CSVs in ``DATA_ROOT/cbis_ddsm/raw`` and images below ``DATA_ROOT/cbis_ddsm``,
-preserving ``StudyUID/SeriesUID/filename.dcm`` suffixes matching the CSV.
-Each selected split's missing sources are acquired before the 256-image subset
-is selected. CLIP weights are downloaded on first run.
-
-Image scaling, resizing, and RGB replication below are choices for this CLIP
-example. The dataset keeps its native DICOM pixels and original annotations.
-Reference: Lee et al., Scientific Data 4, 170177 (2017),
-https://doi.org/10.1038/sdata.2017.177.
+Data and pretrained weights download on first use. Run with:
+``python -u examples/data/07_cbis_ddsm.py``.
 """
 
-# %%
+from pathlib import Path
+
+import numpy as np
+import pydicom
+import torch
 import torch.nn.functional as F
-from torch.utils.data import DataLoader, Subset
+from sklearn.metrics import roc_auc_score
+from torch.utils.data import DataLoader, Dataset
+from torchvision import transforms
+from torchvision.models import DenseNet121_Weights, densenet121
 
-from torch_concepts import seed_everything
+from torch_concepts import AnnotatedTensor, Annotations, seed_everything
 from torch_concepts.data import CBISDDSMDataset
-from torch_concepts.data.generation import ConceptGenerationPipeline
-from torch_concepts.data.generation.annotators import CLIPAnnotator
-from torch_concepts.data.generation.calibrators import SigmoidCalibrator
-from torch_concepts.data.generation.generators import FixedConceptGenerator
 from torch_concepts.env import DATA_ROOT
+from torch_concepts.nn import ConceptBottleneckModel, ConceptLoss
 
-seed_everything(42)
 
-# %%
-# Images for CLIP
-# ---------------
-# Scale each crop to [0, 1], resize it for batching, and repeat grayscale as RGB.
-# The CLIP processor applies its own model-specific normalization afterwards.
-def clip_transform(image):
-    image = (image - image.min()) / (image.max() - image.min()).clamp_min(1)
+def resize_crop(image):
+    """Scale pixels to [0, 1], square-pad, resize to 224, and replicate RGB."""
+    image = (image - image.min()) / (image.max() - image.min()).clamp_min(1e-6)
+    height, width = image.shape[-2:]
+    side = max(height, width)
+    left, top = (side - width) // 2, (side - height) // 2
+    image = F.pad(image, (left, side - width - left, top, side - height - top))
     image = F.interpolate(
         image.unsqueeze(0), size=(224, 224), mode="bilinear",
         align_corners=False, antialias=True,
@@ -53,65 +42,125 @@ def clip_transform(image):
     return image.repeat(3, 1, 1)
 
 
-# %%
-# Data
-# ----
-# Membership comes directly from the official CSVs; no random split is drawn.
-train_dataset = CBISDDSMDataset(
-    root=str(DATA_ROOT / "cbis_ddsm"),
-    abnormality_type="mass",
-    split="train",
-    image_type="cropped",
-    transform=clip_transform,
-)
-test_dataset = CBISDDSMDataset(
-    root=str(DATA_ROOT / "cbis_ddsm"),
-    abnormality_type="mass",
-    split="test",
-    image_type="cropped",
-    transform=clip_transform,
-)
-print(f"Official split sizes: {len(train_dataset)} train, {len(test_dataset)} test")
-print(f"Concepts: {train_dataset.concept_names}")
-print(f"Cardinalities: {train_dataset.annotations.cardinalities}")
-print(f"Pathology states: {train_dataset.annotations.concept('pathology').states}")
+class MammogramImages(Dataset):
+    """Keep only paths and plain labels in workers to avoid annotation pickling."""
 
-# Use the first 256 training observations to keep this demonstration small.
-train_images = Subset(train_dataset, range(min(256, len(train_dataset))))
-loader = DataLoader(train_images, batch_size=64, collate_fn=train_dataset.collate)
-batch = next(iter(loader))
-print(f"inputs:   {tuple(batch['inputs']['x'].shape)}")
-print(f"concepts: {tuple(batch['concepts']['c'].shape)}")
-print(train_dataset.metadata[["patient_id", "image_view", "abnormality_id", "pathology"]].head())
+    def __init__(self, dataset, concept_names, augment=False):
+        self.paths = [str(Path(dataset.root_dir) / path) for path in dataset.input_data]
+        pathology = dataset.native_concepts["pathology"].tensor
+        malignant = dataset.annotations.concept("pathology").states.index("MALIGNANT")
+        diagnosis = torch.where(torch.isfinite(pathology), (pathology == malignant).float(), torch.nan)
+        self.targets = torch.cat([dataset.native_concepts[concept_names].tensor, diagnosis], dim=1)
+        augmentation = [
+            transforms.RandomHorizontalFlip(), transforms.RandomVerticalFlip(),
+            transforms.RandomRotation(10),
+        ] if augment else []
+        self.transform = transforms.Compose(augmentation + [
+            transforms.Normalize((0.485, 0.456, 0.406), (0.229, 0.224, 0.225)),
+        ])
 
-# %%
-# Generated concepts
-# ------------------
-CONCEPTS = [
-    "a mammogram showing an oval mass",
-    "a mammogram showing an irregular mass",
-    "a mammogram showing a spiculated mass",
-    "an image of a dog",
-    "an image of a cat",
-]
+    def __len__(self):
+        return len(self.paths)
 
-pipeline = ConceptGenerationPipeline(
-    generators=FixedConceptGenerator(
-        labels=CONCEPTS,
-        types=["binary"] * len(CONCEPTS),
-        cardinalities=[1] * len(CONCEPTS),
-    ),
-    annotators=CLIPAnnotator(
-        model_name="openai/clip-vit-large-patch14",
-        prompt_template="{}",
-        batch_size=64,
-        show_progress=True,
-    ),
-    calibrator=SigmoidCalibrator(scale=100),
-)
-generated = pipeline(train_images)["CLIPAnnotator"]
-print(f"Generated: {tuple(generated.shape)}")
+    def __getitem__(self, index):
+        dicom = pydicom.dcmread(self.paths[index])
+        pixels = dicom.pixel_array.astype(np.float32)
+        if dicom.PhotometricInterpretation == "MONOCHROME1":
+            minimum = -(2 ** (dicom.BitsStored - 1)) if dicom.PixelRepresentation else 0
+            pixels = 2 * minimum + 2 ** dicom.BitsStored - 1 - pixels
+        image = resize_crop(torch.from_numpy(pixels).unsqueeze(0))
+        return self.transform(image), self.targets[index]
 
-for index, label in enumerate(generated.annotations.labels):
-    score = generated.tensor[:, index].mean()
-    print(f"  Sigmoid score of '{label}' = {score:.2f}")
+
+class MaskedBCEWithLogitsLoss(torch.nn.Module):
+    """Exclude unknown shape/margin labels from concept supervision."""
+
+    def forward(self, input, target):
+        known = torch.isfinite(target)
+        loss = F.binary_cross_entropy_with_logits(input, target.nan_to_num(), reduction="none")
+        return (loss * known).sum() / known.sum().clamp_min(1)
+
+
+def main():
+    seed_everything(42)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    epochs = 55
+
+    # %%
+    # Data: preserve official split membership and native concept definitions.
+    train, test = [CBISDDSMDataset(
+        root=str(DATA_ROOT / "cbis_ddsm"), abnormality_type="mass",
+        split=split, image_type="cropped",
+    ) for split in ("train", "test")]
+    descriptors = train.annotations.resolve(["mass_shape", "mass_margin"])[1]
+    binary_names = [name for name in descriptors.labels if not name.endswith(".N/A")]
+    concept_names = binary_names + ["breast_density"]
+    annotations = train.annotations.subset(concept_names).union_with(
+        Annotations(labels=["malignancy"], types=["binary"], states=[["present"]]),
+    )
+    train_images = MammogramImages(train, concept_names, augment=True)
+    test_images = MammogramImages(test, concept_names)
+    train_loader = DataLoader(train_images, batch_size=32, shuffle=True, num_workers=4, persistent_workers=True)
+    test_loader = DataLoader(test_images, batch_size=32, shuffle=False, num_workers=4, persistent_workers=True)
+    print(f"Training images: {len(train_images)}; test images: {len(test_images)}")
+
+    # %%
+    # Image -> native shape/margin/density concepts -> malignancy.
+    backbone = densenet121(weights=DenseNet121_Weights.DEFAULT)
+    latent_size = backbone.classifier.in_features
+    backbone.classifier = torch.nn.Dropout(0.5)
+    model = ConceptBottleneckModel(
+        input_size=(3, 224, 224), annotations=annotations, task_names=["malignancy"],
+        backbone=backbone, latent_size=latent_size,
+    ).to(device)
+    concept_loss = ConceptLoss(
+        binary=MaskedBCEWithLogitsLoss(), categorical=torch.nn.CrossEntropyLoss(),
+    )
+    diagnosis = train_images.targets[:, -1]
+    pos_weight = ((diagnosis == 0).sum() / (diagnosis == 1).sum()).to(device)
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=1e-5)
+    scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=[31, 50], gamma=0.5)
+
+    # %%
+    # Fit both heads jointly using the native CSV labels.
+    for epoch in range(epochs):
+        model.train()
+        total_loss = 0.0
+        for images, values in train_loader:
+            targets = AnnotatedTensor(values.to(device), annotations.to_concept_space(), axis=1)
+            optimizer.zero_grad()
+            output = model(query=annotations.labels, input=images.to(device))
+            loss = concept_loss(output, targets[concept_names]) + F.binary_cross_entropy_with_logits(
+                output.logits["malignancy"].tensor, targets["malignancy"].tensor,
+                pos_weight=pos_weight,
+            )
+            loss.backward()
+            optimizer.step()
+            total_loss += loss.item() * len(images)
+        scheduler.step()
+        print(f"Epoch {epoch + 1}/{epochs}: loss={total_loss / len(train_images):.4f}", flush=True)
+
+    # %%
+    # Test: supply only images, and compute AUC over the complete test split.
+    model.eval()
+    score_names = binary_names + ["malignancy"]
+    predictions = []
+    with torch.no_grad():
+        for images, _ in test_loader:
+            output = model(query=score_names, input=images.to(device))
+            predictions.append(output.logits[score_names].tensor.cpu())
+    scores = torch.cat(predictions).numpy()
+    truth = torch.cat([
+        test_images.targets[:, :len(binary_names)], test_images.targets[:, -1:],
+    ], dim=1).numpy()
+    aucs = []
+    for index, name in enumerate(score_names):
+        known = np.isfinite(truth[:, index])
+        auc = roc_auc_score(truth[known, index], scores[known, index])
+        aucs.append(auc)
+        print(f"Test ROC AUC of {name}: {auc:.4f}")
+    print(f"Test concept macro ROC AUC: {np.mean(aucs[:-1]):.4f}")
+
+
+if __name__ == "__main__":
+    main()
