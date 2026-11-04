@@ -39,6 +39,7 @@ from torch_concepts.data import WearDataset
 from torch_concepts.distributions import Delta
 from torch_concepts.env import DATA_ROOT
 from torch_concepts.nn import (
+    ConceptLoss,
     DeterministicInference,
     DynamicBayesianNetwork,
     DynamicInference,
@@ -140,16 +141,13 @@ engine = DynamicInference(model, DeterministicInference, p_int=1.0)
 # the health read the true health, while the query reports the prediction
 # (teacher forcing).
 optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-health_loss_fn = torch.nn.MSELoss()
-alarm_loss_fn = torch.nn.BCEWithLogitsLoss()
+loss_fn = ConceptLoss(binary=torch.nn.BCEWithLogitsLoss(), continuous=torch.nn.MSELoss())
 for epoch in range(25):
     for batch in torch.randperm(len(x_train)).split(100):  # shuffled minibatches
         x, c, y = x_train[batch], c_train[batch], y_train[batch]
         optimizer.zero_grad()
         out = engine.query({"health": c, "alarm": None}, evidence={"sensors": x}, horizon=H)
-        health_loss = health_loss_fn(out.loc["health"], c)
-        alarm_loss = alarm_loss_fn(out.logits["alarm"], y)
-        loss = health_loss + alarm_loss
+        loss = loss_fn(out, c) + loss_fn(out, y)
         loss.backward()
         optimizer.step()
 

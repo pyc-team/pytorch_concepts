@@ -43,6 +43,7 @@ from torch_concepts.env import DATA_ROOT
 from torch_concepts.nn import (
     MLP,
     CallableConceptToConcept,
+    ConceptLoss,
     DeterministicInference,
     DynamicBayesianNetwork,
     DynamicInference,
@@ -163,8 +164,7 @@ engine = DynamicInference(model, DeterministicInference, p_int=1.0)
 # at step 0 only, with the key ``("health", 0)``, so the hidden state learns
 # from its own forecasts, as at test time.
 optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-health_loss_fn = torch.nn.MSELoss()
-alarm_loss_fn = torch.nn.BCEWithLogitsLoss()
+loss_fn = ConceptLoss(binary=torch.nn.BCEWithLogitsLoss(), continuous=torch.nn.MSELoss())
 for epoch in range(50):
     for batch in torch.randperm(len(x_train)).split(100):  # shuffled minibatches
         x, c, y = x_train[batch], c_train[batch], y_train[batch]
@@ -173,11 +173,7 @@ for epoch in range(50):
         free = engine.query(
             {"health": None, ("health", 0): c[:, 0]}, evidence={"sensors": x}, horizon=H
         )
-        loss = (
-            health_loss_fn(teacher.value["health"], c)
-            + alarm_loss_fn(teacher.logits["alarm"], y)
-            + health_loss_fn(free.value["health"], c)
-        )
+        loss = loss_fn(teacher, c) + loss_fn(teacher, y) + loss_fn(free, c)
         loss.backward()
         optimizer.step()
 
