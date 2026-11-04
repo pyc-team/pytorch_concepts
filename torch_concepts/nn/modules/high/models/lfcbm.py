@@ -9,86 +9,51 @@ from __future__ import annotations
 
 from copy import deepcopy
 import json
-import math
 from pathlib import Path
-import random
-from typing import TYPE_CHECKING, Callable, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Mapping, Optional
 
 import torch
 from torch import Tensor, nn
-from torch.utils.data import DataLoader, Dataset, Subset
+from torch.nn import functional as F
+from torch.utils.data import DataLoader
 
 from torch_concepts import AnnotatedTensor, Annotations
 from torch_concepts.distributions import Delta
-from ...low.encoders.linear import LinearEmbeddingToConcept
-from ...low.predictors.linear import LinearConceptToConcept
+from ...low.encoders.aligned import AlignedEmbeddingToConcept
+from ...low.predictors.sparse import SparseLinearConceptToConcept
 from ...outputs import InferenceOutput
 from .cbm import ConceptBottleneckModel
 
 if TYPE_CHECKING:
+    from torch_concepts.data.base import ConceptDataModule
     from torch_concepts.data.generation import ConceptGenerationPipeline
-
-
-def _cosine_cubed(scores: Tensor, projected: Tensor) -> Tensor:
-    """Centered, cubed, columnwise cosine; zero-norm columns have score zero."""
-    centered_scores = (scores.float() - scores.float().mean(0, keepdim=True)).pow(3)
-    centered_projection = (projected - projected.mean(0, keepdim=True)).pow(3)
-    score_norm = centered_scores.norm(dim=0, keepdim=True)
-    projection_norm = centered_projection.norm(dim=0, keepdim=True)
-    scores_unit = centered_scores / torch.where(score_norm == 0, 1., score_norm)
-    projection_unit = centered_projection / torch.where(projection_norm == 0, 1., projection_norm)
-    return (scores_unit * projection_unit).sum(0)
-
-
-@torch.no_grad()
-def _fit_saga(linear, x, y, *, penalty, alpha, epochs, batch_size,
-              learning_rate, tolerance, seed):
-    """Fit one elastic-net penalty using MadryLab's published SAGA solver."""
-    from glm_saga.elasticnet import IndexedTensorDataset, train_saga
-
-    linear.weight.zero_()
-    linear.bias.zero_()
-    loader = DataLoader(
-        IndexedTensorDataset(x.cpu(), y.cpu()), batch_size=batch_size,
-        shuffle=True, generator=torch.Generator().manual_seed(seed),
-    )
-    train_saga(
-        linear, loader, learning_rate, epochs, penalty, alpha, group=False,
-        n_ex=len(x), n_classes=linear.out_features, tol=tolerance,
-    )
-    return {"solver": "glm_saga", "regularization": penalty, "alpha": alpha}
 
 
 class LabelFreeCBM(ConceptBottleneckModel):
     """A CBM whose bottleneck is discovered and fitted by a generation pipeline.
 
-    The pipeline discovers binary concept definitions and raw similarities from
-    training data. The backbone is copied and frozen. Native categorical task
-    labels must follow ``class_names``; ``target_getter(sample)`` supports custom
-    label sources. Fitting needs the optional ``lfcbm`` extra; inference does not.
+    ``fit(datamodule, task_name=...)`` discovers concepts from a prepared datamodule,
+    fits an ``AlignedEmbeddingToConcept`` projection and a sparse linear task
+    head, then installs the inherited CBM graph. The backbone is copied and
+    frozen. Failed refits preserve the previous predictor and diagnostics.
+    Fitting needs the optional ``lfcbm`` extra; inference does not.
 
-    Use ``fit(datamodule)`` or ``fit(train_dataset, val_dataset)``. For indexed
-    splits, pass ordinary PyTorch ``Subset`` objects. The pipeline is called
-    internally during ``fit``; the resulting graph belongs directly to this
-    model. ``concept_names_`` lists the retained vocabulary;
-    ``diagnostics_`` holds filtering scores and training history. Failed refits
-    preserve the previous model and diagnostics.
+    If the dataset is initially completely unlabelled, still choose a
+    ``task_name`` and configure a generation pipeline to generate labels for
+    that task. Run task-label generation during external data preparation and
+    expose its results as native categorical task labels before calling ``fit``.
+    The pipeline called inside ``fit`` generates bottleneck concepts; it does
+    not supply missing task labels.
 
     Args:
         pipeline: Raw concept generation/annotation pipeline, or None for loading.
         backbone: Module mapping raw inputs to feature vectors.
-        task_name: Name of the categorical task.
-        class_names: Ordered task states (at least two).
         clip_cutoff: Strict training top-five activation cutoff (default .25).
         interpretability_cutoff: Strict validation alignment cutoff (default .45).
-        projection_kwargs: Adam settings: steps=1000, batch_size=50000, lr=.001,
-            validation_interval=50. Stops at the first validation non-improvement.
-        classifier_kwargs: SAGA settings: epochs=1000, batch_size=256, lr=.1,
-            alpha=.99, lam=.0007, tolerance=1e-4. The reference penalty is
-            lam / max(.001, alpha); the intercept is unpenalized.
+        projection_kwargs: Settings for ``AlignedEmbeddingToConcept.fit``.
+        classifier_kwargs: Settings for ``SparseLinearConceptToConcept.fit``.
+            Both stages use the paper defaults when omitted.
         annotation_source: Pipeline result name (default CLIPAnnotator).
-        batch_size: Frozen backbone extraction batch size (default 512).
-        target_getter: Optional task-label extractor for each sample.
         device: Training/inference device, also updated by ``to(...)``.
         seed: Projection and classifier random seed.
     """
@@ -97,19 +62,14 @@ class LabelFreeCBM(ConceptBottleneckModel):
 
     def __init__(
         self, pipeline: Optional[ConceptGenerationPipeline], backbone: nn.Module,
-        task_name: str, class_names: Sequence[str], *,
+        *,
         clip_cutoff: float = .25, interpretability_cutoff: float = .45,
         projection_kwargs: Optional[Mapping] = None,
         classifier_kwargs: Optional[Mapping] = None,
-        annotation_source: str = "CLIPAnnotator", batch_size: int = 512,
-        target_getter: Optional[Callable] = None, device: str = "cpu", seed: int = 0,
+        annotation_source: str = "CLIPAnnotator", device: str = "cpu", seed: int = 0,
     ):
         # The vocabulary is unknown until fit; initialize module storage only.
         nn.Module.__init__(self)
-        if len(class_names) < 2 or len(set(class_names)) != len(class_names):
-            raise ValueError("class_names must contain at least two distinct ordered states.")
-        if batch_size < 1:
-            raise ValueError("batch_size must be positive.")
         self.pipeline = pipeline
         self._backbone = deepcopy(backbone).to(device).eval().requires_grad_(False)
         for name in ("mean_", "std_", "projection_weight_"):
@@ -117,16 +77,12 @@ class LabelFreeCBM(ConceptBottleneckModel):
         self.pgm = None
         self.concept_annotations = None
         self.concept_names = []
-        self.task_names = [task_name]
-        self.task_name = task_name
-        self.class_names = list(class_names)
+        self.task_names = []
         self.clip_cutoff = clip_cutoff
         self.interpretability_cutoff = interpretability_cutoff
         self.projection_kwargs = dict(projection_kwargs or {})
         self.classifier_kwargs = dict(classifier_kwargs or {})
         self.annotation_source = annotation_source
-        self.batch_size = batch_size
-        self.target_getter = target_getter
         self.seed = seed
 
     @property
@@ -138,23 +94,61 @@ class LabelFreeCBM(ConceptBottleneckModel):
         self._check_fitted()
         return list(self.intermediate_concept_names)
 
+    @property
+    def task_name(self) -> str:
+        self._check_fitted()
+        return self.task_names[0]
+
+    @property
+    def class_names(self) -> list[str]:
+        self._check_fitted()
+        return list(self.concept_annotations.concept(self.task_name).states)
+
     def train(self, mode: bool = True):
         """Keep the frozen backbone in evaluation mode."""
         super().train(mode)
         self.backbone.eval()
         return self
 
-    def fit(self, data, val_dataset: Optional[Dataset] = None, *,
-            embeddings: Optional[Mapping[str, Tensor]] = None) -> "LabelFreeCBM":
-        """Fit on a datamodule's splits or explicit train/validation datasets."""
-        try:
-            import glm_saga.elasticnet
-        except ImportError as error:
-            raise ImportError(
-                "LF-CBM fitting requires glm-saga; install 'pytorch_concepts[lfcbm]'."
-            ) from error
-        train, val = self._splits(data, val_dataset)
-        train_scores, val_scores = self._generate_scores(train, val)
+    def fit(self, datamodule: ConceptDataModule, *, task_name: str) -> "LabelFreeCBM":
+        """Fit a named categorical task on prepared splits.
+
+        Call ``datamodule.setup('fit')`` beforehand. Task labels are required;
+        ordered class names are read from the native task annotation. Concept
+        names are discovered by the pipeline during fitting.
+
+        For an initially completely unlabelled dataset, ``task_name`` is still
+        required. Configure the generation pipeline used for data preparation
+        to generate labels for that named task, and provide them as native
+        categorical task labels before fitting. Missing task labels raise an
+        error before this method invokes its bottleneck-generation pipeline.
+
+        Args:
+            datamodule: Prepared datamodule containing inputs and task labels.
+            task_name: Name of the native categorical task to predict, including
+                when its labels were generated during data preparation.
+        """
+        from torch_concepts.data.base import ConceptDataModule
+        from torch_concepts.data.scalers import StandardScaler
+
+        if not isinstance(datamodule, ConceptDataModule):
+            raise TypeError("LabelFreeCBM.fit requires a ConceptDataModule.")
+        train, val = datamodule.trainset, datamodule.valset
+        if train is None or val is None or min(len(train), len(val)) < 2:
+            raise ValueError(
+                "Prepare train/validation splits with at least two observations each using "
+                "datamodule.setup('fit') before calling fit()."
+            )
+        if datamodule.dataset.embs_precomputed:
+            raise ValueError("LF-CBM requires raw dataset inputs for concept annotation.")
+        schema = datamodule.dataset.native_annotations
+        if schema is None or task_name not in schema.labels or schema.concept(task_name).type != "categorical":
+            raise ValueError("The datamodule must provide native categorical task labels.")
+        task = schema.subset([task_name])
+        class_names = list(task.states[0])
+        if len(set(class_names)) != len(class_names):
+            raise ValueError("The task must declare distinct ordered class states.")
+        train_scores, val_scores = self._generate_scores(train, val, task)
         activation = AnnotatedTensor(
             train_scores.tensor.topk(min(5, len(train)), dim=0).values.mean(0, keepdim=True),
             train_scores.annotations, axis=1,
@@ -165,13 +159,21 @@ class LabelFreeCBM(ConceptBottleneckModel):
             raise ValueError("No concepts survived the training CLIP activation cutoff.")
         train_scores, val_scores = train_scores[active], val_scores[active]
         backbone = deepcopy(self.backbone).eval().requires_grad_(False)
-        train_h, train_y = self._features_and_targets(train, backbone, None if embeddings is None else embeddings["train"])
-        val_h, val_y = self._features_and_targets(val, backbone, None if embeddings is None else embeddings["val"])
-        if train_h.shape[1] != val_h.shape[1]:
-            raise ValueError("Training and validation feature dimensions differ.")
-        projection, alignment, history, best_step = self._fit_projection(
-            train_h, val_h, train_scores, val_scores, **self.projection_kwargs,
+        loader_kwargs = dict(
+            batch_size=datamodule.batch_size, num_workers=datamodule.workers,
+            collate_fn=datamodule.dataset.collate, shuffle=False, drop_last=False,
         )
+        train_h, train_y = self._features_and_targets(
+            DataLoader(train, pin_memory=datamodule.pin_memory, **loader_kwargs), backbone, task,
+        )
+        val_h, val_y = self._features_and_targets(
+            DataLoader(val, **loader_kwargs), backbone, task,
+        )
+        projection = AlignedEmbeddingToConcept(train_h.shape[1], train_scores.shape[1]).to(self.device).fit(
+            train_h, train_scores.tensor, val_h, val_scores.tensor,
+            seed=self.seed, **self.projection_kwargs,
+        )
+        alignment = projection.alignment_scores_
         alignment_scores = AnnotatedTensor(alignment.unsqueeze(0), train_scores.annotations, axis=1)
         retained = [name for name, keep in zip(active, alignment > self.interpretability_cutoff) if keep]
         if not retained:
@@ -180,62 +182,42 @@ class LabelFreeCBM(ConceptBottleneckModel):
             labels=retained, cardinalities=[1] * len(retained), types=["continuous"] * len(retained),
             groups=train_scores[retained].annotations.groups,
         )
-        rows = [train_scores.annotations.get_index(name) for name in retained]
-        selected = LinearEmbeddingToConcept(train_h.shape[1], len(retained), bias=False).to(self.device)
+        weight = projection.encoder.weight[alignment > self.interpretability_cutoff].detach()
         with torch.no_grad():
-            selected.encoder.weight.copy_(projection.encoder.weight[rows])
-        selected.requires_grad_(False)
-        classifier, mean, std, classifier_diagnostics = self._fit_classifier(
-            selected, train_h, val_h, train_y, val_y, **self.classifier_kwargs,
+            train_c = F.linear(train_h.to(self.device), weight).cpu()
+            val_c = F.linear(val_h.to(self.device), weight).cpu()
+        scaler = StandardScaler().fit(train_c)
+        classifier = SparseLinearConceptToConcept(len(retained), len(class_names)).to(self.device).fit(
+            scaler.transform(train_c), train_y, scaler.transform(val_c), val_y,
+            seed=self.seed, **self.classifier_kwargs,
         )
+        mean, std = scaler.mean[0].to(self.device), scaler.std[0].to(self.device)
         model = self._build_predictor(
             backbone, tuple(train[0]["inputs"]["x"].shape), annotations,
-            selected.encoder.weight, classifier, mean, std,
+            weight, classifier, mean, std, task,
         )
         diagnostics = {
             "activation_scores": activation, "alignment_scores": alignment_scores,
-            "projection_history": history, "projection_best_step": best_step,
-            "classifier": classifier_diagnostics,
+            "projection_history": projection.history_, "projection_best_step": projection.best_step_,
+            "classifier": classifier.diagnostics_,
         }
         # Publish only complete state; failed fitting leaves the old model intact.
-        self.projection_weight_ = selected.encoder.weight.detach().clone()
+        self.projection_weight_ = weight.clone()
         self.mean_, self.std_ = mean, std
         self.diagnostics_ = diagnostics
         self._install_predictor(model)
         self.eval()
         return self
 
-    @staticmethod
-    def _splits(data, val):
-        from torch_concepts.data.base import ConceptDataModule
-
-        if isinstance(data, ConceptDataModule):
-            if val is not None:
-                raise ValueError("Use the datamodule's existing splits without val_dataset.")
-            if data.trainset is None or data.valset is None:
-                data.setup("fit")
-            data, val = data.trainset, data.valset
-        if not isinstance(data, Dataset) or not isinstance(val, Dataset):
-            raise ValueError("Provide a datamodule or train/validation datasets.")
-        if min(len(data), len(val)) < 2:
-            raise ValueError("LF-CBM needs at least two training and validation observations.")
-        return data, val
-
-    def _generate_scores(self, train, val):
+    def _generate_scores(self, train, val, task):
         if self.pipeline is None:
             raise ValueError("A generation pipeline is required for fit().")
         if any(getattr(self.pipeline, name) is not None for name in (
             "calibrator", "raw_annotation_filter", "calibrated_annotation_filter", "aggregator",
         )):
             raise ValueError("LF-CBM requires raw similarities: no calibration, annotation filters, or aggregation.")
-        for dataset in (train, val):
-            source = dataset
-            while isinstance(source, Subset):
-                source = source.dataset
-            if getattr(source, "embs_precomputed", False):
-                raise ValueError("Keep raw dataset inputs; pass precomputed features via embeddings instead.")
         outputs = self.pipeline(
-            train, class_names=self.class_names, generation_indices=list(range(len(train))),
+            train, class_names=list(task.states[0]), generation_indices=list(range(len(train))),
             annotation_datasets={"train": train, "val": val},
         )
         required = [f"{split}_{self.annotation_source}" for split in ("train", "val")]
@@ -243,8 +225,14 @@ class LabelFreeCBM(ConceptBottleneckModel):
             raise ValueError(f"annotation_source {self.annotation_source!r} is unavailable; outputs: {list(outputs)}.")
         train_scores = outputs[f"train_{self.annotation_source}"]
         val_scores = outputs[f"val_{self.annotation_source}"]
-        self._validate_scores(train_scores, len(train))
-        self._validate_scores(val_scores, len(val))
+        # The pipeline validates tensor shapes, rows, and routed metadata.
+        for scores in (train_scores, val_scores):
+            if (any(t != "binary" for t in scores.annotations.types)
+                    or any(c != 1 for c in scores.annotations.cardinalities)
+                    or not torch.isfinite(scores.tensor).all()):
+                raise ValueError("LF-CBM requires one finite raw similarity per binary candidate concept.")
+            if task.labels[0] in scores.annotations.labels:
+                raise ValueError("A candidate concept cannot have the task variable's name.")
         if set(train_scores.annotations.labels) != set(val_scores.annotations.labels):
             raise ValueError("Train and validation concept identities differ.")
         val_scores = val_scores[train_scores.annotations.labels]
@@ -254,153 +242,41 @@ class LabelFreeCBM(ConceptBottleneckModel):
         val_scores = AnnotatedTensor(val_scores.tensor.detach().float().cpu(), val_scores.annotations, axis=1)
         return train_scores, val_scores
 
-    def _validate_scores(self, values, n_samples):
-        if not isinstance(values, AnnotatedTensor) or values.axis not in (1, -1) or values.ndim != 2:
-            raise ValueError("LF-CBM annotations must be sample-by-concept AnnotatedTensors on axis 1.")
-        if values.shape[0] != n_samples or values.shape[1] != len(values.annotations.labels):
-            raise ValueError("Annotation rows and concept columns must align with each dataset split.")
-        if any(t != "binary" for t in values.annotations.types):
-            raise ValueError("LF-CBM requires one raw similarity column per binary candidate concept.")
-        if self.task_name in values.annotations.labels:
-            raise ValueError("A candidate concept cannot have the task variable's name.")
-        if len(set(values.annotations.labels)) != values.shape[1] or not torch.isfinite(values.tensor).all():
-            raise ValueError("Candidate labels must be unique and raw similarities finite.")
-
-    def _features_and_targets(self, dataset, backbone, embeddings=None):
-        source = dataset
-        while isinstance(source, Subset):
-            source = source.dataset
-        if self.target_getter is None:
-            native = getattr(source, "native_concepts", None)
-            if native is None or self.task_name not in native.annotations.labels:
-                raise ValueError("Supply native task labels or target_getter(sample).")
-            target_index = native.annotations.get_index(self.task_name)
-            schema = getattr(source, "native_annotations", source.annotations).concept(self.task_name)
-            if schema.type == "categorical" and list(schema.states) != self.class_names:
-                raise ValueError("Native task state ordering must match class_names.")
+    @torch.no_grad()
+    def _features_and_targets(self, loader, backbone, task):
         features, targets = [], []
-        with torch.no_grad():
-            for samples in DataLoader(dataset, batch_size=self.batch_size, collate_fn=list):
-                targets.extend([
-                    self.target_getter(sample) if self.target_getter is not None
-                    else sample["concepts"]["native"][target_index] for sample in samples
-                ])
-                if embeddings is None:
-                    x = torch.stack([sample["inputs"]["x"] for sample in samples]).to(self.device)
-                    h = backbone(x)
-                    if not isinstance(h, Tensor) or h.ndim != 2:
-                        raise ValueError("backbone must return a (batch, features) tensor.")
-                    features.append(h.detach().float().cpu())
-        targets = torch.as_tensor(targets).float()
-        if not torch.isfinite(targets).all() or not torch.equal(targets, targets.round()):
-            raise ValueError("Task labels must be finite class indices.")
-        y = targets.long()
-        if y.ndim != 1 or y.min() < 0 or y.max() >= len(self.class_names):
-            raise ValueError("Task labels must index class_names in its declared order.")
-        h = torch.cat(features) if embeddings is None else embeddings.detach().float().cpu()
-        if h.ndim != 2 or len(h) != len(dataset) or not torch.isfinite(h).all():
+        for batch in loader:
+            h = backbone(batch["inputs"]["x"].to(self.device))
+            if not isinstance(h, Tensor) or h.ndim != 2:
+                raise ValueError("backbone must return a (batch, features) tensor.")
+            features.append(h.detach().float().cpu())
+            targets.append(batch["concepts"]["native"][task.labels[0]].tensor[:, 0].cpu())
+        h, y = torch.cat(features), torch.cat(targets).float()
+        if (not torch.isfinite(y).all() or not torch.equal(y, y.round())
+                or (y < 0).any() or (y >= len(task.states[0])).any()):
+            raise ValueError("Task labels must be finite class indices into class_names.")
+        if len(h) != len(loader.dataset) or not torch.isfinite(h).all():
             raise ValueError("Backbone features must be finite (samples, features) tensors.")
-        return h, y
+        return h, y.long()
 
-    def _fit_projection(self, train_h, val_h, train_scores, val_scores, *,
-                        steps=1000, batch_size=50000, lr=.001, validation_interval=50):
-        if min(steps, batch_size, validation_interval) < 1 or lr <= 0:
-            raise ValueError("Projection steps, batch sizes, validation interval, and learning rate must be positive.")
-        projection = LinearEmbeddingToConcept(train_h.shape[1], train_scores.shape[1], bias=False)
-        generator = torch.Generator().manual_seed(self.seed)
-        with torch.no_grad():
-            projection.encoder.weight.uniform_(
-                -1 / math.sqrt(train_h.shape[1]), 1 / math.sqrt(train_h.shape[1]), generator=generator,
-            )
-        projection.to(self.device)
-        optimizer = torch.optim.Adam(projection.parameters(), lr=lr)
-        rng = random.Random(self.seed)
-        best_loss, best_weight, best_step = float("inf"), None, None
-        history = []
-        for step in range(steps):
-            indices = rng.sample(range(len(train_h)), min(batch_size, len(train_h)))
-            optimizer.zero_grad()
-            loss = -_cosine_cubed(
-                train_scores.tensor[indices].to(self.device), projection(train_h[indices].to(self.device)),
-            ).mean()
-            if not torch.isfinite(loss):
-                raise ValueError("Nonfinite projection loss; check feature and annotation variation.")
-            loss.backward()
-            optimizer.step()
-            if step % validation_interval == 0 or step == steps - 1:
-                with torch.no_grad():
-                    alignment = _cosine_cubed(val_scores.tensor.to(self.device), projection(val_h.to(self.device)))
-                    val_loss = float(-alignment.mean())
-                if not math.isfinite(val_loss):
-                    raise ValueError("Nonfinite validation alignment; check feature variation.")
-                history.append({"step": step, "train_loss": float(loss.detach()), "val_loss": val_loss})
-                if val_loss < best_loss:
-                    best_loss, best_step = val_loss, step
-                    best_weight = projection.encoder.weight.detach().clone()
-                else:
-                    break
-        with torch.no_grad():
-            projection.encoder.weight.copy_(best_weight)
-        with torch.no_grad():
-            alignment = _cosine_cubed(val_scores.tensor.to(self.device), projection(val_h.to(self.device)))
-        return projection, alignment.cpu(), history, best_step
-
-    def _fit_classifier(self, projection, train_features, val_features, train_y, val_y, *,
-                        epochs=1000, batch_size=256, lr=.1, alpha=.99,
-                        lam=.0007, tolerance=1e-4):
-        from glm_saga.elasticnet import elastic_loss
-
-        if not 0 <= alpha <= 1 or lam < 0:
-            raise ValueError("Classifier alpha must be in [0, 1] and lam nonnegative.")
-        if epochs < 1 or batch_size < 1 or lr <= 0 or tolerance < 0:
-            raise ValueError("Classifier steps, batch size, and learning rate must be positive; tolerance nonnegative.")
-        with torch.no_grad():
-            train_c = projection(train_features.to(self.device)).cpu()
-            val_c = projection(val_features.to(self.device)).cpu()
-        mean = train_c.mean(0)
-        std = train_c.std(0)
-        if not torch.isfinite(std).all() or (std <= 0).any():
-            raise ValueError("Retained projected concepts must have positive training standard deviation.")
-        train_z, val_z = (train_c - mean) / std, (val_c - mean) / std
-        classifier = LinearConceptToConcept(projection.encoder.out_features, len(self.class_names)).to(self.device)
-        classifier_regularization = lam / max(.001, alpha)
-        classifier_diagnostics = _fit_saga(
-            classifier.predictor, train_z, train_y,
-            penalty=classifier_regularization, alpha=alpha,
-            epochs=epochs, batch_size=batch_size,
-            learning_rate=lr, tolerance=tolerance, seed=self.seed,
-        )
-        classifier.requires_grad_(False).eval()
-        with torch.no_grad():
-            for name, x, y in (("train", train_z, train_y), ("val", val_z, val_y)):
-                classifier_diagnostics[f"{name}_loss"] = float(elastic_loss(
-                    classifier.predictor, x.to(self.device), y.to(self.device),
-                    classifier_regularization, alpha,
-                ))
-        mean, std = mean.to(self.device), std.to(self.device)
-        return classifier, mean, std, classifier_diagnostics
-
-    def _new_predictor(self, backbone, input_shape, annotations, feature_size, dtype):
+    def _new_predictor(self, backbone, input_shape, annotations, feature_size, dtype, task_name):
         return ConceptBottleneckModel(
             input_size=input_shape, latent_size=feature_size, backbone=backbone,
-            annotations=annotations, task_names=[self.task_name],
+            annotations=annotations, task_names=[task_name],
             variable_distributions=self.variable_distributions,
             variable_dist_kwargs=self.variable_dist_kwargs,
         ).to(device=self.device, dtype=dtype)
 
-    def _build_predictor(self, backbone, input_shape, annotations, weight, classifier, mean, std):
-        task = Annotations(labels=[self.task_name], states=[self.class_names], types=["categorical"])
-        model = self._new_predictor(backbone, input_shape, annotations.union_with(task), weight.shape[1], weight.dtype)
+    def _build_predictor(self, backbone, input_shape, annotations, weight, classifier, mean, std, task):
+        model = self._new_predictor(
+            backbone, input_shape, annotations.union_with(task), weight.shape[1], weight.dtype, task.labels[0],
+        )
         model.set_linear_heads(weight / std[:, None], -mean / std,
                                classifier.predictor.weight, classifier.predictor.bias)
         return model.eval().requires_grad_(False)
 
     def _install_predictor(self, model):
-        """Install an already validated CBM without reinitializing this module.
-
-        Staging construction preserves the old graph on failure. Keeping this
-        module's hook registries intact also preserves user forward/backward hooks.
-        """
+        """Install a complete graph while preserving this module's user hooks."""
         for name in (
             "input_size", "latent_size", "concept_annotations", "concept_names", "task_names",
             "plate", "variable_distributions", "variable_dist_kwargs", "_given_graph",
@@ -424,8 +300,7 @@ class LabelFreeCBM(ConceptBottleneckModel):
     @torch.no_grad()
     def predict(self, x: Tensor) -> Tensor:
         """Return task logits in class_names order."""
-        self._check_fitted()
-        task = self.task_names[0]
+        task = self.task_name
         return self(query=[task], input=x.to(self.device)).logits[task].tensor
 
     @torch.no_grad()
@@ -459,7 +334,7 @@ class LabelFreeCBM(ConceptBottleneckModel):
                 raise ValueError("Supply a compatible backbone module.")
             backbone = nn.Identity()
         annotations = Annotations.from_dict(metadata["annotations"])
-        obj = cls(None, backbone, metadata["task_name"], annotations.concept(metadata["task_name"]).states, device=device)
+        obj = cls(None, backbone, device=device)
         state = torch.load(path / "state_dict.pt", map_location=device, weights_only=True)
         if metadata["format_version"] == 2:
             state = {name.removeprefix("model_."): value for name, value in state.items()}
@@ -471,7 +346,7 @@ class LabelFreeCBM(ConceptBottleneckModel):
             raise ValueError("Invalid LF-CBM normalization statistics.")
         model = obj._new_predictor(
             obj._backbone, tuple(metadata["input_shape"]), annotations,
-            metadata["feature_size"], obj.mean_.dtype,
+            metadata["feature_size"], obj.mean_.dtype, metadata["task_name"],
         )
         obj._install_predictor(model)
         obj.load_state_dict(state)
