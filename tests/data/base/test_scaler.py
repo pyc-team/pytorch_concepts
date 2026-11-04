@@ -6,6 +6,7 @@ import unittest
 import pytest
 import torch
 from torch_concepts.data.base.scaler import Scaler
+from torch_concepts.data.scalers.standard import StandardScaler
 
 
 class ConcreteScaler(Scaler):
@@ -399,6 +400,59 @@ class TestStandardScalerExtended:
 
         # Should normalize along axis 1
         assert transformed.shape == data.shape
+
+
+@pytest.mark.parametrize("axis", [0, 1, -1, (0, 1)])
+@pytest.mark.parametrize("dtype", [torch.float32, torch.float64])
+def test_standard_scaler_fit_transform_uses_configured_axis(
+    axis: int | tuple[int, ...], dtype: torch.dtype,
+) -> None:
+    """Combined fitting preserves axis, dtype, statistics, and inverse behavior."""
+    data: torch.Tensor = torch.arange(end=24, dtype=dtype).reshape((2, 3, 4))
+    scaler: StandardScaler = StandardScaler(axis=axis)
+    reference: StandardScaler = StandardScaler(axis=axis).fit(x=data)
+
+    transformed: torch.Tensor = scaler.fit_transform(x=data)
+
+    torch.testing.assert_close(actual=transformed, expected=reference.transform(x=data))
+    torch.testing.assert_close(actual=scaler.mean, expected=reference.mean)
+    torch.testing.assert_close(actual=scaler.std, expected=reference.std)
+    torch.testing.assert_close(actual=scaler.inverse_transform(x=transformed), expected=data)
+    assert transformed.dtype == dtype
+    assert transformed.shape == data.shape
+
+
+@pytest.mark.parametrize("dim", [0, 1, -1])
+def test_standard_scaler_explicit_dim_preserves_configured_axis(dim: int) -> None:
+    """An explicit dimension applies only to the current fit operation."""
+    data: torch.Tensor = torch.tensor([[1., 2., 3.], [4., 6., 8.]])
+    scaler: StandardScaler = StandardScaler(axis=1)
+    reference: StandardScaler = StandardScaler(axis=dim).fit(x=data)
+
+    transformed: torch.Tensor = scaler.fit_transform(x=data, dim=dim)
+
+    torch.testing.assert_close(actual=transformed, expected=reference.transform(x=data))
+    scaler.fit(x=data, dim=dim)
+    torch.testing.assert_close(actual=scaler.mean, expected=reference.mean)
+    torch.testing.assert_close(actual=scaler.std, expected=reference.std)
+    assert scaler.axis == 1
+
+    scaler.fit(x=data)
+    torch.testing.assert_close(actual=scaler.mean, expected=data.mean(dim=1, keepdim=True))
+
+
+def test_standard_scaler_fit_transform_invalid_dim_preserves_statistics() -> None:
+    """An invalid dimension raises before changing fitted statistics."""
+    data: torch.Tensor = torch.tensor([[1., 2.], [3., 4.]])
+    scaler: StandardScaler = StandardScaler().fit(x=data)
+    original_mean: torch.Tensor = scaler.mean.clone()
+    original_std: torch.Tensor = scaler.std.clone()
+
+    with pytest.raises(IndexError):
+        scaler.fit_transform(x=data, dim=data.ndim)
+
+    torch.testing.assert_close(actual=scaler.mean, expected=original_mean)
+    torch.testing.assert_close(actual=scaler.std, expected=original_std)
 
 
 if __name__ == '__main__':
