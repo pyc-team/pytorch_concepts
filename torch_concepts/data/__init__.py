@@ -49,6 +49,7 @@ from .datamodules.dsprites_regression import DSpritesRegressionDataModule
 from .datamodules.awa2 import AWA2DataModule
 from .datamodules.cub import CUBDataModule
 from .datamodules.ham10000 import HAM10000DataModule
+from .datamodules.cbis_ddsm import CBISDDSMDataModule
 from .datamodules.pneumothorax import PneumothoraxDataModule
 
 __all__ = [
@@ -94,5 +95,6 @@ __all__ = [
     "AWA2DataModule",
     "CUBDataModule",
     "HAM10000DataModule",
+    "CBISDDSMDataModule",
     "PneumothoraxDataModule",
 ]
