@@ -15,7 +15,8 @@ def _import_pgmpy():
     opt_einsum, adding ~0.4 s to ``import torch_concepts.nn`` — which every user
     pays, because :mod:`torch_concepts.nn` imports all engines eagerly, and
     which only this backend needs. ``sys.modules`` makes every call after the
-    first free, so the one call site (at the top of ``query``) costs nothing.
+    first free, so the one call site (once per set of per-row engines) costs
+    nothing.
 
     The undirected model class was renamed in pgmpy 1.0: ``DiscreteMarkovNetwork``
     there, ``MarkovNetwork`` before. 1.x still exports a ``MarkovNetwork`` shim,

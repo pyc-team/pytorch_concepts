@@ -149,7 +149,7 @@ class RejectionSampling(TorchBaseInference):
         N = self.n_samples
         evidence = {}
         for name, val in root_evidence.items():
-            val = self.pgm.variables[name].to_member(val)
+            # One observation in event layout, as ``_run`` reads evidence.
             evidence[name] = val.unsqueeze(0).expand(N, *val.shape)
         with torch.no_grad():
             _, cache, _ = sampler._run(

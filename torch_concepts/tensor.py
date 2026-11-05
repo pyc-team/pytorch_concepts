@@ -180,10 +180,16 @@ class AnnotatedTensor:
             ``t["cat"]``            – single column  → ``AnnotatedTensor``
             ``t["cat", "dog"]``     – multiple cols  → ``AnnotatedTensor``
             ``t[["cat", "dog"]]``   – list syntax    → ``AnnotatedTensor``
+            ``t[annotations]``      – another annotation's labels, in its order
 
         Any other key is forwarded to the underlying tensor; the annotation is
         preserved when the result's annotated-axis size equals the original.
         """
+        if isinstance(key, Annotations):
+            # Keyed by its label tuple: no per-call Python scan of the names, so
+            # aligning a target to N predicted concepts every step costs one hash.
+            return self._wrap_resolved(self._annotations.resolve(key.label_key))
+
         # Normalise to tuple-of-strings when possible, in a single all-string scan.
         is_name_key = False
         if isinstance(key, str):

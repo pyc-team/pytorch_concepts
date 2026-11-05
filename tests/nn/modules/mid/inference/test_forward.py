@@ -214,7 +214,7 @@ class TestEvidenceClamping:
 
 
 # ===========================================================================
-# 3b. _format_evidence — dtype casting and StopIteration fallback
+# 3b. _format_evidence — dtype casting, looked up once per query
 # ===========================================================================
 
 class TestFormatEvidence:
@@ -224,7 +224,7 @@ class TestFormatEvidence:
         eng = DeterministicInference(m)
         x = eng.pgm.resolve("x")
         value = torch.randn(3, 4, dtype=torch.float64)
-        out = eng._format_evidence(x, value)
+        out = eng._format_evidence(x, value, eng._dtype())
         assert out.dtype == torch.float32
 
     def test_non_floating_evidence_dtype_preserved(self):
@@ -233,7 +233,7 @@ class TestFormatEvidence:
         eng = DeterministicInference(m)
         x = eng.pgm.resolve("x")
         value = torch.randint(0, 4, (3, 4), dtype=torch.long)
-        out = eng._format_evidence(x, value)
+        out = eng._format_evidence(x, value, eng._dtype())
         assert out.dtype == torch.long
         # Read into the member layout the cache holds; the values are untouched.
         assert out.shape == (3, 1, 4)
@@ -243,10 +243,58 @@ class TestFormatEvidence:
         """With no learnable parameters, dtype falls back to the global default."""
         m = _make_no_param_model()
         eng = DeterministicInference(m)
-        x = eng.pgm.resolve("x")
         value = torch.randn(2, 4, dtype=torch.float64)
-        out = eng._format_evidence(x, value)
-        assert out.dtype == torch.get_default_dtype()
+        out = eng.query(query=["x"], evidence={"x": value})
+        assert eng._dtype() == torch.get_default_dtype()
+        assert out.params == {}  # fully observed, and the query still runs
+
+    def test_dtype_is_looked_up_once_per_query(self, monkeypatch):
+        """The lookup walks the module tree, so it must not run per evidence tensor."""
+        eng = DeterministicInference(_make_chain_model())
+        calls = []
+        lookup = DeterministicInference._dtype
+        monkeypatch.setattr(
+            DeterministicInference, "_dtype", lambda self: calls.append(1) or lookup(self)
+        )
+        eng.query(query=["b"], evidence={"x": torch.randn(3, 4), "a": torch.ones(3, 2)})
+        assert len(calls) == 1
+
+
+# ===========================================================================
+# 3c. A parametrization must keep every leading dimension
+# ===========================================================================
+
+class _LastStep(nn.Module):
+    """Written for one batch axis: ``(B, T, D) -> (B, K)``, dropping ``T``."""
+
+    def __init__(self):
+        super().__init__()
+        self.lin = nn.Linear(4, 2)
+
+    def forward(self, x):
+        return self.lin(x[:, -1])
+
+
+class TestCPDLeadingShape:
+    @staticmethod
+    def _model(head):
+        x = ConceptVariable("x", distribution=Delta, size=4)
+        c = ConceptVariable("c", distribution=dist.Bernoulli, size=2)
+        return BayesianNetwork(variables=[x, c], factors=[
+            ParametricCPD(variable=x, parametrization={"value": FixedPrior(torch.zeros(4))}),
+            ParametricCPD(variable=c, parametrization={"logits": head}, parents=[x]),
+        ])
+
+    @pytest.mark.parametrize("cls", [DeterministicInference, AncestralSamplingInference])
+    def test_a_dropped_leading_dim_raises(self, cls):
+        eng = cls(self._model(_LastStep()))
+        with pytest.raises(ValueError, match=r"CPD of 'c' returned 'logits' with leading shape \(3,\)"):
+            eng.query(query=["c"], evidence={"x": torch.randn(3, 7, 4)})
+
+    def test_a_head_keeping_the_leading_dims_runs(self):
+        eng = DeterministicInference(self._model(nn.Linear(4, 2)))
+        out = eng.query(query=["c"], evidence={"x": torch.randn(3, 7, 4)})
+        assert out.logits.shape == (3, 7, 2)
 
 
 # ===========================================================================

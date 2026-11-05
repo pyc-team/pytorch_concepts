@@ -378,16 +378,16 @@ class ConceptMetrics(nn.Module):
             # __torch_function__ unwrap hook (the dominant per-update cost).
             if binary is not None and len(self.binary):
                 pred = binary.tensor.sigmoid() if from_logits else binary.tensor
-                self.binary.update(pred, target[binary.annotations.labels].tensor.float())
+                self.binary.update(pred, target[binary.annotations].tensor.float())
             if categorical is not None and len(self.categorical):
                 cat_pred, cat_target = self._prepare_categorical(
-                    categorical, target[categorical.annotations.labels])
+                    categorical, target[categorical.annotations])
                 # The -inf padding becomes probability 0 either way.
                 cat_pred = cat_pred.softmax(-1) if from_logits else cat_pred.clamp_min(0)
                 self.categorical.update(cat_pred, cat_target)
             if continuous is not None and len(self.continuous):
                 self.continuous.update(
-                    continuous.tensor, target[continuous.annotations.labels].tensor)
+                    continuous.tensor, target[continuous.annotations].tensor)
 
         # Per-concept metrics — read each concept from its type's quantity.
         for concept_name, collection in self._per_concept.items():

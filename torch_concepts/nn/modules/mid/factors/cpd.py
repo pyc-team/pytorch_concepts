@@ -382,7 +382,7 @@ class ParametricCPD(ParametricFactor):
         if self.is_root:
             # Root CPD: no parents expected.
             return {
-                pname: self.variable.to_member(mod(), pname)
+                pname: self.variable.from_event(mod(), pname)
                 for pname, mod in self.parametrization.items()
             }
 
@@ -400,7 +400,7 @@ class ParametricCPD(ParametricFactor):
             else:
                 features = self.trunk(cat, **layer_kwargs)
             return {
-                pname: self.variable.to_member(mod(features), pname)
+                pname: self.variable.from_event(mod(features), pname)
                 for pname, mod in self.parametrization.items()
             }
 
@@ -412,7 +412,7 @@ class ParametricCPD(ParametricFactor):
                 out = mod(**{**layer_kwargs, **cat})
             else:
                 out = mod(cat, **layer_kwargs)
-            result[pname] = self.variable.to_member(out, pname)
+            result[pname] = self.variable.from_event(out, pname)
         return result
 
     def root_params(

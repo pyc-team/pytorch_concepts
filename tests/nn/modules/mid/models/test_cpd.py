@@ -378,6 +378,38 @@ class TestMemberOf:
             plate.member_of(torch.rand(2, 3), "missing")
 
 
+class TestFromEvent:
+    """``from_event`` reads tensors from outside the engine (evidence, targets,
+    parametrization outputs); ``to_member`` reads the engine's own caches. They
+    differ only on a single-member value whose leading shape ends in 1."""
+
+    def test_trailing_singleton_is_a_leading_dim(self):
+        x = ConceptVariable("x", distribution=Delta, size=3)
+        value = torch.randn(5, 1, 3)
+        assert x.from_event(value).shape == (5, 1, 1, 3)
+        assert x.leading_of(value) == (5, 1)
+        # the same shape is an already-fitted cache to ``to_member``
+        assert x.to_member(value).shape == (5, 1, 3)
+
+    def test_one_member_plate(self):
+        g = ConceptVariable("g", members=["g1"], distribution=dist.Bernoulli, size=3)
+        assert g.leading_of(torch.rand(5, 1, 3)) == (5, 1)
+
+    def test_multidimensional_event(self):
+        img = ConceptVariable("img", distribution=Delta, shape=(3, 4))
+        assert img.from_event(torch.randn(5, 1, 3, 4)).shape == (5, 1, 1, 3, 4)
+        assert img.from_event(torch.randn(5, 1, 12)).shape == (5, 1, 1, 3, 4)
+
+    def test_a_plate_accepts_both_layouts(self):
+        """With several members the member layout cannot be mistaken for a
+        leading dim, so a plate is still read either way."""
+        plate = ConceptVariable("c", members=["a", "b"], distribution=dist.Bernoulli, size=3)
+        member = torch.rand(4, 2, 3)
+        assert torch.equal(plate.from_event(member), member)
+        assert torch.equal(plate.from_event(member.reshape(4, 6)), member)
+        assert plate.leading_of(torch.rand(4, 1, 6)) == (4, 1)
+
+
 # ===========================================================================
 # 8. clamp_members()
 # ===========================================================================

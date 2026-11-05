@@ -72,8 +72,9 @@ def _encode(v, s, batch):
     return val
 
 
-def _exact_marginals(fg, free_names, evidence_states=None, conditioning=None, batch=1):
-    """Marginals by enumerating the full joint from the factors' log_potential."""
+def _exact_joint(fg, free_names, evidence_states=None, conditioning=None, batch=1):
+    """The normalised joint over ``free_names``, ``(batch, *cards)``, by
+    enumerating the factors' log_potential."""
     evidence_states = evidence_states or {}
     free_vars = [fg.variables[n] for n in free_names]
     cards = [enumerable_cardinality(v) for v in free_vars]
@@ -92,12 +93,27 @@ def _exact_marginals(fg, free_names, evidence_states=None, conditioning=None, ba
             tot = tot + f.log_potential(assignment)
         scores.append(tot)
     logj = torch.stack(scores, dim=-1)
-    joint = torch.softmax(logj, dim=-1).reshape(batch, *cards)
+    return torch.softmax(logj, dim=-1).reshape(batch, *cards)
+
+
+def _exact_marginals(fg, free_names, evidence_states=None, conditioning=None, batch=1):
+    """Marginals by enumerating the full joint from the factors' log_potential."""
+    joint = _exact_joint(fg, free_names, evidence_states, conditioning, batch)
     marg = {}
     for i, n in enumerate(free_names):
         axes = tuple(ax for ax in range(1, len(free_names) + 1) if ax != i + 1)
         marg[n] = joint.sum(dim=axes) if axes else joint
     return marg
+
+
+def _exact_probability(fg, query_states, evidence_states=None, conditioning=None, batch=1):
+    """``P(Q=q | E)`` of a plate-free model, ``(batch,)``: the enumerated joint
+    over every unobserved variable, summed over the configurations matching ``q``."""
+    observed = set(evidence_states or {}) | set(conditioning or {})
+    free = [n for n in fg.variables if n not in observed]
+    joint = _exact_joint(fg, free, evidence_states, conditioning, batch)
+    index = tuple(query_states[n] if n in query_states else slice(None) for n in free)
+    return joint[(slice(None), *index)].reshape(batch, -1).sum(-1)
 
 
 def _state_marginal(variable, probs):
@@ -117,14 +133,12 @@ def _assert_marginals_match(fg, out, exact, names, atol=1e-5):
 def _assert_engines_agree(fg, names, evidence=None, atol=1e-6, **bp_kwargs):
     """VE and BP must return the same marginals (only valid where BP is exact)."""
     evidence = evidence or {}
-    bp = BeliefPropagation(fg, **{"iters": 25, **bp_kwargs}).query(
-        query=names, evidence=evidence
-    )
+    bp = BeliefPropagation(fg, **{"iters": 25, **bp_kwargs})
     ve = PgmpyVariableElimination(fg).query(query=names, evidence=evidence)
     for n in names:
-        assert torch.allclose(ve.probs[n], bp.probs[n], atol=atol), (
-            n, ve.probs[n], bp.probs[n]
-        )
+        # BP answers one variable per query.
+        bp_n = bp.query(query=[n], evidence=evidence).probs[n]
+        assert torch.allclose(ve.probs[n], bp_n, atol=atol), (n, ve.probs[n], bp_n)
     return ve
 
 
@@ -247,12 +261,13 @@ class TestVEExactWhereBPIsNot:
         class would prove nothing about exactness."""
         fg = _frustrated()
         names = ["a", "b", "c", "d"]
-        bp = BeliefPropagation(fg, iters=50, damping=0.5).query(
-            query=names, evidence={}
-        )
+        bp = BeliefPropagation(fg, iters=50, damping=0.5)
         exact = _exact_marginals(fg, names)
         worst = max(
-            float((_state_marginal(fg.variables[n], bp.probs[n]) - exact[n]).abs().max())
+            float((
+                _state_marginal(fg.variables[n], bp.query(query=[n], evidence={}).probs[n])
+                - exact[n]
+            ).abs().max())
             for n in names
         )
         assert worst > 0.1, f"BP was accurate to {worst}; the graph is not frustrated"
@@ -446,10 +461,12 @@ class TestVEPlateMembers:
         fg = self._two_plate_bn(seed=34)
         one = torch.ones(1, 1)
         names = ["root", "g", "h"]
-        bp = BeliefPropagation(fg, iters=30).query(query=names, evidence={"g1": one})
+        bp = BeliefPropagation(fg, iters=30)
         ve = PgmpyVariableElimination(fg).query(query=names, evidence={"g1": one})
         for member in ("g1", "g2", "h1", "h2", "h3", "root"):
-            assert torch.allclose(ve.probs[member], bp.probs[member], atol=1e-5), member
+            # BP answers one variable (or plate member) per query.
+            bp_m = bp.query(query=[member], evidence={"g1": one}).probs[member]
+            assert torch.allclose(ve.probs[member], bp_m, atol=1e-5), member
 
 
 class TestVENoGradAndErrors:
@@ -528,3 +545,147 @@ class TestVECost:
         ]
         fg = MarkovNetwork(variables=variables, factors=factors)
         _assert_engines_agree(fg, [v.name for v in variables], atol=1e-5, iters=60)
+
+
+class TestVEQueryProbability:
+    """A value in the query is a target: ``out.probabilities`` is the exact
+    ``P(Q=q | E)`` of the whole assignment, over one variable or several."""
+
+    def _mixed_loopy(self):
+        """Cardinalities 2/3/4/2 on a 4-cycle: loopy, with ragged state spaces."""
+        torch.manual_seed(50)
+        a, b, c, d = _bin("a"), _cat("b", 3), _cat("c", 4), _bin("d")
+        return MarkovNetwork(variables=[a, b, c, d], factors=[
+            _pot([a], "ua"), _pot([c], "uc"),
+            _pot([a, b], "ab"), _pot([b, c], "bc"), _pot([c, d], "cd"), _pot([d, a], "da"),
+        ])
+
+    def test_joint_with_hidden_variables_on_a_frustrated_graph(self):
+        """b and d are summed out; BP is visibly wrong on this graph."""
+        fg = _frustrated()
+        out = PgmpyVariableElimination(fg).query(
+            query={"a": torch.tensor([[1.0], [0.0]]), "c": torch.tensor([[0.0], [0.0]])},
+            evidence={},
+        )
+        expected = torch.cat([
+            _exact_probability(fg, {"a": 1, "c": 0}),
+            _exact_probability(fg, {"a": 0, "c": 0}),
+        ])
+        assert out.probabilities.shape == (2,)
+        assert torch.allclose(out.probabilities, expected, atol=1e-6)
+
+    def test_joint_with_evidence_and_categoricals(self):
+        fg = self._mixed_loopy()
+        out = PgmpyVariableElimination(fg).query(
+            query={"b": torch.tensor([[0.0, 0.0, 1.0]]), "c": torch.tensor([[0.0, 1.0, 0.0, 0.0]])},
+            evidence={"d": torch.ones(1, 1)},
+        )
+        expected = _exact_probability(fg, {"b": 2, "c": 1}, evidence_states={"d": 1})
+        assert torch.allclose(out.probabilities, expected, atol=1e-6)
+
+    def test_continuous_evidence_batched(self):
+        torch.manual_seed(51)
+        a, b = _bin("a"), _bin("b")
+        emb = ConceptVariable("emb", distribution=dist.Normal, size=4)
+        fg = _ConcreteModel(
+            variables=[a, b, emb], factors=[_pot([a, b], "phi", conditioning=[emb])]
+        )
+        e = torch.randn(7, 4)
+        out = PgmpyVariableElimination(fg).query(
+            query={"a": torch.ones(7, 1), "b": torch.zeros(7, 1)}, evidence={"emb": e}
+        )
+        expected = _exact_probability(fg, {"a": 1, "b": 0}, conditioning={"emb": e}, batch=7)
+        assert torch.allclose(out.probabilities, expected, atol=1e-6)
+
+    def test_every_variable_assigned(self):
+        """Q and E cover the graph, so Z(q, E) is a product of constants alone."""
+        fg = _frustrated()
+        one, zero = torch.ones(1, 1), torch.zeros(1, 1)
+        out = PgmpyVariableElimination(fg).query(
+            query={"a": one, "b": one, "c": zero}, evidence={"d": one}
+        )
+        expected = _exact_probability(fg, {"a": 1, "b": 1, "c": 0}, evidence_states={"d": 1})
+        assert torch.allclose(out.probabilities, expected, atol=1e-6)
+
+    def test_single_variable_is_its_marginal(self):
+        fg = self._mixed_loopy()
+        target = torch.tensor([[0.0, 1.0, 0.0, 0.0]])
+        eng = PgmpyVariableElimination(fg)
+        out = eng.query(query={"c": target}, evidence={"a": torch.zeros(1, 1)})
+        marginal = eng.query(query=["c"], evidence={"a": torch.zeros(1, 1)}).probs["c"]
+        assert torch.allclose(out.probabilities, marginal[:, 1], atol=1e-6)
+        assert torch.allclose(out.probs["c"], marginal)
+
+    def test_disconnected_components(self):
+        """The partition function spans every component, not only the one the
+        queried variable lives in."""
+        torch.manual_seed(52)
+        a, b, c = _bin("a"), _bin("b"), _cat("c", 3)
+        fg = MarkovNetwork(variables=[a, b, c], factors=[_pot([a, b], "ab"), _pot([c], "uc")])
+        eng = PgmpyVariableElimination(fg)
+        for query, states in [
+            ({"c": torch.tensor([[0.0, 0.0, 1.0]])}, {"c": 2}),
+            ({"a": torch.ones(1, 1), "c": torch.tensor([[1.0, 0.0, 0.0]])}, {"a": 1, "c": 0}),
+        ]:
+            out = eng.query(query=query, evidence={})
+            assert torch.allclose(out.probabilities, _exact_probability(fg, states), atol=1e-6)
+
+    def test_extreme_log_potentials(self):
+        """The per-table max shifts left out of the tables must be added back
+        into each partition function, or the ratio is off by exp(shift)."""
+        fg = _frustrated(J=120.0, h=40.0)
+        one, zero = torch.ones(1, 1), torch.zeros(1, 1)
+        eng = PgmpyVariableElimination(fg)
+        for states in ({"a": 1, "b": 0}, {"a": 0, "b": 1}):
+            query = {n: one if s else zero for n, s in states.items()}
+            out = eng.query(query=query, evidence={})
+            assert torch.isfinite(out.probabilities).all()
+            assert torch.allclose(out.probabilities, _exact_probability(fg, states), atol=1e-5)
+
+    def test_whole_plate_is_the_joint_over_its_members(self):
+        """Checked against the chain rule over exact single-member conditionals."""
+        fg = TestVEPlateMembers()._two_plate_bn(seed=53)
+        eng = PgmpyVariableElimination(fg)
+        evidence = {"g1": torch.ones(1, 1)}
+        target = {"h1": 1.0, "h2": 0.0, "h3": 1.0}
+        out = eng.query(query={"h": torch.tensor([list(target.values())])}, evidence=evidence)
+        chain, given = 1.0, dict(evidence)
+        for member, value in target.items():
+            p = eng.query(query=[member], evidence=given).probs[member].item()
+            chain *= p if value else 1.0 - p
+            given[member] = torch.full((1, 1), value)
+        assert abs(out.probabilities.item() - chain) < 1e-6
+
+    def test_leading_dims(self):
+        fg = _frustrated()
+        q = {"a": torch.rand(2, 3, 1).round(), "b": torch.rand(2, 3, 1).round()}
+        e = {"d": torch.rand(2, 3, 1).round()}
+        eng = PgmpyVariableElimination(fg)
+        out = eng.query(query=q, evidence=e)
+        flat = eng.query(
+            query={n: t.reshape(6, 1) for n, t in q.items()},
+            evidence={n: t.reshape(6, 1) for n, t in e.items()},
+        )
+        assert out.probabilities.shape == (2, 3)
+        assert torch.allclose(out.probabilities.reshape(6), flat.probabilities)
+
+    def test_list_query_has_no_probability(self):
+        out = PgmpyVariableElimination(_frustrated()).query(query=["a", "b"], evidence={})
+        assert out.probabilities is None
+
+    def test_mixed_query_has_no_probability(self):
+        """A value on only some entries is ignored — unchecked, so even an
+        invalid one — and the marginals are reported as for a list query."""
+        eng = PgmpyVariableElimination(_frustrated())
+        out = eng.query(query={"a": torch.full((1, 1), 0.5), "b": None}, evidence={})
+        assert out.probabilities is None
+        plain = eng.query(query=["a", "b"], evidence={})
+        assert torch.allclose(out.probs.tensor, plain.probs.tensor)
+
+    @pytest.mark.parametrize("query,evidence,match", [
+        ({"a": torch.ones(1, 1)}, {"a": torch.ones(1, 1)}, "both query and evidence"),
+        ({"a": torch.full((1, 1), 0.5)}, {}, "0 or 1"),
+    ])
+    def test_invalid_queries_raise(self, query, evidence, match):
+        with pytest.raises(ValueError, match=match):
+            PgmpyVariableElimination(_frustrated()).query(query=query, evidence=evidence)

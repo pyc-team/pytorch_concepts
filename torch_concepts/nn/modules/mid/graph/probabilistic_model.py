@@ -198,16 +198,27 @@ class ProbabilisticModel(nn.Module, ABC):
     def _index_members(self) -> None:
         """Map every queryable name to its owning variable.
 
-        A plate contributes its own name plus one entry per member 
-        (all pointing to the plate); an ordinary variable contributes just itself. 
+        A plate contributes its own name plus one entry per member
+        (all pointing to the plate); an ordinary variable contributes just itself.
         Column selection lives on the variable (``Variable.select``).
+
+        Every name must be unique across the model: evidence, queries and
+        interventions address variables and members by name, so a repeated one
+        would silently resolve to whichever variable came last.
         """
         self._addressable: Dict[str, Variable] = {}
         for var in self.variables.values():
-            self._addressable[var.name] = var
-            if var.is_plate:
-                for member in var.members:
-                    self._addressable[member] = var
+            names = [var.name, *var.members] if var.is_plate else [var.name]
+            for name in names:
+                other = self._addressable.get(name)
+                if other is not None:
+                    raise ValueError(
+                        f"Name {name!r} is used by both {other.name!r} and "
+                        f"{var.name!r}. Variable and plate-member names must be unique "
+                        "across the model, since evidence, queries and interventions "
+                        "address them by name."
+                    )
+                self._addressable[name] = var
 
         # Cached once: validation looks this up on every query, and a plate can
         # contribute many member names, so we avoid rebuilding the set each call.

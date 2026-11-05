@@ -280,7 +280,10 @@ class ParametricFactor(nn.Module, ABC):
         value = values.get(v.name)
         if value is not None:
             # Normalise whatever the caller keyed in — a cached member-layout
-            # tensor, or a plain event-shaped one a user passed directly.
+            # tensor, or a plain event-shaped one a user passed directly. The
+            # cache reading wins when both fit: a user calling a factor
+            # directly with a single-member value whose leading shape ends in 1,
+            # ``(5, 1, 3)``, gets leading ``(5,)``. The engines never do.
             return v.as_event(value)
         owner = v.plate
         value = values.get(owner.name)

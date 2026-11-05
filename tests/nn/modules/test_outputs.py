@@ -67,3 +67,18 @@ def test_merging_a_renamed_query_every_step_keeps_one_cache_entry():
     for _ in range(5):
         first.union_with(first.rename_variable("c1", "c1_again").rename_variable("z_c1", "z_c1_again"))
     assert len(first.logits.annotations.__dict__["_union_cache"]) == 1
+
+
+def test_aligning_to_an_equal_annotation_copy_reuses_the_cache():
+    """Each batch from a DataLoader worker carries a new, equal Annotations object:
+    aligning to it must hit the entry the first batch made, not add one per step."""
+    from torch_concepts.nn.modules.outputs import supervised_subset
+
+    t = AnnotatedTensor(torch.randn(2, 3), Annotations(labels=["a", "b", "c"]), axis=-1)
+    for _ in range(3):
+        target = AnnotatedTensor(torch.zeros(2, 2), Annotations(labels=["c", "a"]), axis=-1)
+        assert torch.equal(t[target.annotations].tensor, t.tensor[:, [2, 0]])
+        assert supervised_subset(t, target).annotations.labels == ["a", "c"]
+    assert len(t.annotations._slice_cache) == 2          # t[('c','a')] and the subset t[('a','c')]
+    assert len(t.annotations._labels_in_cache) == 1
+    assert supervised_subset(t, AnnotatedTensor(torch.zeros(2, 3), Annotations(labels=["c", "b", "a"]))) is t
