@@ -52,7 +52,8 @@ class ConceptDataset(Dataset):
         input_data: Input features as numpy array, pandas DataFrame, or Tensor.
         concepts: Optional native concept values as a numpy array, pandas
             DataFrame, Tensor, or AnnotatedTensor, with shape
-            (n_samples, n_concepts). Categorical values are class indices.
+            (n_samples, n_concepts), or (n_samples, ..., n_concepts) with leading
+            axes such as time steps. Categorical values are class indices.
         annotations: Optional metadata for plain concept values. Must be omitted when
             concepts is an AnnotatedTensor, whose attached metadata is used.
             When no metadata is provided the dataset assumes every concept is binary,
@@ -71,7 +72,7 @@ class ConceptDataset(Dataset):
         TypeError: If concepts uses an unsupported input type.
         ValueError: If both an AnnotatedTensor and separate annotations are
             supplied; annotations are supplied without concepts; annotated
-            values do not describe the concept columns of a two-dimensional
+            values do not describe the concept columns (last axis) of the
             tensor, or an invalid concept shape or subset is requested.
         RuntimeError: If concept values and inputs have different sample counts.
 
@@ -88,7 +89,7 @@ class ConceptDataset(Dataset):
 
         An AnnotatedTensor can supply both values and metadata:
 
-        >>> annotated_concepts = AnnotatedTensor(C, annotations, axis=1)
+        >>> annotated_concepts = AnnotatedTensor(C, annotations, axis=-1)
         >>> dataset = ConceptDataset(X, concepts=annotated_concepts)
         >>> dataset.concept_names
         ['c1', 'c2', 'c3', 'c4', 'c5']
@@ -192,15 +193,15 @@ class ConceptDataset(Dataset):
             annotations = concepts.annotations
             values = concepts.tensor
         elif isinstance(concepts, (Tensor, np.ndarray, pd.DataFrame)):
-            if concepts.ndim != 2:
+            if concepts.ndim < 2:
                 raise ValueError(
-                    "Native concepts must be two-dimensional with shape "
-                    "(n_samples, n_concepts)."
+                    "Native concepts must have shape (n_samples, n_concepts) "
+                    "or (n_samples, ..., n_concepts)."
                 )
             if annotations is None:
                 warnings.warn("No concept annotations provided. These will be set to default numbered "
                              "concepts 'concept_{i}'. All concepts will be treated as binary.")
-                n = concepts.shape[1]
+                n = concepts.shape[-1]
                 annotations = Annotations(
                     labels=[f"concept_{i}" for i in range(n)],
                     cardinalities=[1] * n,
@@ -220,12 +221,12 @@ class ConceptDataset(Dataset):
 
         values = parse_tensor(values, 'concepts', self.precision)
         concept_annotations = annotations.to_concept_space()
-        if values.shape[1] != concept_annotations.size:
+        if values.shape[-1] != concept_annotations.size:
             raise ValueError(
                 "Native concepts must have one column per concept; "
-                f"got {values.shape[1]} columns for {concept_annotations.size} concepts."
+                f"got {values.shape[-1]} columns for {concept_annotations.size} concepts."
             )
-        native_values = AnnotatedTensor(values, concept_annotations, axis=1)
+        native_values = AnnotatedTensor(values, concept_annotations, axis=-1)
         self._validate_native_concepts(native_values)
         return native_values, annotations
 
@@ -233,17 +234,17 @@ class ConceptDataset(Dataset):
         """Validate native tensor layout and alignment with dataset rows."""
         if not isinstance(concepts, AnnotatedTensor):
             raise TypeError("Native concepts must be an AnnotatedTensor.")
-        if concepts.dim() != 2 or concepts.axis not in (1, -1):
+        if concepts.dim() < 2 or (concepts.dim() > 2 and concepts.axis != -1):
             raise ValueError(
-                "Annotated concepts must be two-dimensional with "
-                "metadata on the concept columns (axis 1 or -1)."
+                "Annotated concepts must have shape (n_samples, ..., n_concepts), "
+                "with metadata on the last axis."
             )
         if concepts.shape[0] != self.n_samples:
             raise RuntimeError(
                 f"Concepts has {concepts.shape[0]} samples but "
                 f"input_data has {self.n_samples}."
             )
-        if concepts.shape[1] != len(concepts.annotations.labels):
+        if concepts.shape[-1] != len(concepts.annotations.labels):
             raise ValueError(
                 "Native concepts must have one column per concept; "
                 "categorical values must be class indices, not per-state scores."
@@ -274,18 +275,19 @@ class ConceptDataset(Dataset):
         indexed directly from the dataset's currently selected concepts.
         """
         x = self.input_data[item]
+        # Plain rows, for default_collate; collate re-annotates the batch.
         selected = (
-            self.concepts[item]
+            self.concepts.tensor[item]
             if self.concepts is not None
             else None
         )
         native = (
-            self.native_concepts[item]
+            self.native_concepts.tensor[item]
             if self.native_concepts is not None
             else None
         )
         generated = {
-            name: values[item]
+            name: values.tensor[item]
             for name, values in self.generated_concepts.items()
         }
 
@@ -301,8 +303,8 @@ class ConceptDataset(Dataset):
     def collate(self, samples):
         """Collate samples into a batch, re-annotating the ground-truth concepts.
 
-        Per-sample (plain, 1-D) concept rows are stacked into
-        ``(batch, n_concepts)`` tensors and re-wrapped as
+        Per-sample (plain) concept rows are stacked into
+        ``(batch, ..., n_concepts)`` tensors and re-wrapped as
         :class:`~torch_concepts.tensor.AnnotatedTensor` carrying the same
         metadata as their selected, native, or generated source. Unavailable
         selected/native views remain ``None``. Any fitted scalers are attached
@@ -320,7 +322,7 @@ class ConceptDataset(Dataset):
                 )
             collated = default_collate(values)
             if annotations is not None:
-                collated = AnnotatedTensor(collated, annotations, axis=1)
+                collated = AnnotatedTensor(collated, annotations, axis=-1)
             return collated
 
         generated_keys = tuple(self.generated_concepts)
@@ -668,7 +670,7 @@ class ConceptDataset(Dataset):
             return AnnotatedTensor(
                 values.tensor[row_indices],
                 values.annotations,
-                axis=1,
+                axis=values.axis,
             )
 
         subset_native = (
@@ -792,8 +794,8 @@ class ConceptDataset(Dataset):
                 )
             normalized[name] = (
                 values
-                if values.axis == 1
-                else AnnotatedTensor(values.tensor, values.annotations, axis=1)
+                if values.axis == -1
+                else AnnotatedTensor(values.tensor, values.annotations, axis=-1)
             )
 
         selects_generated = bool(normalized) and (
@@ -932,7 +934,7 @@ class ConceptDataset(Dataset):
         native concepts must use generated-concept APIs to attach generated data.
 
         Args:
-            concepts: Annotated native values of shape (n_samples, n_concepts),
+            concepts: Annotated native values of shape (n_samples, ..., n_concepts),
                 with one column per concept and categorical values stored as
                 class indices. Must contain all selected native labels; columns
                 are selected/reordered by name. Plain values are accepted only
@@ -955,11 +957,10 @@ class ConceptDataset(Dataset):
         if missing:
             raise ValueError(f"Native concepts are missing required labels: {missing}.")
         concepts = concepts[selected_labels]
-        # Axis 1 makes individual rows plain tensors for collation.
         self.native_concepts = AnnotatedTensor(
             convert_precision(concepts.tensor, self.precision),
             self._annotations.to_concept_space(),
-            axis=1,
+            axis=-1,
         )
         self._resolve_ground_truth()
 

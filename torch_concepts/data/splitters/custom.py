@@ -5,10 +5,20 @@ caller-supplied validation and test splitting functions, optionally excluding
 the test indices from the validation split.
 """
 
+from functools import partial
 from typing import Callable, Mapping, Optional
 
 from ..base.dataset import ConceptDataset
 from ..base.splitter import Splitter
+
+
+def _callable_name(split_fn: Optional[Callable]) -> Optional[str]:
+    """Return a function name or callable class name, unwrapping partials."""
+    if not callable(split_fn):
+        return None
+    while isinstance(split_fn, partial):
+        split_fn = split_fn.func
+    return getattr(split_fn, "__name__", type(split_fn).__name__)
 
 
 class CustomSplitter(Splitter):
@@ -28,6 +38,9 @@ class CustomSplitter(Splitter):
     When ``mask_test_indices_in_val`` is True and a test split exists, the test
     indices are passed to ``val_split_fn`` as a ``mask`` keyword argument so the
     function can exclude them.
+
+    Policy names preserve ordinary function names, unwrap partial functions,
+    and use the class name for callable instances. Unset policies are None.
 
     Args:
         val_split_fn (Callable, optional): Function returning
@@ -76,13 +89,13 @@ class CustomSplitter(Splitter):
 
     @property
     def val_policy(self) -> Optional[str]:
-        """Name of the validation split function, if callable."""
-        return self.val_split_fn.__name__ if callable(self.val_split_fn) else None
+        """Name of the validation callable, or None when unset."""
+        return _callable_name(self.val_split_fn)
 
     @property
     def test_policy(self) -> Optional[str]:
-        """Name of the test split function, if callable."""
-        return self.test_split_fn.__name__ if callable(self.test_split_fn) else None
+        """Name of the test callable, or None when unset."""
+        return _callable_name(self.test_split_fn)
 
     def fit(self, dataset: ConceptDataset) -> None:
         """Split the dataset using the custom split functions.

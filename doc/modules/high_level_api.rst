@@ -37,12 +37,12 @@ Models
 
    ConceptBottleneckModel
    ConceptEmbeddingModel
+   ConceptMemoryReasoner
    ConceptBottleneckVAE
    ConditionalVAE
    GraphConceptBottleneckModel
    CausallyReliableConceptBottleneckModel
-   BlackBox
-   BlackBoxTaskOnly
+   BlackBoxModel
 
 Outputs
 -------

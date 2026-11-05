@@ -125,7 +125,7 @@ class ConceptGenerationPipeline:
             return AnnotatedTensor(
                 torch.stack([value.tensor for value in values]).mean(dim=0),
                 values[0].annotations,
-                axis=1,
+                axis=-1,
             )
 
         pipeline = ConceptGenerationPipeline(
@@ -241,6 +241,10 @@ class ConceptGenerationPipeline:
         ``annotation_datasets`` when those splits are already represented by
         dataset objects. These forms are alternatives because mixing them would
         make the source of each named annotation target ambiguous.
+
+        NOTE: pipelines can generate 2-D concept tensors only. Concept
+        generators for temporal concepts or higher-dimensional concepts are
+        currently not supported.
 
         Parameters
         ----------
@@ -893,11 +897,7 @@ class ConceptGenerationPipeline:
                 f"Generated concept values {name!r} must be an "
                 "AnnotatedTensor."
             )
-        if values.axis != 1:
-            raise ValueError(
-                f"Generated concept values {name!r} must annotate axis 1; "
-                f"got axis {values.axis}."
-            )
+        # Two dimensions: axis 1 and -1 both name the concept axis.
         if values.ndim != 2:
             raise ValueError(
                 f"Generated concept values {name!r} must be two-dimensional; "

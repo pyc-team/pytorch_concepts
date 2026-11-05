@@ -38,6 +38,7 @@ from torch_concepts.nn import (
     ParametricCPD,
     UncertaintyInterventionPolicy,
     intervention,
+    intervention_curve,
 )
 
 seed_everything(42)
@@ -130,3 +131,17 @@ with torch.no_grad(), intervention(
 ):
     least_sure = engine.query(["xor"], evidence={"input": x_test})
 print(f"least confident concept:    task accuracy {task_accuracy(least_sure):.3f}")
+
+# ``intervention_curve`` sweeps the budget: the task accuracy after overriding
+# 0, 1 and 2 concepts of each sample, the least confident first. The engine is
+# queried with the input, and the names locate the layer.
+curve = intervention_curve(
+    model=engine,
+    layer_name=None,
+    intervention_strategy=GroundTruthIntervention(c_true),
+    intervention_policy=UncertaintyInterventionPolicy(),
+    concepts_to_intervene_on=["C1", "C2"],
+    dataloader=[{"inputs": {"x": x_test}, "concepts": {"c": dataset.concepts[800:]}}],
+    task="xor",
+)
+print("intervention curve:         task accuracy", " -> ".join(f"{accuracy:.3f}" for accuracy in curve))

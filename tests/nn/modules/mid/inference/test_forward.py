@@ -1556,3 +1556,28 @@ class TestVariableFirstParams:
         out = DeterministicInference(self._mixed_model()).query(
             query=["g"], evidence={"x": torch.zeros(2, 4, 4)})
         assert out.params["m2"]["logits"].shape == (2, 4, 1)
+
+
+class TestActivationOverride:
+    @staticmethod
+    def _model():
+        """x (delta) -> a (bernoulli, logits) -> b (bernoulli)."""
+        x = ConceptVariable("x", distribution=Delta, size=4)
+        a = ConceptVariable("a", distribution=dist.Bernoulli, size=2)
+        b = ConceptVariable("b", distribution=dist.Bernoulli, size=1)
+        cpd_x = ParametricCPD(variable=x, parametrization={"value": FixedPrior(torch.zeros(4))})
+        cpd_a = ParametricCPD(variable=a, parametrization={"logits": nn.Linear(4, 2)}, parents=[x])
+        cpd_b = ParametricCPD(variable=b, parametrization=nn.Sequential(nn.Linear(2, 1), nn.Sigmoid()), parents=[a])
+        return BayesianNetwork(variables=[x, a, b], factors=[cpd_x, cpd_a, cpd_b])
+
+    def test_warns_with_default(self):
+        with pytest.warns(UserWarning, match=r"Bernoulli -> Sigmoid\(\)"):
+            DeterministicInference(self._model())
+
+    def test_override_used_and_silent(self, recwarn):
+        m = self._model()
+        seen = []
+        eng = DeterministicInference(m, activations={"a": lambda t: seen.append(t) or torch.zeros_like(t)})
+        assert not any("activated internally" in str(w.message) for w in recwarn)
+        eng.query(query=["b"], evidence={"x": torch.randn(3, 4)})
+        assert seen

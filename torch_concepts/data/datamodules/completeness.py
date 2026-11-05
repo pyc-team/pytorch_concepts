@@ -1,53 +1,45 @@
-import os
-
 from ..datasets.toy import CompletenessDataset
 
 from ..base.datamodule import ConceptDataModule
 
 
 class CompletenessDataModule(ConceptDataModule):
-    """
+    """DataModule for :class:`CompletenessDataset`.
+
+    Args:
+        seed: Random seed for the train/val/test split.
+        generation_seed: Random seed for data generation.
+        root: Unused, the data is generated in memory (conceptarium sets it
+            for every dataset).
+        val_size: Validation set size (fraction or absolute count).
+        test_size: Test set size (fraction or absolute count).
+        batch_size: Batch size for dataloaders.
+        max_samples: Optional subsample size, as in ``ConceptDataModule``.
+        scalers: Optional scalers, as in ``ConceptDataModule``.
+        workers: Number of workers for dataloaders.
+        **dataset_kwargs: Arguments of :class:`CompletenessDataset`.
     """
 
     def __init__(
         self,
-        name: str, # name of the bnlearn DAG
-        root: str,
         seed: int = 42,
         generation_seed: int = 42,
-        p: int = 2,  # dimensionality of each view
-        n_views: int = 10,  # number of views
-        n_concepts: int = 2,  # number of concepts
-        n_hidden_concepts: int = 0,  # number of hidden concepts
-        n_tasks: int = 1,  # number of tasks
-        n_gen: int = 10000,
+        root: str | None = None,
         val_size: int | float = 0.1,
         test_size: int | float = 0.2,
         batch_size: int = 512,
-        concept_subset: list | None = None,
-        label_descriptions: dict | None = None,
+        max_samples: int | None = None,
+        scalers: dict | None = None,
         workers: int = 0,
-        **kwargs
+        **dataset_kwargs,
     ):
-        dataset = CompletenessDataset(
-            name=name,
-            root=root,
-            seed=generation_seed,
-            p=p,
-            n_views=n_views,
-            n_concepts=n_concepts,
-            n_hidden_concepts=n_hidden_concepts,
-            n_tasks=n_tasks,
-            n_gen=n_gen,
-            concept_subset=concept_subset
-        )
-        
         super().__init__(
-            dataset=dataset,
+            dataset=CompletenessDataset(seed=generation_seed, **dataset_kwargs),
             val_size=val_size,
             test_size=test_size,
             batch_size=batch_size,
+            max_samples=max_samples,
+            scalers=scalers,
             workers=workers,
             seed=seed,
-            **kwargs,
         )

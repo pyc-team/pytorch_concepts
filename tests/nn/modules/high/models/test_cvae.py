@@ -182,7 +182,9 @@ class TestSharedConditionEmbedding:
 
     def test_backward_reaches_the_embedding_layers(self, binary_annotations):
         model = build_model(binary_annotations, plate=False)
-        out = model(query=binary_query(model), input=torch.rand(5, INPUT_SIZE))
+        concepts = torch.ones(5, 2)
+        query = model.prepare_query({"concepts": {"c": concepts}})
+        out = model(query=query, input=torch.rand(5, INPUT_SIZE))
         out.value["input"].sum().backward()
         for layer in model.condition_embedding.embeddings:
             assert layer.weight.grad is not None

@@ -238,11 +238,6 @@ Expand each block below for an explanation and an example of how to use it.
 
        from torch_concepts.nn import functional as F
 
-       # CaCE: causal effect of concept 0 on task predictions
-       concepts_c0 = concepts.clone(); concepts_c0[:, 0] = -1e6   # do(C_0 = 0)
-       concepts_c1 = concepts.clone(); concepts_c1[:, 0] =  1e6   # do(C_0 = 1)
-       cace = F.cace_score(predictor(concepts=concepts_c0), predictor(concepts=concepts_c1))
-
        # NCC: average number of concepts that explain 95% of each prediction
        ncc = F.number_of_contributing_concepts(predictor.predictor.weight, concepts)
 

@@ -1,7 +1,7 @@
 defaults:
   - _commons
   - _self_
-  
+
 name: completeness
 
 datamodule:
@@ -9,10 +9,12 @@ datamodule:
 
   generation_seed: ${dataset.datamodule.seed}    # dataset generation seed
 
-  n_concepts: 50  # number of concepts
-  n_hidden_concepts: 10  # number of hidden concepts
-  n_tasks: 5  # number of tasks
-
   n_gen: 10000
+  n_concepts: 50                # observed + hidden
+  observed_fraction: 0.8        # 40 annotated, 10 hidden
+  hidden_importance: null       # null: all concepts matter alike
+  nonlinearity: 0.0             # share of pairwise concept interactions in the task
+  hidden_observed_corr: 0.0
+  side_importance: 0.0          # share of the task from latents in x but in no concept
 
 default_task_names: [y]

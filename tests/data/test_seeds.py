@@ -84,9 +84,9 @@ class TestSplitSeedRouting:
     def test_generating_datamodule_separates_the_two_seeds(self, tmp_path):
         """The config path: ``generation_seed`` -> dataset, ``seed`` -> split."""
         dm = CompletenessDataModule(
-            name="completeness", root=str(tmp_path),
+            root=str(tmp_path),  # set by conceptarium, ignored
             seed=5, generation_seed=0,
-            n_concepts=4, n_views=3, p=2, n_tasks=1, n_gen=200,
+            n_concepts=4, n_gen=200,
         )
         assert dm.dataset.seed == 0          # generation seed
         assert dm.splitter.seed == 5         # split seed

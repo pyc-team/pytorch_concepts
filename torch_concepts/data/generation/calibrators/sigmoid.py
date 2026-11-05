@@ -9,7 +9,11 @@ class SigmoidCalibrator(Calibrator):
     midpoint. With ``standardize=True``, each concept's scores are first
     rescaled to zero mean and unit variance across the calibrated samples, so
     that concepts whose raw scores sit on different baselines (as CLIP
-    similarities do) become comparable. The annotation metadata is preserved
+    similarities do) become comparable. With ``center=True``, each sample's
+    mean score across concepts is subtracted beforehand, removing an offset that
+    depends on the sample alone and is shared by every concept (as in raw CLIP
+    similarities); it suits many unrelated concepts, since with few related ones
+    it also removes their shared signal. The annotation metadata is preserved
     on the calibrated tensor.
 
     Examples
@@ -20,7 +24,7 @@ class SigmoidCalibrator(Calibrator):
     >>> scores = AnnotatedTensor(
     ...     torch.tensor([[-1.0], [0.0], [1.0]]),
     ...     Annotations(labels=["is_red"]),
-    ...     axis=1,
+    ...     axis=-1,
     ... )
     >>> calibrated = SigmoidCalibrator(scale=2.0).calibrate(scores)
     >>> torch.testing.assert_close(
@@ -31,16 +35,25 @@ class SigmoidCalibrator(Calibrator):
     ['is_red']
     """
 
-    def __init__(self, scale: float = 1.0, bias: float = 0.0, standardize: bool = False):
+    def __init__(
+        self,
+        scale: float = 1.0,
+        bias: float = 0.0,
+        standardize: bool = False,
+        center: bool = False,
+    ):
         self.scale = scale
         self.bias = bias
         self.standardize = standardize
+        self.center = center
 
     def calibrate(self, scores: AnnotatedTensor) -> AnnotatedTensor:
+        if self.center:
+            scores = scores - scores.tensor.mean(scores.axis, keepdim=True)
         if self.standardize:
             # Statistics per concept: reduce over every dim but the concept axis.
             values = scores.tensor
-            dims = [d for d in range(values.dim()) if d != scores.axis]
+            dims = [d for d in range(values.dim()) if d != scores.axis % values.dim()]
             std = values.std(dims, keepdim=True, correction=0).clamp_min(1e-12)
             scores = (scores - values.mean(dims, keepdim=True)) / std
         return (scores * self.scale + self.bias).sigmoid()

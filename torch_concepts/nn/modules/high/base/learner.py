@@ -369,10 +369,8 @@ class BaseLearner(pl.LightningModule):
     def on_train_batch_end(self, outputs, batch, batch_idx):
         """Advance the relaxation temperature once per optimiser step.
 
-        A model with no PGM/inference engine (e.g.
-        :class:`~torch_concepts.nn.BlackBox`) never sets these attributes at
-        all, so they are read with a ``None`` default rather than assumed
-        present.
+        A model with no inference engine never sets these attributes, so they
+        are read with a ``None`` default rather than assumed present.
         """
         candidates = (getattr(self, "train_inference", None), getattr(self, "eval_inference", None))
         engines = {id(e): e for e in candidates if e}

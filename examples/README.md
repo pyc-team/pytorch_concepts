@@ -30,6 +30,7 @@ Jupyter. Datasets are downloaded or generated on first use into `DATA_ROOT`, def
 | [06_custom_layer](low_level/06_custom_layer.py) | Writing a new concept layer |
 | [07_concept_whitening](low_level/07_concept_whitening.py) | Aligning latent axes with concepts (CelebA, ~1.4 GB) |
 | [08_tcav](low_level/08_tcav.py) | Testing a trained classifier with concept activation vectors (CelebA) |
+| [09_concept_memory_reasoner](low_level/09_concept_memory_reasoner.py) | A task predicted by logic rules selected from a learned memory |
 
 ## Mid level
 
@@ -59,6 +60,7 @@ All on Color-MNIST (`digit` and `color` as concepts, `parity` as task), except w
 | [08_causally_reliable_cbm](high_level/08_causally_reliable_cbm.py) | A CBM whose concepts follow a causal graph (ASIA) |
 | [09_concept_bottleneck_vae](high_level/09_concept_bottleneck_vae.py) | Generating images from concepts |
 | [10_pretrained_backbone](high_level/10_pretrained_backbone.py) | A frozen or fine-tuned image backbone inside the model (CelebA) |
+| [11_concept_memory_reasoner](high_level/11_concept_memory_reasoner.py) | A model whose predictions are readable rules, with its custom loss (ASIA) |
 
 ## Data
 
@@ -69,6 +71,8 @@ All on Color-MNIST (`digit` and `color` as concepts, `parity` as task), except w
 | [03_color_mnist](data/03_color_mnist.py) | Color-MNIST with and without a color shortcut |
 | [04_celeba_embeddings](data/04_celeba_embeddings.py) | Computing backbone embeddings once and training on them (CelebA) |
 | [05_label_free_concepts](data/05_label_free_concepts.py) | Generating concepts with an LLM and CLIP (needs an LLM API key) |
+| [06_ham10000](data/06_ham10000.py) | Native skin-lesion concepts, and concepts scored by CLIP (HAM10000, a few GB) |
+| [07_pneumothorax](data/07_pneumothorax.py) | A native pneumothorax label, and concepts scored by CXR-CLIP (SIIM-ACR; needs Kaggle credentials and the CXR-CLIP checkpoint) |
 
 `steerling/` holds examples for the Steerling language model (needs the `steerling` package and ~16 GB of
 weights).
