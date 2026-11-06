@@ -355,9 +355,8 @@ cross-validation, and annotation-fraction sampling are left to transforms and
 examples. No architecture, prior initialization, or experimental loss is part
 of this dataset.
 
-The CBM training example imputes missing shape/margin targets with each
-descriptor's observed prevalence in the training split, supplying soft targets
-to ordinary binary cross-entropy. This adds prior supervision for unknown
-labels rather than omitting their loss. Native labels remain unchanged, and
-test ROC AUC excludes originally unknown labels. Test observations are never
-used to fit the imputation values.
+The introductory CBM example selects the native categorical breast-density,
+subtlety, and pathology labels. It uses density and subtlety as concepts and
+predicts the three pathology states with a small CNN, cross-entropy, and a
+Lightning trainer. It demonstrates loading, training, and testing on a small
+subset.
