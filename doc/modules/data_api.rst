@@ -70,6 +70,7 @@ Data Modules
    AWA2DataModule
    CUBDataModule
    HAM10000DataModule
+   CBISDDSMDataModule
    PneumothoraxDataModule
 
 Environment

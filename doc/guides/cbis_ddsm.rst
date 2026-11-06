@@ -94,7 +94,7 @@ appropriate transform or collator when batching variable-sized images.
 API and sample identity
 -----------------------
 
-For a complete loading and CLIP concept-generation example, see
+For a complete loading and Lightning CBM training example, see
 :doc:`/auto_examples/data/07_cbis_ddsm`.
 
 .. code-block:: python
@@ -112,7 +112,38 @@ For a complete loading and CLIP concept-generation example, see
    x = dataset[0]["inputs"]["x"]
    source = dataset.metadata.iloc[0]
 
-The official CSV's membership defines the split; no random split is generated.
+For Lightning training, :class:`~torch_concepts.data.CBISDDSMDataModule` loads
+both official CSVs and provides annotated dictionary batches:
+
+.. code-block:: python
+
+   from torch_concepts.data import CBISDDSMDataModule
+
+   datamodule = CBISDDSMDataModule(
+       root="/path/to/cbis_ddsm",
+       abnormality_type="mass",
+       image_type="cropped",
+       transform=resize_image,       # callable receiving the native tensor
+       batch_size=32,
+       val_size=0.1,
+       seed=42,
+   )
+   datamodule.setup("fit")
+   batch = next(iter(datamodule.train_dataloader()))
+   images = batch["inputs"]["x"]
+   concepts = batch["concepts"]["c"]
+
+By default, validation holds out 10% of the official training patients, keeping
+every observation of a patient together. An integer ``val_size`` counts
+patients; ``val_size=0`` uses the entire official training CSV. The official
+test CSV remains the test split. No final partial batch is dropped. A custom
+``splitter`` overrides these defaults, and ``max_samples`` subsamples across
+all splits. ``train_transform`` can replace ``transform`` for training only;
+validation and testing always use ``transform``. Both receive native decoded
+images, and the datamodule preserves the dataset's native concept definitions.
+
+For ``CBISDDSMDataset``, the selected official CSV defines the split; no random
+split is generated.
 The 2017 descriptor explains that mass and calcification were split separately,
 with approximately 20% of cases assigned to testing, stratified by assessment.
 
@@ -323,3 +354,10 @@ Paper-specific benign/malignant binarization, density remapping, selected
 cross-validation, and annotation-fraction sampling are left to transforms and
 examples. No architecture, prior initialization, or experimental loss is part
 of this dataset.
+
+The CBM training example imputes missing shape/margin targets with each
+descriptor's observed prevalence in the training split, supplying soft targets
+to ordinary binary cross-entropy. This adds prior supervision for unknown
+labels rather than omitting their loss. Native labels remain unchanged, and
+test ROC AUC excludes originally unknown labels. Test observations are never
+used to fit the imputation values.
