@@ -1,8 +1,13 @@
-"""UniRef50 + Swiss-Prot sequences and concepts for CB-Lobster.
+"""UniRef50 + Swiss-Prot sequences and concepts inspired by CB-Lobster.
+
+Unlike the original, descriptor categories are extracted from the merged local
+records, without Lobster's fixed vocabularies or frequency filtering. This
+covers the labels present in the imported data as UniProt releases change.
+Category names, indices and one-hot width depend on the imported records
+(including max_sequences) and are saved in the cache. The 14 Biopython
+properties are stored in their original units, without fixed normalization.
 
 Reference: https://arxiv.org/abs/2411.06090 (Appendix B.1).
-Concept vocabularies and normalization constants come from:
-https://github.com/prescient-design/lobster/tree/e0dad8f5b7774481eae9a2aad728f04fadc2bf53
 """
 
 import gzip
@@ -26,11 +31,6 @@ from ..base.dataset import ConceptDataset
 from ..io import download_url
 
 
-LOBSTER_REVISION = "e0dad8f5b7774481eae9a2aad728f04fadc2bf53"
-VOCAB_URL = (
-    f"https://raw.githubusercontent.com/prescient-design/lobster/{LOBSTER_REVISION}"
-    "/src/lobster/assets/uniref_tokenzier"
-)
 SOURCE_URLS = {
     "uniref50.fasta.gz": (
         "https://ftp.uniprot.org/pub/databases/uniprot/uniref/uniref50/uniref50.fasta.gz"
@@ -56,8 +56,6 @@ BIOPYTHON_CONCEPTS = [
     "molar_extinction_coefficient_reduced", "molar_extinction_coefficient_oxidized",
     "avg_hydrophilicity", "avg_surface_accessibility",
 ]
-CONCEPT_MIN = [260, 0, -101, 4, -4.5, -500, -510, 0, 0, 0, 0, 0, -3, 0.39]
-CONCEPT_MAX = [83158, 1, 566, 12, 4.5, 512, 512, 1, 1, 1, 1332490, 1332490, 3, 1.55]
 
 
 def _swissprot_records(handle):
@@ -113,7 +111,7 @@ def _uniref_records(handle):
 
 
 def _biopython_concepts(sequence):
-    """Calculate Lobster's 14 normalized protein properties."""
+    """Calculate the 14 protein properties in their original units."""
     from Bio.SeqUtils.ProtParam import ProteinAnalysis, ProtParamData
 
     # Lobster substitutes nonstandard residues when calculating descriptors.
@@ -128,10 +126,7 @@ def _biopython_concepts(sequence):
         sum(ProtParamData.hw[aa] for aa in sequence) / len(sequence),
         sum(ProtParamData.em[aa] for aa in sequence) / len(sequence),
     ]
-    return torch.tensor([
-        (value - low) / (high - low)
-        for value, low, high in zip(values, CONCEPT_MIN, CONCEPT_MAX)
-    ], dtype=torch.float32)
+    return torch.tensor(values, dtype=torch.float32)
 
 
 class _BatchTensor(AnnotatedTensor):
@@ -152,15 +147,18 @@ class UniRefSwissProtDataset(ConceptDataset):
     SQLite stores sequences, descriptor fields and Biopython properties.
     Input record IDs and concepts are ordinary memory-mapped
     tensors. __getitem__ reads the sequence for an ID and keeps the standard
-    sample structure. One-hot storage requires 718 floats per protein;
-    categorical storage requires 20. The full table need not fit in RAM.
+    sample structure. One-hot width depends on the categories found in the
+    merged records; categorical storage requires 20 floats per protein.
+    The full table need not fit in RAM.
 
     Swiss-Prot supplies GO annotations and organism; UniRef50 headers supply
     cluster name and taxon. Both raw files are read line by line with gzip;
     Biopython is used only to calculate protein properties.
-    The published Lobster vocabularies and fixed
-    continuous scaling are used. Unknown descriptor values activate the
-    corresponding UNKNOWN indicator. Downloads use current UniProt releases.
+    Descriptor vocabularies contain all distinct nonempty field values in the
+    merged records, with UNKNOWN reserved for missing values. Complete GO
+    combinations remain single categories. Continuous properties retain their
+    original units; optional scaling belongs to the datamodule's training split.
+    Downloads use current UniProt releases.
 
     The first build requires disk space and time proportional to the sources;
     later runs open the index directly. Each DataLoader worker opens its own
@@ -177,8 +175,9 @@ class UniRefSwissProtDataset(ConceptDataset):
         concept_subset: Optional concept names to retain.
         include_uniref: False reads only Swiss-Prot.
         one_hot_encoding: True returns 14 continuous properties followed by
-            704 binary indicators, in Lobster's model order. False returns the
-            same properties followed by six categorical class indices.
+            one binary indicator per descriptor category. False returns the
+            same properties followed by six class indices. Groups with only
+            UNKNOWN are constant zero columns, annotated as binary.
     """
 
     def __init__(
@@ -218,12 +217,12 @@ class UniRefSwissProtDataset(ConceptDataset):
         return [
             name for name in SOURCE_URLS
             if self.include_uniref or name != "uniref50.fasta.gz"
-        ] + [f"{name}_unique_values_100.txt" for name in DESCRIPTOR_FIELDS]
+        ]
 
     @property
     def processed_filenames(self):
         source = "uniref_swissprot" if self.include_uniref else "swissprot"
-        name = f"{source}_v4_len{self.max_length}_n{self.max_sequences}"
+        name = f"{source}_v6_len{self.max_length}_n{self.max_sequences}"
         mode = "onehot" if self.one_hot_encoding else "categorical"
         return [f"{name}.sqlite", f"{name}.ids.i64", f"{name}.{mode}.f32",
                 f"{name}.{mode}.annotations.pt"]
@@ -236,8 +235,7 @@ class UniRefSwissProtDataset(ConceptDataset):
             # Download into a fresh temporary directory: an interrupted file
             # must never be mistaken for a complete cached raw source.
             with tempfile.TemporaryDirectory(dir=self.root_dir) as staging:
-                url = SOURCE_URLS.get(filename, f"{VOCAB_URL}/{filename}")
-                source = download_url(url, staging, filename=filename)
+                source = download_url(SOURCE_URLS[filename], staging, filename=filename)
                 os.replace(source, target)
 
     def build(self):
@@ -252,7 +250,7 @@ class UniRefSwissProtDataset(ConceptDataset):
         with tempfile.TemporaryDirectory(dir=self.root_dir) as staging:
             temporary = os.path.join(staging, "proteins.sqlite")
             with closing(sqlite3.connect(temporary)) as connection:
-                self._create_sequence_table(connection)
+                self._initialize_sequence_table(connection)
                 if self.include_uniref:
                     self._import_uniref(connection)
                 self._merge_swissprot(connection)
@@ -261,7 +259,7 @@ class UniRefSwissProtDataset(ConceptDataset):
             os.replace(temporary, database)
         self._save_concepts()
 
-    def _create_sequence_table(self, connection):
+    def _initialize_sequence_table(self, connection):
         """Create one row per unique full sequence."""
         connection.execute("""
             CREATE TABLE proteins (
@@ -326,15 +324,17 @@ class UniRefSwissProtDataset(ConceptDataset):
                           fields["organism"] or None, row_id))
 
     def _extract_biopython_concepts(self, connection):
-        """Add Biopython properties and vocabularies to the merged source fields."""
+        """Calculate properties and collect categories from the merged records."""
         count = connection.execute("SELECT COUNT(*) FROM proteins").fetchone()[0]
         if not count:
             raise ValueError("No protein sequences found in the source files.")
         vocabularies = []
         for name in DESCRIPTOR_FIELDS:
-            with open(os.path.join(self.root_dir, f"{name}_unique_values_100.txt"),
-                      encoding="utf-8") as handle:
-                vocabularies.append(list(dict.fromkeys(line.strip() for line in handle)))
+            values = connection.execute(
+                f"SELECT DISTINCT {name} FROM proteins "
+                f"WHERE {name} IS NOT NULL AND {name} NOT IN ('', 'UNKNOWN') ORDER BY {name}"
+            )
+            vocabularies.append(["UNKNOWN"] + [value for (value,) in values])
 
         rows = connection.execute("SELECT id, sequence FROM proteins ORDER BY id")
         for row_id, sequence in tqdm(rows, total=count, desc="Calculating Biopython concepts"):
@@ -355,7 +355,10 @@ class UniRefSwissProtDataset(ConceptDataset):
             cardinalities=[1] * 14 + ([1] * len(descriptors) if self.one_hot_encoding
                                       else [len(values) for values in vocabularies]),
             types=["continuous"] * 14 + (["binary"] * len(descriptors)
-                                         if self.one_hot_encoding else ["categorical"] * 6),
+                                         if self.one_hot_encoding else [
+                                             "categorical" if len(values) > 1 else "binary"
+                                             for values in vocabularies
+                                         ]),
             states=None if self.one_hot_encoding else [["0"] for _ in range(14)] + vocabularies,
         )
 

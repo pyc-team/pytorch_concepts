@@ -22,8 +22,9 @@ class UniRefSwissProtDataModule(ConceptDataModule):
         workers: Loader processes, default 0.
         splitter: Optional library splitter; defaults to RandomSplitter.
         include_uniref: False reads only Swiss-Prot.
-        one_hot_encoding: True uses 704 binary indicators; False uses six
-            categorical indices. Both modes include 14 continuous properties.
+        one_hot_encoding: True uses one binary indicator per category found in
+            the data; False uses six class indices (UNKNOWN-only groups are
+            constant binary columns). Both modes include 14 continuous properties.
         **kwargs: Forwarded to ConceptDataModule, including pin_memory,
             max_samples and scalers, with their existing behavior.
     """
