@@ -14,7 +14,10 @@ class UniRefSwissProtDataModule(ConceptDataModule):
         root: Directory for source files and SQLite cache.
         seed: Seed for the train/validation/test partition.
         max_length: Sequence truncation length, default 512.
-        max_sequences: Records read per source; None uses all records.
+        max_sequences: Swiss-Prot record limit; None uses all records.
+        max_uniref_members: UniRef50 member limit, including representatives
+            with UniProtKB accessions; None scans all. Retains only Swiss-Prot
+            matches found within the scanned prefix.
         val_size: Validation fraction or count, default 0.05.
         test_size: Test fraction or count, default 0.05.
         batch_size: Samples per batch, default 64.
@@ -32,12 +35,14 @@ class UniRefSwissProtDataModule(ConceptDataModule):
     def __init__(
         self, root=None, seed=42, max_length=512, max_sequences=None,
         val_size=0.05, test_size=0.05, batch_size=64, concept_subset=None,
-        workers=0, splitter=None, include_uniref=True, one_hot_encoding=True, **kwargs,
+        workers=0, splitter=None, include_uniref=True, one_hot_encoding=True,
+        max_uniref_members=None, **kwargs,
     ):
         dataset = UniRefSwissProtDataset(
             root=root, max_length=max_length, max_sequences=max_sequences,
             concept_subset=concept_subset, include_uniref=include_uniref,
             one_hot_encoding=one_hot_encoding,
+            max_uniref_members=max_uniref_members,
         )
         super().__init__(
             dataset=dataset, val_size=val_size, test_size=test_size,
