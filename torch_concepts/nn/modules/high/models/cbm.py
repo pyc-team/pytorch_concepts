@@ -26,16 +26,13 @@ import torch
 from torch.distributions import Bernoulli, OneHotCategorical, Normal
 
 from .....annotations import Annotations
-from .....distributions import Delta
 from ...low.encoders.linear import LinearEmbeddingToConcept
 from ...low.lazy import LazyConstructor
 from ...low.predictors.linear import LinearConceptToConcept
-from ...low.priors import LearnablePrior
 from ...mid.inference.base import BaseInference
 from ...mid.inference.torch.deterministic import DeterministicInference
 from ...mid.graph.bayesian_network import BayesianNetwork
 from ...mid.factors.cpd import ParametricCPD
-from ...mid.variable import EmbeddingVariable
 from ...mid.distributions import DEFAULT_DIST_KWARGS
 from ..base.bipartite import BipartiteModel
 
@@ -359,15 +356,17 @@ class ConceptBottleneckModel(BipartiteModel):
                 for c in concepts
             ],
         )
-        # concepts → tasks: every concept group is a parent of every task.
+        # concepts → tasks: every concept group is a parent of every task. The predictors get
+        # the parents' annotations, so their weights read by concept name (named_weight).
+        parents = self.concept_annotations.subset([m for c in concepts for m in c.members])
         predictors = ParametricCPD(
             variable=tasks,
             parents=concepts,
             parametrization=[
                 self._flexible_parametrization(
                     variable=t,
-                    first=LazyConstructor(LinearConceptToConcept),
-                    second=LazyConstructor(LinearConceptToConcept),
+                    first=LazyConstructor(LinearConceptToConcept, in_concepts=parents),
+                    second=LazyConstructor(LinearConceptToConcept, in_concepts=parents),
                 )
                 for t in tasks
             ],

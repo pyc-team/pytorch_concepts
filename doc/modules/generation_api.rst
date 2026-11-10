@@ -43,6 +43,8 @@ Annotators
    :nosignatures:
 
    CLIPAnnotator
+   CXRCLIPAnnotator
+   RandomAnnotator
 
 Calibrators
 -----------

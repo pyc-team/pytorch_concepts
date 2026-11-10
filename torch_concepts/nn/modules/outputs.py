@@ -113,9 +113,8 @@ def supervised_subset(tensor, target):
     """
     if tensor is None or target is None:
         return tensor
-    labels = list(tensor.annotations.labels)
-    keep = [n for n in labels if n in target.annotations.label_to_index]
-    if len(keep) == len(labels):
+    keep = tensor.annotations.labels_in(target.annotations)
+    if len(keep) == len(tensor.annotations.labels):
         return tensor
     return tensor[keep] if keep else None
 
@@ -191,7 +190,7 @@ class InferenceOutput:
         ``params``. Filled only by engines that actually draw samples.
     probabilities : torch.Tensor or None
         ``(*leading,)`` estimate of ``P(query | evidence)`` for a fully realised
-        query batch. Filled only by the sampling estimators.
+        query batch.
 
     Examples
     --------

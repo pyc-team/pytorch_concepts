@@ -117,6 +117,8 @@ Predictors
    HyperlinearConceptEmbeddingToConcept
    MixConceptEmbeddingToConcept
    MixConceptEmbeddings
+   RuleConceptEmbeddingToConcept
+   RuleMemory
 
 Sparse categorical prediction
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~

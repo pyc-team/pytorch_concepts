@@ -180,10 +180,16 @@ class AnnotatedTensor:
             ``t["cat"]``            – single column  → ``AnnotatedTensor``
             ``t["cat", "dog"]``     – multiple cols  → ``AnnotatedTensor``
             ``t[["cat", "dog"]]``   – list syntax    → ``AnnotatedTensor``
+            ``t[annotations]``      – another annotation's labels, in its order
 
         Any other key is forwarded to the underlying tensor; the annotation is
         preserved when the result's annotated-axis size equals the original.
         """
+        if isinstance(key, Annotations):
+            # Keyed by its label tuple: no per-call Python scan of the names, so
+            # aligning a target to N predicted concepts every step costs one hash.
+            return self._wrap_resolved(self._annotations.resolve(key.label_key))
+
         # Normalise to tuple-of-strings when possible, in a single all-string scan.
         is_name_key = False
         if isinstance(key, str):
@@ -324,7 +330,7 @@ class AnnotatedTensor:
                     f"union_with expects AnnotatedTensor arguments, "
                     f"got {type(other).__name__} at position {i + 1}."
                 )
-            if other._axis != ax:
+            if other._axis % other._data.dim() != ax % self._data.dim():
                 raise ValueError(
                     f"union_with: annotated axis mismatch at position {i + 1}: "
                     f"this tensor annotates axis {ax}, the other annotates {other._axis}."

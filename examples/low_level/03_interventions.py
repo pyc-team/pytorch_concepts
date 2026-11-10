@@ -35,6 +35,7 @@ from torch_concepts.nn import (
     UncertaintyInterventionPolicy,
     UniformPolicy,
     intervention,
+    intervention_curve,
 )
 
 seed_everything(42)
@@ -125,6 +126,19 @@ with torch.no_grad(), intervention(
 ):
     c_logits, y_logits = model(x_test)
 report("correct the least sure:", c_logits, y_logits)
+
+# ``intervention_curve`` sweeps the budget: the task accuracy after correcting
+# 0, 1 and 2 concepts of each sample, the least confident first.
+curve = intervention_curve(
+    model=model,
+    layer_name="concept_encoder",
+    intervention_strategy=GroundTruthIntervention(c_true),
+    intervention_policy=UncertaintyInterventionPolicy(),
+    concepts_to_intervene_on=["C1", "C2"],
+    dataloader=[{"inputs": {"x": x_test}, "concepts": {"c": dataset.concepts[800:]}}],
+    task="xor",
+)
+print("intervention curve:     task accuracy", " -> ".join(f"{accuracy:.3f}" for accuracy in curve))
 
 # %%
 # Do-interventions

@@ -215,7 +215,7 @@ class CLIPAnnotator(Annotator):
             if concept_batches
             else torch.empty((0, concepts.size))
         )
-        return AnnotatedTensor(concept_data, concepts, axis=1)
+        return AnnotatedTensor(concept_data, concepts, axis=-1)
 
     def _flatten_concept_prompts(
         self,

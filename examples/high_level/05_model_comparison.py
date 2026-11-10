@@ -5,7 +5,7 @@ Comparing Models
 High-level models share one interface, so swapping one for another is a
 one-line change. Three models are trained the same way here:
 
-- ``BlackBoxTaskOnly``, which predicts the task directly from the input;
+- ``BlackBoxModel``, which predicts the task directly from the input;
 - ``ConceptBottleneckModel``, which predicts the task from the concepts only;
 - ``ConceptEmbeddingModel``, which predicts it from embeddings of the concepts.
 
@@ -24,7 +24,7 @@ from torch_concepts.data import ColorMNISTDataModule
 from torch_concepts.env import DATA_ROOT
 from torch_concepts.nn import (
     MLP,
-    BlackBoxTaskOnly,
+    BlackBoxModel,
     ConceptBottleneckModel,
     ConceptEmbeddingModel,
     ConceptLoss,
@@ -64,7 +64,7 @@ def digit_accuracy(out):
 # ------
 # The same arguments for every model; the CEM also takes the embedding size.
 models = {
-    "black box": (BlackBoxTaskOnly, {}),
+    "black box": (BlackBoxModel, {}),
     "CBM": (ConceptBottleneckModel, {}),
     "CEM": (ConceptEmbeddingModel, {"embedding_size": 16}),
 }

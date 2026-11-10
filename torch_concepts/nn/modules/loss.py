@@ -332,8 +332,9 @@ class KLDivergenceLoss(PyCLoss):
             off the reported parameter names when omitted, which resolves the
             continuous families; pass it when those names identify no single
             family (every discrete family reports ``probs``/``logits``).
-        free_bits (float): Per-dimension floor in nats.
-            ``0.0`` (default) leaves the term untouched. Above it, a dimension
+        free_bits (float): Per-dimension floor in nats. A family whose event
+            is a whole row (a categorical, a ``MultivariateNormal``) is a single
+            dimension. ``0.0`` (default) leaves the term untouched. Above it, a dimension
             whose batch-mean KL is already under the floor contributes a
             constant, so its gradient vanishes and nothing pushes it further
             onto the prior — the guard against posterior collapse, which a
@@ -372,7 +373,13 @@ class KLDivergenceLoss(PyCLoss):
                     f"({sorted(f.__name__ for f in _KL_FAMILIES.values())}). "
                     "Pass `distribution=` explicitly."
                 )
-            kl = dist.kl_divergence(family(**q), family(**p))
+            q_dist = family(**q)
+            kl = dist.kl_divergence(q_dist, family(**p))
+            if q_dist.event_shape:
+                # One divergence per row (a categorical, a MultivariateNormal):
+                # the variable itself is the dimension, so give it that axis
+                # rather than let the batch be read as one.
+                kl = kl.unsqueeze(-1)
             per_dim = kl.reshape(-1, kl.shape[-1]).mean(0)
             total = total + per_dim.clamp_min(self.free_bits).sum()
         return total
@@ -744,12 +751,12 @@ class ConceptLoss(PyCLoss):
         if self.terms_by_type.get('binary') and binary is not None:
             contributions.append(self._compute_type_loss('binary', {
                 'input': _plain(binary),
-                'target': _plain(target[binary.annotations.labels]).float(),
+                'target': _plain(target[binary.annotations]).float(),
             }))
 
         if self.terms_by_type.get('categorical') and categorical is not None:
             cat_logits, cat_targets, cat_mask = self._prepare_categorical(
-                categorical, target[categorical.annotations.labels]
+                categorical, target[categorical.annotations]
             )
             kwargs = {'input': cat_logits, 'target': cat_targets}
             # Offer the key only when padding actually exists, i.e. the concepts
@@ -762,7 +769,7 @@ class ConceptLoss(PyCLoss):
         if self.terms_by_type.get('continuous') and continuous is not None:
             kwargs = {
                 'input': _plain(continuous),
-                'target': _plain(target[continuous.annotations.labels]),
+                'target': _plain(target[continuous.annotations]),
             }
             if scale is not None:
                 kwargs['scale'] = _plain(scale)
@@ -909,6 +916,8 @@ class WeightedConceptLoss(CompositeLoss):
         **loss_kwargs,
     ):
         task_names = list(task_names)
+        concept_weight = float(concept_weight)
+        task_weight = float(task_weight)
         super().__init__(
             terms=[
                 ConceptSubset(ConceptLoss(**loss_kwargs), exclude=task_names),

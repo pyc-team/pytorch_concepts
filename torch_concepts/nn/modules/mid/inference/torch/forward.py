@@ -126,21 +126,19 @@ class ForwardInference(TorchBaseInference, ABC):
     # Per-variable and per-level prediction
     # ------------------------------------------------------------------
 
-    def _format_evidence(self, variable: Variable, value: torch.Tensor) -> torch.Tensor:
+    def _format_evidence(
+        self, variable: Variable, value: torch.Tensor, dtype: torch.dtype
+    ) -> torch.Tensor:
         """Cast and reshape an observed value to the cached-value contract.
 
         Evidence bypasses the CPD, so there is no network output to align
-        against: the value is cast to the PGM's parameter dtype (what child
-        CPDs expect as input) and read into the member layout the cache holds.
-        A numel mismatch raises instead of silently broadcasting.
+        against: the value is cast to ``dtype``, the PGM's parameter dtype (what
+        child CPDs expect as input), and read into the member layout the cache
+        holds. A numel mismatch raises instead of silently broadcasting.
         """
         if value.is_floating_point():
-            try:
-                dtype = next(self.pgm.parameters()).dtype
-            except StopIteration:
-                dtype = torch.get_default_dtype()
             value = value.to(dtype)
-        return variable.to_member(value)
+        return variable.from_event(value)
 
     def _required_variables(self, query_names: set, evidence_names: set) -> set:
         """Variables whose value must be resolved to answer the query.
@@ -172,6 +170,30 @@ class ForwardInference(TorchBaseInference, ABC):
         self._required_cache[key] = required
         return required
 
+    def _check_leading(
+        self,
+        variable: Variable,
+        params: Dict[str, torch.Tensor],
+        leading: torch.Size,
+    ) -> None:
+        """Raise unless every parameter the CPD returned carries the query's
+        leading shape.
+
+        A parametrization written for one batch axis (``x[:, -1]``, or most
+        sequence layers) silently drops or folds the others; without this the
+        engine would report that output as the variable's value.
+        """
+        for pname, t in params.items():
+            got = t.shape[: t.dim() - len(variable.param_trailing_shape(pname))]
+            if got != leading:
+                raise ValueError(
+                    f"{self.name}: the CPD of {variable.name!r} returned {pname!r} "
+                    f"with leading shape {tuple(got)}, but the query's is "
+                    f"{tuple(leading)}. Its parametrization must keep every leading "
+                    "dimension; a module that accepts a single batch axis needs them "
+                    "flattened before the call and restored after."
+                )
+
     def predict_variable(
         self,
         variable: Variable,
@@ -193,8 +215,9 @@ class ForwardInference(TorchBaseInference, ABC):
         """
         name = variable.name
         if name in evidence_names:
-            # Pure (whole-variable) evidence: clamp to the observed value, skip the CPD.
-            return name, None, self._format_evidence(variable, evidence[name])
+            # Pure (whole-variable) evidence: clamp to the observed value, skip the
+            # CPD. ``_run`` has already formatted it.
+            return name, None, evidence[name]
 
         cpd = self.pgm.factors[name]
         if cpd.is_root:
@@ -203,6 +226,7 @@ class ForwardInference(TorchBaseInference, ABC):
             # ``cache`` is keyed by whole-variable names; the CPD resolves each
             # parent (slicing member-handle parents out of their plate's value).
             params = cpd(parent_values=cache, **layer_kwargs)
+            self._check_leading(variable, params, leading)
 
         value = self._propagate(variable, params, temperature)
         target = query.get(name)
@@ -212,7 +236,7 @@ class ForwardInference(TorchBaseInference, ABC):
             # ``value`` is in. Without this a categorical plate would fall into
             # ``_align_gt``'s broadcast path and force the wrong values silently.
             value = teacher_force(
-                value, variable.to_member(target), self.p_int, len(leading), name
+                value, variable.from_event(target), self.p_int, len(leading), name
             )
         # Partial-plate observation: splice the observed members over the computed
         # value (the CPD owns the column write). ``member_evidence`` is {} unless
@@ -338,6 +362,16 @@ class ForwardInference(TorchBaseInference, ABC):
         evidence_names = set(evidence)
 
         required = self._required_variables(set(query_names), evidence_names)
+        # Formatted up front, and only where the pass reads it: the dtype lookup
+        # walks the module tree, so it runs once per query rather than once per
+        # evidence tensor.
+        dtype = self._dtype()
+        variables = self.pgm.variables
+        evidence = {
+            name: self._format_evidence(variables[name], value, dtype)
+            for name, value in evidence.items()
+            if variables[name] in required
+        }
         temperature = self.temperature
 
         cache: Dict[str, torch.Tensor] = {}

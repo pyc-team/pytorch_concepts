@@ -390,20 +390,36 @@ def logic_rule_eval(
         concept_weights: concept weights with shape (batch_size,
             memory_size, n_concepts, n_tasks, n_roles) with n_roles=3.
         c_pred: concept predictions with shape (batch_size, n_concepts).
-        memory_idxs: Indices of rules to evaluate with shape (batch_size,
-            n_tasks). Default is None (evaluate all).
+        memory_idxs: Long tensor of rule indices with shape (batch_size,
+            n_tasks), on the same device as concept_weights. Selects one rule
+            per sample and task. Default is None (evaluate all).
         semantic: Semantic function to use for rule evaluation.
 
     Returns:
         torch.Tensor: Rule predictions with shape (batch_size, n_tasks,
-            memory_size)
+            memory_size) when memory_idxs is None, otherwise (batch_size,
+            n_tasks, 1).
+
+    Raises:
+        ValueError: If memory_idxs does not have shape (batch_size, n_tasks).
     """
 
     assert len(concept_weights.shape) == 5, \
         ("Size error, concept weights should be batch_size x memory_size "
          f"x n_concepts x n_tasks x n_roles. Received {concept_weights.shape}")
-    memory_size = concept_weights.size(1)
     n_tasks = concept_weights.size(3)
+    if memory_idxs is not None:
+        expected_shape = (concept_weights.size(0), n_tasks)
+        if tuple(memory_idxs.shape) != expected_shape:
+            raise ValueError(
+                f"memory_idxs must have shape {expected_shape}, "
+                f"received {tuple(memory_idxs.shape)}."
+            )
+        indices = memory_idxs[:, None, None, :, None].expand(
+            -1, 1, concept_weights.size(2), -1, concept_weights.size(4)
+        )
+        concept_weights = concept_weights.gather(1, indices)
+    memory_size = concept_weights.size(1)
 
     # to avoid numerical problem
     concept_weights = concept_weights * 0.999
@@ -414,17 +430,9 @@ def logic_rule_eval(
         concept_weights[..., 2],
     )
 
-    if memory_idxs is None:
-        # cast all to (batch_size, memory_size, n_concepts, n_tasks)
-        x = c_pred.unsqueeze(1).unsqueeze(-1).expand(
-            -1,
-            memory_size,
-            -1,
-            n_tasks,
-        )
-    else:  # cast all to (batch_size, memory_size=1, n_concepts, n_tasks)
-        # TODO: memory_idxs never used!
-        x = c_pred.unsqueeze(1).unsqueeze(-1).expand(-1, 1, -1, n_tasks)
+    x = c_pred.unsqueeze(1).unsqueeze(-1).expand(
+        -1, memory_size, -1, n_tasks
+    )
 
     # batch_size, mem_size, n_tasks
     y_per_rule = semantic.disj(
@@ -1017,66 +1025,6 @@ def number_of_contributing_concepts(
 
     return kappa.float().mean().item()
 
-
-def cace_score(y_pred_c0, y_pred_c1):
-    """Compute the Average Causal Effect (ACE) / Causal Concept Effect (CaCE) score.
-
-    Measures the causal effect of a concept on model predictions:
-    ``E[Y | do(C=1)] - E[Y | do(C=0)]``.
-
-    Main reference: `"Explaining Classifiers with Causal Concept Effect
-    (CaCE)" <https://arxiv.org/abs/1907.07165>`_
-
-    Args:
-        y_pred_c0 (torch.Tensor): Predictions when the concept is inactive
-            (``do(C=0)``). Shape: ``(batch_size, num_classes)``.
-        y_pred_c1 (torch.Tensor): Predictions when the concept is active
-            (``do(C=1)``). Shape: ``(batch_size, num_classes)``.
-
-    Returns:
-        torch.Tensor: CaCE score for each class. Shape: ``(num_classes,)``.
-
-    Example:
-        >>> import torch
-        >>> y_c0 = torch.tensor([[0.1, 0.9], [0.2, 0.8]])
-        >>> y_c1 = torch.tensor([[0.7, 0.3], [0.6, 0.4]])
-        >>> cace_score(y_c0, y_c1)
-        tensor([ 0.5000, -0.5000])
-    """
-    if y_pred_c0.shape != y_pred_c1.shape:
-        raise RuntimeError(
-            "The shapes of y_pred_c0 and y_pred_c1 must be the same but got "
-            f"{y_pred_c0.shape} and {y_pred_c1.shape} instead."
-        )
-    return y_pred_c1.mean(dim=0) - y_pred_c0.mean(dim=0)
-
-
-def residual_concept_causal_effect(cace_before, cace_after):
-    """Compute the residual concept causal effect.
-
-    Quantifies how much of a concept's causal effect remains after
-    intervening on another (inner) concept.  A value close to 1
-    indicates that the inner intervention had little impact; values
-    close to 0 indicate that the original effect was mostly mediated
-    through the inner concept.
-
-    Args:
-        cace_before (torch.Tensor): CaCE score **before** the
-            do-intervention on the inner concept.
-        cace_after (torch.Tensor): CaCE score **after** the
-            do-intervention on the inner concept.
-
-    Returns:
-        torch.Tensor: Element-wise ratio ``cace_after / cace_before``.
-
-    Example::
-
-        >>> before = torch.tensor([0.5, 0.4])
-        >>> after  = torch.tensor([0.1, 0.3])
-        >>> residual_concept_causal_effect(before, after)
-        tensor([0.2000, 0.7500])
-    """
-    return cace_after / cace_before
 
 def edge_type(graph, i, j):
     if graph[i,j]==1 and graph[j,i]==0:

@@ -58,6 +58,7 @@ Probabilistic Models
    ProbabilisticModel
    BayesianNetwork
    MarkovNetwork
+   plot_pgm
 
 Inference
 ---------

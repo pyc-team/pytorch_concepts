@@ -10,7 +10,7 @@ identity.
 
 ``unscale_output`` assumes a queried quantity covers exactly the concepts the
 scaler was fit on (the standard case: ``prepare_query`` asks for every
-concept). ``BlackBoxTaskOnly`` queries a strict subset and explicitly refuses
+concept). ``BlackBoxModel`` queries a strict subset and explicitly refuses
 that combination instead of silently producing wrong values.
 """
 
@@ -21,7 +21,7 @@ from torchmetrics.regression import MeanSquaredError
 
 from torch_concepts.annotations import Annotations
 from torch_concepts.data.scalers import StandardScaler
-from torch_concepts.nn.modules.high.models.blackbox import BlackBoxTaskOnly
+from torch_concepts.nn.modules.high.models.blackbox import BlackBoxModel
 from torch_concepts.nn.modules.high.models.cbm import ConceptBottleneckModel
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
@@ -43,16 +43,17 @@ def annotations():
     )
 
 
-@pytest.fixture
-def concepts(annotations):
-    """Concepts on wildly different scales — the case scaling exists for."""
+@pytest.fixture(params=[1, -1], ids=["axis1", "last_axis"])
+def concepts(annotations, request):
+    """Concepts on wildly different scales — the case scaling exists for —
+    annotated on axis 1 or on the last axis, as ``ConceptDataset`` batches are."""
     torch.manual_seed(0)
     data = torch.stack([
         torch.randn(N_SAMPLES) * 3 + 10,
         torch.randn(N_SAMPLES) * 100 + 500,
         torch.randn(N_SAMPLES) * 0.01,
     ], dim=1)
-    return AnnotatedTensor(data, annotations, axis=1)
+    return AnnotatedTensor(data, annotations, axis=request.param)
 
 
 @pytest.fixture
@@ -291,7 +292,7 @@ class TestScaleInputs:
 
 
 class TestTaskOnlyModel:
-    """BlackBoxTaskOnly queries a strict subset of the fitted concepts, which
+    """BlackBoxModel queries a strict subset of the fitted concepts, which
     `unscale_output`'s full-coverage assumption cannot handle — it must refuse
     rather than silently produce wrong values (see BaseLearner.unscale_output)."""
 
@@ -317,7 +318,7 @@ class TestTaskOnlyModel:
     @staticmethod
     def _model(annotations, **kwargs):
         torch.manual_seed(0)
-        return BlackBoxTaskOnly(
+        return BlackBoxModel(
             input_size=INPUT_SIZE,
             annotations=annotations,
             task_names=['task'],

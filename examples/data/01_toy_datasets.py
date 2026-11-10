@@ -10,9 +10,9 @@ over the concepts.
 - ``ToyDataset``: ``xor``, ``trigonometry`` and ``dot``, where a task is
   computed from two or three concepts, and ``checkmark``, whose concepts follow
   a small causal graph.
-- ``CompletenessDataset``: tasks generated from concepts, some of which can be
+- ``CompletenessDataset``: a task generated from concepts, some of which can be
   hidden from the model, to study what happens when the concepts are not
-  enough to explain the task.
+  enough to explain the task. It is generated in memory, not cached.
 """
 
 # %%
@@ -34,15 +34,11 @@ for name in ["xor", "trigonometry", "dot", "checkmark"]:
 # %%
 # Incomplete concepts
 # -------------------
-# Four concepts generate the task, but only three of them are given.
-dataset = CompletenessDataset(
-    name="completeness",
-    root=str(DATA_ROOT / "completeness"),
-    n_gen=1000,
-    n_concepts=3,
-    n_hidden_concepts=1,
-    n_tasks=1,
-)
+# Ten concepts generate the task, but only seven of them are given. The hidden
+# ones carry 30% of the task; the best accuracy from the given ones shows the cost.
+dataset = CompletenessDataset(n_gen=1000, n_concepts=10, observed_fraction=0.7, hidden_importance=0.3)
 print("completeness")
 print(f"  inputs:   {tuple(dataset.input_data.shape)}")
 print(f"  concepts: {dataset.concept_names}")
+print(f"  hidden:   {tuple(dataset.hidden_concepts.shape)}")
+print(f"  best accuracy from the given concepts: {dataset.bayes_accuracy():.2f}")

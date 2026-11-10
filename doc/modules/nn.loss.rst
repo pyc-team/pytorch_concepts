@@ -23,6 +23,7 @@ for how they fit together.
    NLLProbLoss
    CosineCubedLoss
    L1LogitRegularizer
+   CMRTaskLoss
    LossWeightWarmup
 
 ``CosineCubedLoss`` returns the negative mean of

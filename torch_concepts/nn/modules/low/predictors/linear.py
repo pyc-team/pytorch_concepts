@@ -8,7 +8,7 @@ from typing import Union
 
 import torch
 
-from torch_concepts import Annotations
+from torch_concepts import Annotations, AnnotatedTensor
 from ..base.layer import BaseConceptLayer
 
 from ....functional import prune_linear_layer
@@ -92,7 +92,14 @@ class LinearConceptToConcept(BaseConceptLayer):
             torch.Tensor: Predicted concept probabilities of shape (..., out_concepts).
         """
         return self.predictor(concepts)
-        
+
+    @property
+    def named_weight(self) -> AnnotatedTensor:
+        """The weights, one column per input concept (per state if categorical), sliceable by
+        name: ``layer.named_weight["round"]``. Needs ``in_concepts`` given as Annotations."""
+        if not isinstance(self.in_concepts, Annotations):
+            raise ValueError("named_weight needs the layer built with in_concepts as Annotations, not a count.")
+        return AnnotatedTensor(self.predictor.weight, self.in_concepts)
 
     def prune(self, mask: torch.Tensor):
         """

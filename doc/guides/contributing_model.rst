@@ -475,8 +475,7 @@ pass, Lightning training, concept queries — is inherited.
          ConceptEmbeddingModel
          GraphConceptBottleneckModel
          CausallyReliableConceptBottleneckModel
-         BlackBox
-         BlackBoxTaskOnly
+         BlackBoxModel
          MyConceptModel
 
    **5. Tests**

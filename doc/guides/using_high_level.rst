@@ -46,7 +46,7 @@ Expand each block below for an explanation and an example.
     - :class:`~torch_concepts.nn.ConceptEmbeddingModel` — expressive CBM with concept embeddings (CEM).
     - :class:`~torch_concepts.nn.GraphConceptBottleneckModel` — graph-structured CBM.
     - :class:`~torch_concepts.nn.CausallyReliableConceptBottleneckModel` — causally reliable CBM variant.
-    - :class:`~torch_concepts.nn.BlackBox` — non-interpretable baseline for comparison.
+    - :class:`~torch_concepts.nn.BlackBoxModel` — non-interpretable baseline for comparison.
 
     All models take an ``input_size``, ``annotations``, and model-specific parameters.
     A forward pass returns an :class:`~torch_concepts.nn.InferenceOutput` whose ``params``

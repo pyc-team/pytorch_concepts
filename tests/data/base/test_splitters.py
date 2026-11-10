@@ -1,6 +1,8 @@
 """
 Extended tests for torch_concepts.data.splitters to increase coverage.
 """
+from functools import partial
+
 import pytest
 import torch
 import numpy as np
@@ -338,6 +340,31 @@ class TestCustomSplitter:
         empty = CustomSplitter()
         assert empty.val_policy is None
         assert empty.test_policy is None
+
+    @pytest.mark.parametrize("policy", ["val", "test"])
+    @pytest.mark.parametrize("kind", ["partial", "instance", "partial_instance"])
+    def test_callable_policy_names_and_repr(self, policy, kind):
+        class HeadSplit:
+            def __call__(self, dataset, frac=0.2, mask=None):
+                return _head_split(dataset, frac=frac, mask=mask)
+
+        if kind == "partial":
+            split_fn = partial(_head_split, frac=0.2)
+            expected_name = "_head_split"
+        elif kind == "instance":
+            split_fn = HeadSplit()
+            expected_name = "HeadSplit"
+        else:
+            split_fn = partial(HeadSplit(), frac=0.2)
+            expected_name = "HeadSplit"
+
+        splitter = CustomSplitter(**{f"{policy}_split_fn": split_fn})
+        assert getattr(splitter, f"{policy}_policy") == expected_name
+        assert f"{policy}_policy={expected_name}" in repr(splitter)
+        splitter.fit(_LenDataset(10))
+        assert getattr(splitter, f"{policy}_idxs") == [0, 1]
+        assert splitter.train_idxs == list(range(2, 10))
+        assert f"{policy}_policy={expected_name}" in repr(splitter)
 
     def test_fit_sets_fitted_flag(self):
         s = CustomSplitter(test_split_fn=_head_split)

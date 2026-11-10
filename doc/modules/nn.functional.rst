@@ -54,6 +54,12 @@ Linear and Logic Operations
    logic_memory_reconstruction
    logic_rule_explanations
 
+``logic_rule_eval`` evaluates every rule when ``memory_idxs=None``, returning
+shape ``(batch_size, n_tasks, memory_size)``. To select one rule per sample and
+task, pass a long tensor of indices with shape ``(batch_size, n_tasks)`` on the
+same device as the rule weights. The selected output has shape
+``(batch_size, n_tasks, 1)``.
+
 Evaluation Metrics
 ------------------
 
@@ -64,8 +70,6 @@ Evaluation Metrics
    completeness_score
    intervention_score
    tcav_score
-   cace_score
-   residual_concept_causal_effect
    number_of_effective_concepts
    number_of_contributing_concepts
 

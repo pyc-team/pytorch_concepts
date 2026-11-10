@@ -1373,6 +1373,20 @@ class TestAnnotatedTensorLastAxis(unittest.TestCase):
         self.assertEqual(tuple(merged.tensor.shape), (2, 3, 3))
         self.assertEqual(merged.annotations.labels, ['a', 'b'])
 
+    def test_union_with_treats_axis_1_and_minus_1_as_one_axis_on_2d(self):
+        left = AnnotatedTensor(torch.zeros(4, 1), Annotations(labels=['a']), axis=1)
+        right = AnnotatedTensor(torch.ones(4, 1), Annotations(labels=['b']), axis=-1)
+        merged = left.union_with(right)
+        self.assertEqual(tuple(merged.tensor.shape), (4, 2))
+        self.assertEqual(merged.annotations.labels, ['a', 'b'])
+
+    def test_union_with_rejects_different_axes_on_3d(self):
+        # (batch, concept, embedding) on axis 1 and (..., concept) on -1 differ.
+        left = AnnotatedTensor(torch.zeros(2, 3, 3), Annotations(labels=['a', 'b', 'c']), axis=1)
+        right = AnnotatedTensor(torch.zeros(2, 3, 3), Annotations(labels=['d', 'e', 'f']), axis=-1)
+        with self.assertRaises(ValueError):
+            left.union_with(right)
+
     def test_requires_explicit_axis_for_more_than_2d(self):
         # The default is only well-defined where axis 1 and -1 coincide (<=2-D).
         # A 3-D+ tensor must name the axis, so concepts can never silently land

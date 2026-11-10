@@ -386,6 +386,27 @@ class Annotations:
         """
         return {name: i for i, name in enumerate(self.labels)}
 
+    @cached_property
+    def label_key(self) -> Tuple[str, ...]:
+        """The labels as a tuple: the key caches use to remember an alignment to
+        this annotation. Equal annotations share it — including the fresh copy a
+        DataLoader worker unpickles with every batch."""
+        return tuple(self.labels)
+
+    def labels_in(self, other: "Annotations") -> Tuple[str, ...]:
+        """This annotation's labels that ``other`` also has, in this order.
+
+        Memoised per ``other.label_key``, so a loss or metric asking every step
+        pays the scan once.
+        """
+        # each call hashes other's label tuple (O(N), in C); 
+        # fingerprint it if that ever shows up.
+        cache = self.__dict__.setdefault('_labels_in_cache', {})
+        if other.label_key not in cache:
+            known = other.label_to_index
+            cache[other.label_key] = tuple(l for l in self.labels if l in known)
+        return cache[other.label_key]
+
     def get_index(self, label: str) -> int:
         """Get index of a label."""
         try:

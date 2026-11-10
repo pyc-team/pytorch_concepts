@@ -262,6 +262,67 @@ def factor_table(
     return torch.movedim(logp, 0, -1).reshape(*leading, *free_cards)
 
 
+def query_targets(
+    engine,
+    query: Dict[str, Optional[torch.Tensor]],
+    member_blocks: Dict[str, torch.Tensor],
+    model: ProbabilisticModel,
+    dtype: torch.dtype,
+) -> Optional[Dict[str, torch.Tensor]]:
+    """In an enumeration engine (:class:`~torch_concepts.nn.BeliefPropagation`,
+    :class:`~torch_concepts.nn.PgmpyVariableElimination`) a tensor in the query
+    is a **target**: the value ``q`` whose probability ``P(Q=q | E)`` the engine
+    reports in ``out.probabilities``. This
+    function turns those values into the same per-member layout as the evidence,
+    so the engine can read a marginal at the target (BP) or clamp the target
+    next to the evidence (VE).
+
+    In order, it:
+
+    1. Returns ``None`` unless *every* query entry carries a tensor. 
+       In a mixed query (``{"a": t, "b": None}``) the given values 
+       are ignored, unchecked, and ``out.probabilities`` stays ``None``.
+    2. Encodes the values with ``engine.member_evidence``, exactly as evidence
+       is encoded: a variable, a plate and a single member all become one
+       ``(*leading, width)`` block per member.
+    3. Raises if a target member is also observed in ``member_blocks``: a
+       variable is either queried or observed, not both.
+    4. Raises if a target member is in no factor: the model gives it no
+       distribution to take a probability from.
+    5. Raises if a target is not a discrete state: a binary member (two
+       states, size 1) needs a 0/1 column, a categorical one a one-hot row. A
+       continuous variable has no states and fails in
+       :func:`enumerable_cardinality`.
+    """
+    if not query or any(v is None for v in query.values()):
+        return None
+    targets = engine.member_evidence(query, dtype)
+    observed = sorted(targets.keys() & member_blocks.keys())
+    if observed:
+        raise ValueError(
+            f"{engine.name}: variables {observed} appear in both query and "
+            "evidence; a variable is either queried or observed, not both."
+        )
+    for member, t in targets.items():
+        if not model.factor_names_of(member):
+            raise ValueError(
+                f"{engine.name}: query variable {member!r} is in no factor, so the "
+                "model assigns it no distribution."
+            )
+        variable = model.variables[member]
+        # A binary member is one 0/1 column, a categorical one a one-hot row.
+        binary = enumerable_cardinality(variable) == 2 and variable.size == 1
+        valid = ((t == 0) | (t == 1)).all()
+        if not binary:
+            valid = valid & (t.sum(-1) == 1).all()
+        if not valid:
+            raise ValueError(
+                f"{engine.name}: query target for {member!r} must be "
+                + ("0 or 1." if binary else "one-hot.")
+            )
+    return targets
+
+
 def make_temperature_schedule(
     initial_temperature: float,
     annealing: Union[str, Callable[[int], float]],

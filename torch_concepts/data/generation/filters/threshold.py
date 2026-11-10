@@ -13,7 +13,7 @@ class ThresholdAnnotationFilter(FilterAnnotator):
     >>> scores = AnnotatedTensor(
     ...     torch.tensor([[0.2, 0.8], [0.6, 0.4]]),
     ...     Annotations(labels=["color", "shape"]),
-    ...     axis=1,
+    ...     axis=-1,
     ... )
     >>> filtered = ThresholdAnnotationFilter(threshold=0.5).filter(scores)
     >>> torch.testing.assert_close(

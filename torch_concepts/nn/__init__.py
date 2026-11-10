@@ -41,6 +41,11 @@ from .modules.low.predictors.hypernet import HyperlinearConceptEmbeddingToConcep
 from .modules.low.predictors.linear import LinearConceptToConcept
 from .modules.low.predictors.sparse import SparseLinearConceptToConcept
 from .modules.low.predictors.mlp import MLPConceptToConcept
+from .modules.low.predictors.rule import (
+    RuleConceptEmbeddingToConcept,
+    RuleMemory,
+)
+from .modules.low.predictors.selective import SelectiveLinearConceptToConcept
 from .modules.low.predictors.mix import MixConceptEmbeddingToConcept, \
     MixConceptEmbeddings
 
@@ -60,19 +65,20 @@ from .modules.loss import PyCLoss, ConceptLoss, ConceptSubset, WeightedConceptLo
 from .modules.callbacks import LossWeightWarmup
 
 # Metrics
-from .modules.metrics import ConceptMetrics, compute_cace
+from .modules.metrics import ConceptMetrics, compute_cace, intervention_curve
 
 # Output containers
 from .modules.outputs import InferenceOutput
 
 # Models (high-level)
-from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
+from .modules.high.models.blackbox import BlackBoxModel
 from .modules.high.models.cbm import ConceptBottleneckModel
 from .modules.high.models.cem import ConceptEmbeddingModel
 from .modules.high.models.cbvae import ConceptBottleneckVAE
 from .modules.high.models.cvae import ConditionalVAE
 from .modules.high.models.graph_cbm import GraphConceptBottleneckModel
 from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
+from .modules.high.models.cmr import CMRTaskLoss, ConceptMemoryReasoner
 
 # Models (mid-level)
 from .modules.mid.factors.factor import ParametricFactor
@@ -81,6 +87,7 @@ from .modules.mid.factors.potential import ParametricPotential
 from .modules.mid.graph.probabilistic_model import ProbabilisticModel
 from .modules.mid.graph.bayesian_network import BayesianNetwork
 from .modules.mid.graph.markov_network import MarkovNetwork
+from .modules.mid.graph.plot import plot_pgm
 from .modules.mid.variable import Variable, ConceptVariable, EmbeddingVariable
 
 # Inference (mid-level)
@@ -158,10 +165,13 @@ __all__ = [
     "LinearConceptToConcept",
     "SparseLinearConceptToConcept",
     "MLPConceptToConcept",
+    "SelectiveLinearConceptToConcept",
     "CallableConceptToConcept",
     "HyperlinearConceptEmbeddingToConcept",
     "MixConceptEmbeddingToConcept",
     "MixConceptEmbeddings",
+    "RuleMemory",
+    "RuleConceptEmbeddingToConcept",
 
     # Dense layers
     "Dense",
@@ -188,6 +198,7 @@ __all__ = [
     "OrthogonalityLoss",
     "NLLProbLoss",
     "CosineCubedLoss",
+    "CMRTaskLoss",
 
     # Training callbacks
     "LossWeightWarmup",
@@ -195,17 +206,18 @@ __all__ = [
     # Metrics
     "ConceptMetrics",
     "compute_cace",
+    "intervention_curve",
 
     # Output containers
     "InferenceOutput",
 
     # Models (high-level)
-    "BlackBox",
-    "BlackBoxTaskOnly",
+    "BlackBoxModel",
     "ConceptBottleneckModel",
     "ConceptEmbeddingModel",
     "ConceptBottleneckVAE",
     "ConditionalVAE",
+    "ConceptMemoryReasoner",
     "GraphConceptBottleneckModel",
     "CausallyReliableConceptBottleneckModel",
     # Models (mid-level)
@@ -215,6 +227,7 @@ __all__ = [
     "ProbabilisticModel",
     "BayesianNetwork",
     "MarkovNetwork",
+    "plot_pgm",
     "Variable",
     "ConceptVariable",
     "EmbeddingVariable",

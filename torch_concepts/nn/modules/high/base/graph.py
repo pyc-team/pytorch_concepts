@@ -29,8 +29,12 @@ from typing import List, Optional
 import torch.nn as nn
 
 from .....concept_graph import ConceptGraph
+from .....distributions import Delta
+from ...low.priors import LearnablePrior
 from ...low.sequential import Sequential
 from ...mid.activations import DefaultActivation
+from ...mid.factors.cpd import ParametricCPD
+from ...mid.variable import EmbeddingVariable
 from .model import BaseModel
 
 
@@ -136,6 +140,27 @@ class DirectedGraphModel(GraphModel, ABC):
     #: ``"probs"``. Concrete models may override; defaults to ``"logits"`` so the
     #: layer output is fed raw and activated by the distribution downstream.
     param_for_discrete_var: str = "logits"
+
+    def _input_latent_block(self):
+        """Raw input → latent block shared by every directed model.
+
+        Returns ``(input_var, latent_var, input_cpd, latent_cpd)``: the raw
+        ``input`` enters the PGM as evidence and the backbone runs *inside* the
+        PGM as the ``latent | input`` CPD.
+        """
+        input_var = EmbeddingVariable("input", distribution=Delta, shape=self.input_size)
+        latent_var = EmbeddingVariable("latent", distribution=Delta, size=self.latent_size)
+        input_cpd = ParametricCPD(
+            input_var,
+            parents=[],
+            parametrization=LearnablePrior(input_var.shape),
+        )
+        latent_cpd = ParametricCPD(
+            latent_var,
+            parents=[input_var],
+            parametrization=self.backbone,
+        )
+        return input_var, latent_var, input_cpd, latent_cpd
 
     def _flexible_parametrization(self, variable, first, second=None, activate=True):
         """Build a ``ParametricCPD`` parametrization dict from ``variable``'s distribution.
