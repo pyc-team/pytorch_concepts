@@ -211,14 +211,10 @@ class LiteLLMBackend:
     @staticmethod
     def _extract_content(response: Any) -> str:
         try:
-            choice = response.choices[0]
-            content = choice.message.content
-            finish_reason = getattr(choice, "finish_reason", None)
+            content = response.choices[0].message.content
         except AttributeError:
             try:
-                choice = response["choices"][0]
-                content = choice["message"]["content"]
-                finish_reason = choice.get("finish_reason")
+                content = response["choices"][0]["message"]["content"]
             except (KeyError, IndexError, TypeError) as error:
                 raise RuntimeError(
                     f"Unexpected LiteLLM response format: {response!r}"
@@ -228,9 +224,4 @@ class LiteLLMBackend:
                 f"Unexpected LiteLLM response format: {response!r}"
             ) from error
 
-        if finish_reason == "length" and (content is None or not str(content).strip()):
-            raise RuntimeError(
-                "LLM response reached its output-token limit before returning text. "
-                "Increase max_tokens or disable reasoning for the selected model."
-            )
         return "" if content is None else str(content)

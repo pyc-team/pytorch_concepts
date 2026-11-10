@@ -12,30 +12,32 @@ class SemanticConceptFilter(FilterGenerator):
     """Filter concept vocabularies by class and pairwise text similarity.
 
     Removes long names, class aliases, and semantically similar concepts.
-    By default, preserves the exact LF-CBM reference rules for compatibility.
+    Encoders are supplied by the caller; no models or optional text
+    dependencies are loaded implicitly. All class/concept pairs are compared
+    by default.
 
     Supply ``clip_text_encoder(texts)`` using CLIP ViT-B/16 and
     ``sentence_encoder(texts)`` using all-mpnet-base-v2 to reproduce the authors'
     conceptset_utils.py. Both return sample-by-feature tensors/arrays; CLIP
     features are normalized here. MPNet output is used as returned, matching
-    the reference. No models or optional text dependencies load implicitly.
+    the reference. For cosine similarities, supply unit-length sentence
+    embeddings; other sentence embeddings retain their original scale.
 
     Concepts are sorted alphabetically, as in the reference class filter.
     Similarities combine (MPNet + 3 * CLIP) / 4. Pairwise pruning keeps the
     concept with greater summed similarity, with ties favoring the earlier one.
-    For numerical reference compatibility, the class comparison also preserves
-    its ``class_index != concept_index`` condition, despite the unrelated axes.
-    Set ``reference_class_filter=False`` to compare every class/concept pair,
-    including matching indices. The default index exception is a reproduction
-    quirk, not a general semantic filtering rule. Output order is alphabetical
-    in both modes. This filter is optional for published, already-filtered lists.
+    Set ``reference_class_filter=True`` to reproduce the authors' index
+    exception: class/concept pairs with equal list indices are skipped. This
+    is a reference-compatibility option; normal filtering compares every pair.
+    Output order is alphabetical in both modes. Subsetting preserves selected
+    concepts' states, types, and applicable named groups.
     """
 
     def __init__(
         self, class_names: Sequence[str], clip_text_encoder: Callable,
         sentence_encoder: Callable, *, max_length: int = 30,
         class_cutoff: float = .85, similarity_cutoff: float = .9,
-        reference_class_filter: bool = True,
+        reference_class_filter: bool = False,
     ):
         self.class_names = list(class_names)
         self.clip_text_encoder = clip_text_encoder

@@ -31,7 +31,6 @@ from .modules.mid.activations import DefaultActivation
 
 # Encoders
 from .modules.low.encoders.linear import LinearEmbeddingToConcept
-from .modules.low.encoders.aligned import AlignedEmbeddingToConcept
 from .modules.low.encoders.mlp import MLPEmbeddingToConcept
 from .modules.low.encoders.whitening import ConceptWhitening, WhitenedEmbeddingToConcept
 from .modules.low.encoders.cav import CAVEmbeddingToConcept
@@ -69,7 +68,6 @@ from .modules.outputs import InferenceOutput
 # Models (high-level)
 from .modules.high.models.blackbox import BlackBox, BlackBoxTaskOnly
 from .modules.high.models.cbm import ConceptBottleneckModel
-from .modules.high.models.lfcbm import LabelFreeCBM
 from .modules.high.models.cem import ConceptEmbeddingModel
 from .modules.high.models.cbvae import ConceptBottleneckVAE
 from .modules.high.models.cvae import ConditionalVAE
@@ -151,7 +149,6 @@ __all__ = [
 
     # Encoder classes
     "LinearEmbeddingToConcept",
-    "AlignedEmbeddingToConcept",
     "MLPEmbeddingToConcept",
     "ConceptWhitening",
     "WhitenedEmbeddingToConcept",
@@ -206,7 +203,6 @@ __all__ = [
     "BlackBox",
     "BlackBoxTaskOnly",
     "ConceptBottleneckModel",
-    "LabelFreeCBM",
     "ConceptEmbeddingModel",
     "ConceptBottleneckVAE",
     "ConditionalVAE",

@@ -18,7 +18,7 @@ from ...tensor import AnnotatedTensor
 class CosineCubedLoss(nn.Module):
     """Negative mean cosine-cubed alignment for sample-by-concept tensors.
 
-    Minimizing this LF-CBM objective aligns projected activations (``input``)
+    Minimizing this objective aligns projected activations (``input``)
     with reference similarities (``target``). It can also be supplied as the
     continuous loss in :class:`ConceptLoss`.
     """
