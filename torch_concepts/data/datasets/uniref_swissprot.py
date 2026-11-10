@@ -101,40 +101,46 @@ def _uniref_records(handle):
     """
     context = ElementTree.iterparse(handle, events=("start", "end"))
     _, root = next(context)
-    if root.tag.rsplit("}", 1)[-1] not in {"UniRef50", "UniRef"}:
+    root_name = root.tag.rsplit("}", 1)[-1]
+    if root_name not in {"UniRef50", "UniRef"}:
         raise ValueError("Expected a UniRef50 XML document.")
+    namespace = root.tag.removesuffix(root_name)
+    entry_tag = f"{namespace}entry"
+    member_tags = {f"{namespace}representativeMember", f"{namespace}member"}
     cluster = None
     for event, element in context:
-        tag = element.tag.rsplit("}", 1)[-1]
-        if event == "start" and tag == "entry":
+        if event == "start" and element.tag == entry_tag:
             cluster = element
             cluster_id = cluster.attrib["id"]
             if not cluster_id.startswith("UniRef50_"):
                 raise ValueError(f"Expected a UniRef50 cluster: {cluster_id}")
+            cluster_fields = None
 
-        elif event == "end" and tag in {"representativeMember", "member"}:
-            # The member is complete; look up its accessions and cluster fields.
-            taxon = cluster.find("{*}property[@type='common taxon']")
-            fields = {
-                "uniref_cluster_id": cluster_id,
-                "cluster_name": cluster.findtext("{*}name") or None,
-                "taxon": taxon.get("value") if taxon is not None else None,
-            }
-            reference = element.find("{*}dbReference")
+        elif event == "end" and element.tag in member_tags:
+            reference = element.find(f"{namespace}dbReference")
             if reference is None:
                 raise ValueError("UniRef member has no database reference.")
             accessions = tuple(
                 prop.attrib["value"]
-                for prop in reference.findall("{*}property[@type='UniProtKB accession']")
+                for prop in reference.findall(f"{namespace}property")
+                if prop.get("type") == "UniProtKB accession"
             )
 
             # Release the member before yielding, keeping only the extracted data.
             cluster.remove(element)
             element.clear()
             if accessions:
-                yield accessions, fields
+                # Name and taxon are the same for every member of this cluster.
+                if cluster_fields is None:
+                    taxon = cluster.find(f"{namespace}property[@type='common taxon']")
+                    cluster_fields = {
+                        "uniref_cluster_id": cluster_id,
+                        "cluster_name": cluster.findtext(f"{namespace}name") or None,
+                        "taxon": taxon.get("value") if taxon is not None else None,
+                    }
+                yield accessions, cluster_fields.copy()
 
-        elif event == "end" and tag == "entry":
+        elif event == "end" and element.tag == entry_tag:
             root.remove(cluster)
             cluster.clear()
 
