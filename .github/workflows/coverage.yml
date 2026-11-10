@@ -28,7 +28,7 @@ jobs:
         python -m pip install --upgrade pip
         # CPU builds keep the install small; CI has no GPU
         pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
-        pip install -e ".[data,tests]"
+        pip install -e ".[data,sparse,tests]"
 
     - name: Run tests with coverage
       run: |

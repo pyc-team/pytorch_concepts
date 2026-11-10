@@ -15,9 +15,31 @@ Concept Operations
 
    grouped_concept_exogenous_mixture
    concept_orthogonality
+   cosine_cubed_similarity
    selection_eval
    confidence_selection
    soft_select
+
+Cosine-cubed alignment
+~~~~~~~~~~~~~~~~~~~~~~
+
+``cosine_cubed_similarity`` centers each concept column across samples, cubes
+its entries, then measures cosine similarity between corresponding columns.
+It returns one score per concept; constant columns return zero. This measures
+agreement between activation patterns, including those used by LF-CBM
+(Oikarinen et al., ICLR 2023), without imposing concept-selection thresholds.
+
+.. code-block:: python
+
+   from torch_concepts.nn.functional import cosine_cubed_similarity
+
+   scores = cosine_cubed_similarity(projected_activations, reference_scores)
+   loss = -scores.mean()
+   loss.backward()
+
+Both inputs have shape ``(samples, concepts)`` and share column order. Gradients
+are preserved, including for reference scores when required. Computation uses
+at least float32 precision.
 
 Linear and Logic Operations
 ----------------------------

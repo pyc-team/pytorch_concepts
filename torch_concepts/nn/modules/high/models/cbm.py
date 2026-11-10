@@ -26,6 +26,7 @@ import torch
 from torch.distributions import Bernoulli, OneHotCategorical, Normal
 
 from .....annotations import Annotations
+from .....distributions import Delta
 from ...low.encoders.linear import LinearEmbeddingToConcept
 from ...low.lazy import LazyConstructor
 from ...low.predictors.linear import LinearConceptToConcept
@@ -114,6 +115,192 @@ class ConceptBottleneckModel(BipartiteModel):
             train_inference,
             train_inference_kwargs,
         )
+
+    def _linear_heads(self):
+        """Resolve the supported deterministic continuous → categorical heads."""
+        concepts = self.intermediate_concept_names
+        if (not concepts or self.plate is False or len(self.task_names) != 1
+                or any(self.concept_annotations.concept(name).type != "continuous"
+                       or self.concept_annotations.concept(name).cardinality != 1
+                       or self.distribution_of(name) is not Delta for name in concepts)
+                or self.concept_annotations.concept(self.task_names[0]).type != "categorical"
+                or self.distribution_of(self.task_names[0]) is not OneHotCategorical):
+            raise ValueError("Linear heads require plated scalar Delta concepts and one categorical task.")
+        try:
+            encoder = self.pgm.factors["concepts"].parametrization["value"]
+            classifier = self.pgm.factors["tasks"].parametrization["logits"]
+        except (KeyError, AttributeError) as error:
+            raise ValueError("Linear heads require the standard CBM linear parametrizations.") from error
+        if not isinstance(encoder, LinearEmbeddingToConcept) or not isinstance(classifier, LinearConceptToConcept):
+            raise ValueError("Linear heads require the standard CBM linear parametrizations.")
+        return encoder, classifier
+
+    @torch.no_grad()
+    def set_linear_heads(self, concept_weight, concept_bias=None, task_weight=None, task_bias=None,
+                         *, concept_mean=None, concept_std=None):
+        """Copy separately fitted concept and task heads into this CBM.
+
+        Use this after fitting a linear concept projection and a linear
+        categorical classifier outside the high-level model. The existing
+        backbone and graph are retained, so concept queries and interventions
+        remain available through the regular CBM interface.
+
+        This method supports a nonempty bottleneck of scalar continuous
+        concepts with ``Delta`` distributions and exactly one categorical task
+        with a ``OneHotCategorical`` distribution. Construct the model with
+        ``variable_distributions={"continuous": Delta}`` and leave ``plate``
+        at its default ``None`` or set it to ``True``. The standard linear
+        encoder and predictor must be present. The default ``Normal``
+        continuous concepts, ``plate=False``, binary concepts/tasks, and
+        multiple tasks are unsupported by this method.
+
+        Parameters
+        ----------
+        concept_weight : torch.Tensor of shape (C, D)
+            Concept-projection weights, where ``D = self.latent_size`` is the
+            backbone's output width and ``C`` is the number of intermediate
+            concepts. Rows must follow ``self.intermediate_concept_names``.
+        concept_bias : torch.Tensor of shape (C,), optional
+            Concept-projection bias before any standardization. ``None``
+            installs zeros, replacing any existing concept bias.
+        task_weight : torch.Tensor of shape (K, C)
+            Required classifier weights, where ``K`` is the task cardinality.
+            Columns must follow the same concept order as ``concept_weight``
+            rows. Rows must follow the task's declared state order in
+            ``self.concept_annotations.concept(self.task_names[0]).states``.
+        task_bias : torch.Tensor of shape (K,), optional
+            Classifier bias. ``None`` installs zeros, replacing any existing
+            task bias.
+        concept_mean : torch.Tensor of shape (C,) or (1, C), optional
+            Per-concept means of the unstandardized projected activations,
+            estimated on training data. Supply together with ``concept_std``
+            when the task classifier was fitted on standardized activations.
+        concept_std : torch.Tensor of shape (C,) or (1, C), optional
+            Per-concept training standard deviations in the same concept
+            order. Every value must be strictly positive. Supply together
+            with ``concept_mean``; neither argument accepts scalar broadcasting.
+
+        Returns
+        -------
+        ConceptBottleneckModel
+            This model, updated in place, allowing method chaining.
+
+        Raises
+        ------
+        ValueError
+            If the model architecture is unsupported, a required weight is
+            missing, a value is not a tensor or has an incorrect shape, or a
+            tensor contains complex or nonfinite values. Also raised for
+            incomplete normalization statistics, nonpositive standard
+            deviations, or nonfinite parameters after dtype conversion or
+            normalization. Validation finishes before any heads are changed.
+
+        Notes
+        -----
+        Without concept evidence or interventions, the ordinary forward pass
+        computes ``h = backbone(x)``, ``c = h @ concept_weight.T + concept_bias``,
+        and ``logits = c @ task_weight.T + task_bias``.
+
+        When normalization statistics are supplied, the classifier instead
+        receives ``(c - concept_mean) / concept_std``. This transformation is
+        folded into the concept encoder using::
+
+            installed_weight = concept_weight / concept_std[:, None]
+            installed_bias = (concept_bias - concept_mean) / concept_std
+
+        Here the statistics are written as vectors and an omitted concept
+        bias is zero. The returned concept values are then standardized too;
+        no additional scaler is needed during inference. Omit both statistics
+        if normalization is already included in the supplied heads.
+
+        Tensors are detached, converted to each destination parameter's device
+        and dtype, and copied. They are not shared with the source modules, and
+        gradients do not flow back to those modules. The backbone, annotation
+        names, state order, ``requires_grad`` flags, and train/eval mode are
+        unchanged. Name-based reordering is not inferred: callers must align
+        the tensor rows and columns before installation. To freeze the fitted
+        model, call ``model.eval().requires_grad_(False)`` explicitly.
+
+        Examples
+        --------
+        Install weights into a two-concept, three-class model. No backbone is
+        supplied here, so the input itself is the three-dimensional embedding.
+
+        >>> import torch
+        >>> from torch_concepts import Annotations
+        >>> from torch_concepts.distributions import Delta
+        >>> from torch_concepts.nn import ConceptBottleneckModel
+        >>> schema = Annotations(
+        ...     labels=["texture", "length", "category"],
+        ...     states=[["value"], ["value"], ["small", "large", "other"]],
+        ...     types=["continuous", "continuous", "categorical"],
+        ... )
+        >>> model = ConceptBottleneckModel(
+        ...     input_size=3, annotations=schema, task_names=["category"],
+        ...     variable_distributions={"continuous": Delta},
+        ... )
+        >>> projection_weight = torch.tensor([[1., 0., 2.], [0., 1., -1.]])
+        >>> classifier_weight = torch.tensor([[1., 0.], [0., 1.], [-1., -1.]])
+        >>> model.set_linear_heads(
+        ...     concept_weight=projection_weight, task_weight=classifier_weight,
+        ... ) is model
+        True
+        >>> x = torch.tensor([[2., 3., 1.]])
+        >>> output = model.eval()(query=["texture", "length", "category"], input=x)
+        >>> concepts = x @ projection_weight.T
+        >>> torch.testing.assert_close(output.value[["texture", "length"]].tensor, concepts)
+        >>> torch.testing.assert_close(output.logits["category"].tensor, concepts @ classifier_weight.T)
+
+        Install the original weights again, this time folding training-data
+        normalization into the encoder. The classifier weights are unchanged.
+
+        >>> mean, std = torch.tensor([1., 2.]), torch.tensor([2., 4.])
+        >>> _ = model.set_linear_heads(
+        ...     concept_weight=projection_weight, task_weight=classifier_weight,
+        ...     concept_mean=mean, concept_std=std,
+        ... )
+        >>> standardized = (x @ projection_weight.T - mean) / std
+        >>> output = model(query=["texture", "length", "category"], input=x)
+        >>> torch.testing.assert_close(output.value[["texture", "length"]].tensor, standardized)
+        >>> torch.testing.assert_close(output.logits["category"].tensor, standardized @ classifier_weight.T)
+        """
+        encoder, classifier = self._linear_heads()
+        def validated(value, parameter, name, *, zero_default=False):
+            if value is None and zero_default:
+                return torch.zeros_like(parameter)
+            if not isinstance(value, torch.Tensor) or value.shape != parameter.shape:
+                raise ValueError(f"{name} shape must be {tuple(parameter.shape)}.")
+            if value.is_complex():
+                raise ValueError(f"{name} must contain finite real values.")
+            value = value.detach().to(parameter)
+            if not torch.isfinite(value).all():
+                raise ValueError(f"{name} must contain finite real values in the model dtype.")
+            return value.clone()
+
+        cw = validated(concept_weight, encoder.encoder.weight, "concept_weight")
+        cb = validated(concept_bias, encoder.encoder.bias, "concept_bias", zero_default=True)
+        tw = validated(task_weight, classifier.predictor.weight, "task_weight")
+        tb = validated(task_bias, classifier.predictor.bias, "task_bias", zero_default=True)
+        if (concept_mean is None) != (concept_std is None):
+            raise ValueError("Provide both concept_mean and concept_std.")
+        if concept_mean is not None:
+            stats = []
+            for name, value in (("concept_mean", concept_mean), ("concept_std", concept_std)):
+                if isinstance(value, torch.Tensor) and value.shape == (1, cb.numel()):
+                    value = value[0]
+                stats.append(validated(value, cb, name))
+            mean, std = stats
+            if (std <= 0).any():
+                raise ValueError("concept_std must contain positive standard deviations.")
+            cw, cb = cw / std[:, None], (cb - mean) / std
+            if not torch.isfinite(cw).all() or not torch.isfinite(cb).all():
+                raise ValueError("Normalized linear head parameters must be finite.")
+        # Validation and conversion finish before any parameter is changed.
+        pairs = ((encoder.encoder.weight, cw), (encoder.encoder.bias, cb),
+                 (classifier.predictor.weight, tw), (classifier.predictor.bias, tb))
+        for parameter, value in pairs:
+            parameter.copy_(value)
+        return self
 
     def _build_model(self) -> BayesianNetwork:
         """Assemble the CBM Bayesian network: ``input → latent → concepts → tasks``.

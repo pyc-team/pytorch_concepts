@@ -103,6 +103,12 @@ Pipeline steps
 
       generator_filter = DeduplicateConcepts()
 
+   For semantic vocabulary pruning, use
+   :class:`~torch_concepts.data.generation.filters.SemanticConceptFilter` with
+   your text encoders. It removes class aliases and concepts that are too
+   similar to a class or to another concept. See the
+   :doc:`filter API </modules/generation_api>` for thresholds and an example.
+
 
 .. dropdown:: 3. Route concepts to annotators
    :icon: workflow
