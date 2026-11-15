@@ -59,7 +59,7 @@ dm = SingleCellDataModule(
         "n_celltype": 1,
         "n_batch": 1,
         "n_concepts": 5,
-        "std_concept": 1,
+        "std_dev_concept": 1,
     },
 )
 dm.setup()

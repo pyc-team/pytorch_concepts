@@ -51,12 +51,12 @@ def small_config():
 
 
 def test_default_counts_and_partial_distribution_settings():
-    config = _resolve_generation_config({"std_batch": 0.15})
+    config = _resolve_generation_config({"std_dev_batch": 0.15})
     assert {key: value for key, value in config.items() if key.startswith("n_")} == {
         "n_cells": 10000, "n_genes": 1000, "n_batch": 3,
         "n_celltype": 4, "n_tissue": 2, "n_concepts": 8,
     }
-    assert config["std_batch"] == 0.15
+    assert config["std_dev_batch"] == 0.15
     assert config["zero_inflate"] is True
 
 
@@ -86,7 +86,9 @@ def test_matches_upstream_reference(tmp_path, seed, dependency, sparsity):
             if group == "cell_background":
                 np.testing.assert_array_equal(values.pop("cell_indices").numpy(), np.arange(15))
             for name, value in values.items():
-                np.testing.assert_allclose(value.numpy(), expected[f"{case}.{group}.{name}"],
+                # The frozen upstream fixture keeps its original parameter name.
+                reference_name = "std_libsize" if name == "std_dev_libsize" else name
+                np.testing.assert_allclose(value.numpy(), expected[f"{case}.{group}.{reference_name}"],
                                            rtol=1e-12, atol=1e-12)
 
 
@@ -139,7 +141,7 @@ def test_model_samples_background_from_prepared_concepts(tmp_path, small_config)
     concepts[:, 0] = 1
     quantiles = np.full((10, 6), 0.5)
     inputs, _, background = model(parameters, concepts, rng=np.random.default_rng(19),
-                               std_noise=0.3, exog_noise=quantiles)
+                               std_dev_noise=0.3, exog_noise=quantiles)
     rng = np.random.default_rng(19)
     for i in range(10):
         batch = rng.multinomial(1, parameters["p_batch"].numpy()).argmax()
@@ -151,7 +153,7 @@ def test_model_samples_background_from_prepared_concepts(tmp_path, small_config)
         mean = np.log((probability + 1e-8) / (1 - probability + 1e-8))
         logits = np.clip(rng.multivariate_normal(mean, parameters["covariance"].numpy()), -8, 8)
         np.testing.assert_array_equal(background["bernoulli_prob"][i].numpy(), 1 / (1 + np.exp(-logits)))
-        expected_library = rng.normal(0, parameters["std_libsize"][batch].item())
+        expected_library = rng.normal(0, parameters["std_dev_libsize"][batch].item())
         expected_noise = rng.normal(0, 0.3, size=6)
         assert background["libsize"][i].item() == expected_library
         np.testing.assert_array_equal(background["noise"][i].numpy(), expected_noise)
@@ -194,15 +196,15 @@ def test_flat_parameters_match_direct_generation(tmp_path, small_config, depende
     config = deepcopy(small_config)
     config.update({
         "baseline_lower": 2, "baseline_upper": 6,
-        "std_libsize_lower": 0.02, "std_libsize_upper": 0.04,
-        "n_concepts": 3, "std_concept": 0.06, "zero_inflate": False,
+        "std_dev_libsize_lower": 0.02, "std_dev_libsize_upper": 0.04,
+        "n_concepts": 3, "std_dev_concept": 0.06, "zero_inflate": False,
         "beta_a": 2, "beta_b": 1.5, "use_concept_dependency": dependency,
         "cov_prior_range": 0.5,
-        "std_noise": 0.03,
+        "std_dev_noise": 0.03,
     })
-    config["std_batch"] = 0.12
-    config["std_celltype"] = 0.11
-    config["std_tissue"] = 0.09
+    config["std_dev_batch"] = 0.12
+    config["std_dev_celltype"] = 0.11
+    config["std_dev_tissue"] = 0.09
     dataset = SingleCellDataset(root=tmp_path, seed=7, generation_config=config)
     expected = _generation_tensors(dataset)
     for actual, wanted in zip(dataset.load_raw()[:2], expected[:2]):
@@ -215,13 +217,13 @@ def test_flat_parameters_match_direct_generation(tmp_path, small_config, depende
 def test_partial_config_preserves_defaults_and_caller_data(tmp_path, small_config):
     config = deepcopy(small_config)
     config["baseline_lower"] = 2
-    config["std_batch"] = 0.15
+    config["std_dev_batch"] = 0.15
     original = deepcopy(config)
     dataset = SingleCellDataset(root=tmp_path, seed=7, generation_config=config)
     assert config == original
     assert dataset.generation_config["baseline_upper"] == 5
-    config["std_batch"] = 9
-    assert dataset.generation_config["std_batch"] == 0.15
+    config["std_dev_batch"] = 9
+    assert dataset.generation_config["std_dev_batch"] == 0.15
     dataset.generation_config["baseline_upper"] = 20
     default = SingleCellDataset(root=tmp_path, generation_config=small_config)
     assert default.generation_config["baseline_upper"] == 5
@@ -237,7 +239,7 @@ def test_equivalent_configs_generate_identical_data(tmp_path, small_config):
 
 def test_datamodule_forwards_config_and_generation_seed(tmp_path, small_config):
     config = deepcopy(small_config)
-    config["std_batch"] = 0.15
+    config["std_dev_batch"] = 0.15
     module = SingleCellDataModule(root=tmp_path, generation_seed=7, seed=12,
                                   generation_config=config)
     expected = _generation_tensors(module.dataset)
@@ -250,7 +252,7 @@ def test_datamodule_forwards_config_and_generation_seed(tmp_path, small_config):
 def test_numpy_counts_are_supported(tmp_path, small_config):
     config = deepcopy(small_config)
     config["n_cells"] = np.int64(10)
-    config["std_batch"] = np.float32(0.15)
+    config["std_dev_batch"] = np.float32(0.15)
     dataset = SingleCellDataset(root=tmp_path, generation_config=config)
     assert len(dataset) == 10
 
@@ -306,7 +308,7 @@ def test_generation_state_reconstructs_counts_and_is_reproducible(
         "baseline_expr": (6,), "concept_effect": (n_original_concepts, 6),
         "celltype_effect": (3, 6), "tissue_effect": (2, 6), "batch_effect": (2, 6),
         "p_batch": (2,), "p_tissue": (2,), "p_celltype": (2, 3),
-        "p_concept": (3, n_original_concepts), "std_libsize": (2,), "covariance": (n_original_concepts, n_original_concepts),
+        "p_concept": (3, n_original_concepts), "std_dev_libsize": (2,), "covariance": (n_original_concepts, n_original_concepts),
     }
     assert {name: tuple(values.shape) for name, values in saved["model_parameters"].items()} == expected_shapes
     assert all(values.dtype == torch.float64 for values in saved["model_parameters"].values())
@@ -362,8 +364,8 @@ def test_datamodule_subsamples_generation_state_in_dataset_order(tmp_path, small
 def test_public_generator_intervenes_with_fixed_noise_and_preserves_source(tmp_path, small_config, monkeypatch, as_numpy):
     config = deepcopy(small_config)
     config.update({"baseline_lower": 3, "baseline_upper": 3,
-                   "std_libsize_lower": 0, "std_libsize_upper": 0, "std_noise": 0})
-    for name in ("std_batch", "std_celltype", "std_tissue", "std_concept"):
+                   "std_dev_libsize_lower": 0, "std_dev_libsize_upper": 0, "std_dev_noise": 0})
+    for name in ("std_dev_batch", "std_dev_celltype", "std_dev_tissue", "std_dev_concept"):
         config[name] = 0
     quantiles = np.linspace(0.1, 0.9, 60).reshape(10, 6)
     dataset = SingleCellDataset(root=tmp_path, generation_config=config, exog_noise=quantiles)
@@ -451,7 +453,7 @@ def test_generate_from_dataset_samples_new_cells(tmp_path, small_config, n_cells
 @pytest.mark.parametrize("fresh", [False, True])
 @pytest.mark.parametrize("name", ["baseline_expr", "concept_effect", "celltype_effect", "tissue_effect",
                                   "batch_effect", "p_batch", "p_tissue", "p_celltype", "p_concept",
-                                  "std_libsize", "covariance"])
+                                  "std_dev_libsize", "covariance"])
 def test_parameter_overrides_reject_changed_dimensions(tmp_path, small_config, name, fresh, monkeypatch):
     dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
     parameters = deepcopy(dataset.model_parameters)
@@ -704,7 +706,7 @@ def test_generate_new_cells_reuses_parameters(tmp_path, small_config):
 def test_new_cells_apply_modified_sampling_parameters_then_interventions(tmp_path, small_config):
     dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
     fresh = dataset.generate_from_dataset(n_cells=5, seed=19,
-        model_parameters={"p_tissue": [0, 1], "p_batch": [0, 1], "std_libsize": [0, 0]})
+        model_parameters={"p_tissue": [0, 1], "p_batch": [0, 1], "std_dev_libsize": [0, 0]})
     edited = fresh.generate_interventions({"concept_0": 1})
     inputs, concepts, data = _generation_tensors(edited)
     assert inputs.shape == (5, 6)
@@ -714,7 +716,7 @@ def test_new_cells_apply_modified_sampling_parameters_then_interventions(tmp_pat
     assert torch.all(data["cell_background"]["libsize"] == 0)
     torch.testing.assert_close(_reconstruct_counts(data, concepts), inputs, rtol=0, atol=0)
     assert len(dataset) == 10
-    assert not torch.all(dataset.model_parameters["std_libsize"] == 0)
+    assert not torch.all(dataset.model_parameters["std_dev_libsize"] == 0)
 
 
 @pytest.mark.parametrize("changes", [{"unknown": 1}, {"concept_0": float("nan")}, {"batch": 2},
@@ -756,8 +758,8 @@ def test_plot_rejects_too_few_cells_or_genes(tmp_path, small_config, n_cells, n_
 def test_supplied_exog_noise_controls_poisson_counts(tmp_path, small_config):
     config = deepcopy(small_config)
     config.update({"baseline_lower": 3, "baseline_upper": 3,
-                   "std_libsize_lower": 0, "std_libsize_upper": 0, "std_noise": 0})
-    for name in ("std_batch", "std_celltype", "std_tissue", "std_concept"):
+                   "std_dev_libsize_lower": 0, "std_dev_libsize_upper": 0, "std_dev_noise": 0})
+    for name in ("std_dev_batch", "std_dev_celltype", "std_dev_tissue", "std_dev_concept"):
         config[name] = 0
     quantiles = np.linspace(0.1, 0.9, 60).reshape(10, 6)
     original = quantiles.copy()
@@ -808,14 +810,14 @@ def test_model_rejects_invalid_exog_noise(tmp_path, small_config, quantiles):
     ([], TypeError, "must be a mapping"),
     ({"unknown": 1}, ValueError, "Unknown generation parameter"),
     ({"batch": {"std": 0.15}}, ValueError, "Unknown generation parameter"),
-    ({"std_batch": {}}, TypeError, "std_batch.*real number"),
+    ({"std_dev_batch": {}}, TypeError, "std_dev_batch.*real number"),
     ({"baseline_lower": 0}, ValueError, "baseline_lower"),
-    ({"std_libsize_lower": 1}, ValueError, "std_libsize_lower"),
-    ({"std_noise": -1}, ValueError, "standard deviations"),
+    ({"std_dev_libsize_lower": 1}, ValueError, "std_dev_libsize_lower"),
+    ({"std_dev_noise": -1}, ValueError, "standard deviations"),
     ({"beta_a": 0}, ValueError, "Beta parameters"),
     ({"cov_prior_range": -1}, ValueError, "cov_prior_range"),
-    ({"std_batch": "large"}, TypeError, "std_batch.*real number"),
-    ({"std_batch": float("nan")}, ValueError, "std_batch.*finite"),
+    ({"std_dev_batch": "large"}, TypeError, "std_dev_batch.*real number"),
+    ({"std_dev_batch": float("nan")}, ValueError, "std_dev_batch.*finite"),
     ({"zero_inflate": "false"}, TypeError, "zero_inflate.*boolean"),
 ])
 def test_invalid_generation_config(tmp_path, config, error, message):
@@ -982,13 +984,13 @@ def test_incomplete_saved_dataset_is_reported_without_overwriting(tmp_path, smal
 
 
 def test_generation_uses_explicit_parameter_overrides(tmp_path, small_config):
-    config = {**small_config, "std_noise": 0}
+    config = {**small_config, "std_dev_noise": 0}
     dataset = SingleCellDataset(root=tmp_path, generation_config=config)
     metadata = _state(dataset)
     parameters = dataset.model_parameters
     parameters["baseline_expr"] += 1
     generated = dataset.generate_from_dataset(seed=7, model_parameters=parameters)
-    assert generated.generation_config["std_noise"] == 0
+    assert generated.generation_config["std_dev_noise"] == 0
     assert torch.count_nonzero(generated.cell_background["noise"]) == 0
     torch.testing.assert_close(generated.model_parameters, parameters, rtol=0, atol=0)
     torch.testing.assert_close(_reconstruct_counts(_state(generated), _concept_frame(generated)),
