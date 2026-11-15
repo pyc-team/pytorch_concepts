@@ -1,4 +1,4 @@
-"""Tests for grouped single-cell counts and distribution parameters."""
+"""Tests for single-cell counts and flat generation settings."""
 
 from copy import deepcopy
 from pathlib import Path
@@ -45,19 +45,19 @@ def _generation_tensors(dataset):
 @pytest.fixture
 def small_config():
     return {
-        "cells": {"n": 10}, "genes": {"n": 6}, "batch": {"n": 2},
-        "tissue": {"n": 2}, "celltype": {"n": 3}, "original_concept": {"n": 3},
+        "n_cells": 10, "n_genes": 6, "n_batch": 2,
+        "n_tissue": 2, "n_celltype": 3, "n_concepts": 3,
     }
 
 
 def test_default_counts_and_partial_distribution_settings():
-    config = _resolve_generation_config({"batch": {"std": 0.15}})
-    assert {key: value["n"] for key, value in config.items() if "n" in value} == {
-        "cells": 10000, "genes": 1000, "batch": 3,
-        "celltype": 4, "tissue": 2, "original_concept": 8,
+    config = _resolve_generation_config({"std_batch": 0.15})
+    assert {key: value for key, value in config.items() if key.startswith("n_")} == {
+        "n_cells": 10000, "n_genes": 1000, "n_batch": 3,
+        "n_celltype": 4, "n_tissue": 2, "n_concepts": 8,
     }
-    assert config["batch"]["std"] == 0.15
-    assert config["original_concept"]["zero_inflate"] is True
+    assert config["std_batch"] == 0.15
+    assert config["zero_inflate"] is True
 
 
 @pytest.mark.parametrize("seed", [7, 42])
@@ -73,9 +73,8 @@ def test_matches_upstream_reference(tmp_path, seed, dependency, sparsity):
     its seeded Generator to align the random streams. No network is needed.
     """
     dataset = SingleCellDataset(root=tmp_path, seed=seed, generation_config={
-        "cells": {"n": 15}, "genes": {"n": 9},
-        "original_concept": {"n": 3, "use_dependency": dependency,
-                             "zero_inflate": sparsity},
+        "n_cells": 15, "n_genes": 9,
+        "n_concepts": 3, "use_concept_dependency": dependency, "zero_inflate": sparsity,
     })
     case = f"{seed}_{int(dependency)}_{int(sparsity)}"
     path = Path(__file__).with_name("fixtures") / "single_cell_reference.npz"
@@ -95,7 +94,7 @@ def test_matches_upstream_reference(tmp_path, seed, dependency, sparsity):
 @pytest.mark.parametrize("input_kind", ["mapping", "tensor", "numpy", "dataframe", "list"])
 def test_generator_applies_concepts_before_counts(tmp_path, small_config, dependency, input_kind):
     config = deepcopy(small_config)
-    config["original_concept"]["use_dependency"] = dependency
+    config["use_concept_dependency"] = dependency
     dataset = SingleCellDataset(root=tmp_path, generation_config=config, seed=7)
     original_inputs, original_concepts, data = _generation_tensors(dataset)
     replacement = original_concepts.clone()
@@ -191,18 +190,19 @@ def test_generator_reuses_supplied_parameters(tmp_path, small_config, monkeypatc
 
 
 @pytest.mark.parametrize("dependency", [False, True])
-def test_grouped_parameters_match_direct_generation(tmp_path, small_config, dependency):
+def test_flat_parameters_match_direct_generation(tmp_path, small_config, dependency):
     config = deepcopy(small_config)
     config.update({
-        "baseline": {"lower": 2, "upper": 6},
-        "library": {"std_lower": 0.02, "std_upper": 0.04},
-        "original_concept": {"n": 3, "std": 0.06, "zero_inflate": False, "beta_a": 2,
-                    "beta_b": 1.5, "use_dependency": dependency, "cov_prior_range": 0.5},
-        "noise": {"std": 0.03},
+        "baseline_lower": 2, "baseline_upper": 6,
+        "std_libsize_lower": 0.02, "std_libsize_upper": 0.04,
+        "n_concepts": 3, "std_concept": 0.06, "zero_inflate": False,
+        "beta_a": 2, "beta_b": 1.5, "use_concept_dependency": dependency,
+        "cov_prior_range": 0.5,
+        "std_noise": 0.03,
     })
-    config["batch"]["std"] = 0.12
-    config["celltype"]["std"] = 0.11
-    config["tissue"]["std"] = 0.09
+    config["std_batch"] = 0.12
+    config["std_celltype"] = 0.11
+    config["std_tissue"] = 0.09
     dataset = SingleCellDataset(root=tmp_path, seed=7, generation_config=config)
     expected = _generation_tensors(dataset)
     for actual, wanted in zip(dataset.load_raw()[:2], expected[:2]):
@@ -214,17 +214,17 @@ def test_grouped_parameters_match_direct_generation(tmp_path, small_config, depe
 
 def test_partial_config_preserves_defaults_and_caller_data(tmp_path, small_config):
     config = deepcopy(small_config)
-    config["baseline"] = {"lower": 2}
-    config["batch"]["std"] = 0.15
+    config["baseline_lower"] = 2
+    config["std_batch"] = 0.15
     original = deepcopy(config)
     dataset = SingleCellDataset(root=tmp_path, seed=7, generation_config=config)
     assert config == original
-    assert dataset.generation_config["baseline"]["upper"] == 5
-    config["batch"]["std"] = 9
-    assert dataset.generation_config["batch"]["std"] == 0.15
-    dataset.generation_config["baseline"]["upper"] = 20
+    assert dataset.generation_config["baseline_upper"] == 5
+    config["std_batch"] = 9
+    assert dataset.generation_config["std_batch"] == 0.15
+    dataset.generation_config["baseline_upper"] = 20
     default = SingleCellDataset(root=tmp_path, generation_config=small_config)
-    assert default.generation_config["baseline"]["upper"] == 5
+    assert default.generation_config["baseline_upper"] == 5
 
 
 def test_equivalent_configs_generate_identical_data(tmp_path, small_config):
@@ -237,7 +237,7 @@ def test_equivalent_configs_generate_identical_data(tmp_path, small_config):
 
 def test_datamodule_forwards_config_and_generation_seed(tmp_path, small_config):
     config = deepcopy(small_config)
-    config["batch"]["std"] = 0.15
+    config["std_batch"] = 0.15
     module = SingleCellDataModule(root=tmp_path, generation_seed=7, seed=12,
                                   generation_config=config)
     expected = _generation_tensors(module.dataset)
@@ -249,8 +249,8 @@ def test_datamodule_forwards_config_and_generation_seed(tmp_path, small_config):
 
 def test_numpy_counts_are_supported(tmp_path, small_config):
     config = deepcopy(small_config)
-    config["cells"]["n"] = np.int64(10)
-    config["batch"]["std"] = np.float32(0.15)
+    config["n_cells"] = np.int64(10)
+    config["std_batch"] = np.float32(0.15)
     dataset = SingleCellDataset(root=tmp_path, generation_config=config)
     assert len(dataset) == 10
 
@@ -291,8 +291,10 @@ def test_generation_state_reconstructs_counts_and_is_reproducible(
     tmp_path, small_config, monkeypatch, dependency, n_original_concepts, supplied_quantiles,
 ):
     config = deepcopy(small_config)
-    config["original_concept"] = {"n": n_original_concepts, "use_dependency": dependency,
-                         "zero_inflate": not dependency, "cov_prior_range": 0.5}
+    config.update({
+        "n_concepts": n_original_concepts, "use_concept_dependency": dependency,
+        "zero_inflate": not dependency, "cov_prior_range": 0.5,
+    })
     quantiles = np.linspace(0.1, 0.9, 60).reshape(10, 6) if supplied_quantiles else None
     dataset = SingleCellDataset(root=tmp_path, seed=7, generation_config=config, exog_noise=quantiles)
     saved = deepcopy(_state(dataset))
@@ -359,10 +361,10 @@ def test_datamodule_subsamples_generation_state_in_dataset_order(tmp_path, small
 @pytest.mark.parametrize("as_numpy", [False, True])
 def test_public_generator_intervenes_with_fixed_noise_and_preserves_source(tmp_path, small_config, monkeypatch, as_numpy):
     config = deepcopy(small_config)
-    config.update({"baseline": {"lower": 3, "upper": 3},
-                   "library": {"std_lower": 0, "std_upper": 0}, "noise": {"std": 0}})
-    for quantity in ("batch", "celltype", "tissue", "original_concept"):
-        config[quantity]["std"] = 0
+    config.update({"baseline_lower": 3, "baseline_upper": 3,
+                   "std_libsize_lower": 0, "std_libsize_upper": 0, "std_noise": 0})
+    for name in ("std_batch", "std_celltype", "std_tissue", "std_concept"):
+        config[name] = 0
     quantiles = np.linspace(0.1, 0.9, 60).reshape(10, 6)
     dataset = SingleCellDataset(root=tmp_path, generation_config=config, exog_noise=quantiles)
     # A known effect makes the intervened rate exactly twice the baseline rate.
@@ -415,8 +417,8 @@ def test_generation_state_can_be_copied_independently(tmp_path, small_config):
     copied["model_parameters"]["baseline_expr"].zero_()
     torch.testing.assert_close(_state(dataset)["cell_background"]["cell_indices"], torch.arange(10))
     config = dataset.generation_config
-    config["cells"]["n"] = 3
-    assert dataset.generation_config["cells"]["n"] == 10
+    config["n_cells"] = 3
+    assert dataset.generation_config["n_cells"] == 10
     torch.testing.assert_close(_state(dataset), expected, rtol=0, atol=0)
     with pytest.raises(AttributeError):
         dataset.generation_config = config
@@ -655,7 +657,7 @@ def test_copy_of_row_subset_keeps_selected_cells_and_raw_tensors(tmp_path, small
                                   max_samples=5, seed=12, concept_subset=["concept_1"])
     source = module.dataset
     copied = source.generate_interventions(concepts=source._full_concepts)
-    assert copied.generation_config["cells"]["n"] == 5
+    assert copied.generation_config["n_cells"] == 5
     assert copied.concept_names == source.concept_names
     torch.testing.assert_close(_state(copied)["cell_background"]["cell_indices"], _state(source)["cell_background"]["cell_indices"])
     torch.testing.assert_close(copied.input_data, source.input_data, rtol=0, atol=0)
@@ -686,7 +688,7 @@ def test_generate_new_cells_reuses_parameters(tmp_path, small_config):
     assert fresh.input_data.shape == (5, 6)
     assert fresh.cell_background["noise"].shape == (5, 6)
     assert fresh.seed == 19
-    assert fresh.generation_config["cells"]["n"] == 5
+    assert fresh.generation_config["n_cells"] == 5
     assert len(dataset) == 10
     for name, value in dataset.model_parameters.items():
         torch.testing.assert_close(fresh.model_parameters[name], value, rtol=0, atol=0)
@@ -745,7 +747,7 @@ def test_plot_uses_umap_with_numeric_concepts_and_categorical_context(tmp_path, 
 
 @pytest.mark.parametrize("n_cells,n_genes", [(1, 6), (3, 6), (10, 1)])
 def test_plot_rejects_too_few_cells_or_genes(tmp_path, small_config, n_cells, n_genes):
-    config = {**small_config, "cells": {"n": n_cells}, "genes": {"n": n_genes}}
+    config = {**small_config, "n_cells": n_cells, "n_genes": n_genes}
     dataset = SingleCellDataset(root=tmp_path, generation_config=config)
     with pytest.raises(ValueError, match="cells|genes"):
         dataset.plot(color_by="concept_0")
@@ -753,10 +755,10 @@ def test_plot_rejects_too_few_cells_or_genes(tmp_path, small_config, n_cells, n_
 
 def test_supplied_exog_noise_controls_poisson_counts(tmp_path, small_config):
     config = deepcopy(small_config)
-    config.update({"baseline": {"lower": 3, "upper": 3},
-                   "library": {"std_lower": 0, "std_upper": 0}, "noise": {"std": 0}})
-    for quantity in ("batch", "celltype", "tissue", "original_concept"):
-        config[quantity]["std"] = 0
+    config.update({"baseline_lower": 3, "baseline_upper": 3,
+                   "std_libsize_lower": 0, "std_libsize_upper": 0, "std_noise": 0})
+    for name in ("std_batch", "std_celltype", "std_tissue", "std_concept"):
+        config[name] = 0
     quantiles = np.linspace(0.1, 0.9, 60).reshape(10, 6)
     original = quantiles.copy()
     dataset = SingleCellDataset(root=tmp_path, generation_config=config, exog_noise=quantiles)
@@ -780,7 +782,7 @@ def test_datamodule_forwards_exog_noise(tmp_path, small_config):
 
 def test_dependency_handles_one_concept_reproducibly(tmp_path, small_config):
     config = deepcopy(small_config)
-    config["original_concept"] = {"n": 1, "use_dependency": True}
+    config.update({"n_concepts": 1, "use_concept_dependency": True})
     dataset = SingleCellDataset(root=tmp_path, generation_config=config)
     restored = SingleCellDataset(root=tmp_path, generation_config=config)
     torch.testing.assert_close(restored.input_data, dataset.input_data)
@@ -804,28 +806,28 @@ def test_model_rejects_invalid_exog_noise(tmp_path, small_config, quantiles):
 
 @pytest.mark.parametrize("config, error, message", [
     ([], TypeError, "must be a mapping"),
-    ({"unknown": {}}, ValueError, "Unknown generation quantity"),
-    ({"batch": 0.15}, TypeError, "must be a parameter mapping"),
-    ({"batch": {"stdd": 0.15}}, ValueError, "Unknown parameter"),
-    ({"baseline": {"lower": 0}}, ValueError, "baseline.lower"),
-    ({"library": {"std_lower": 1}}, ValueError, "library.std_lower"),
-    ({"noise": {"std": -1}}, ValueError, "standard deviations"),
-    ({"original_concept": {"beta_a": 0}}, ValueError, "Beta parameters"),
-    ({"original_concept": {"cov_prior_range": -1}}, ValueError, "cov_prior_range"),
-    ({"batch": {"std": "large"}}, TypeError, "batch.std.*real number"),
-    ({"batch": {"std": float("nan")}}, ValueError, "batch.std.*finite"),
-    ({"original_concept": {"zero_inflate": "false"}}, TypeError, "original_concept.zero_inflate.*boolean"),
+    ({"unknown": 1}, ValueError, "Unknown generation parameter"),
+    ({"batch": {"std": 0.15}}, ValueError, "Unknown generation parameter"),
+    ({"std_batch": {}}, TypeError, "std_batch.*real number"),
+    ({"baseline_lower": 0}, ValueError, "baseline_lower"),
+    ({"std_libsize_lower": 1}, ValueError, "std_libsize_lower"),
+    ({"std_noise": -1}, ValueError, "standard deviations"),
+    ({"beta_a": 0}, ValueError, "Beta parameters"),
+    ({"cov_prior_range": -1}, ValueError, "cov_prior_range"),
+    ({"std_batch": "large"}, TypeError, "std_batch.*real number"),
+    ({"std_batch": float("nan")}, ValueError, "std_batch.*finite"),
+    ({"zero_inflate": "false"}, TypeError, "zero_inflate.*boolean"),
 ])
 def test_invalid_generation_config(tmp_path, config, error, message):
     with pytest.raises(error, match=message):
         SingleCellDataset(root=tmp_path, generation_config=config)
 
 
-@pytest.mark.parametrize("quantity", ["cells", "genes", "batch", "celltype", "tissue", "original_concept"])
+@pytest.mark.parametrize("name", ["n_cells", "n_genes", "n_batch", "n_celltype", "n_tissue", "n_concepts"])
 @pytest.mark.parametrize("n", [0, -1, 1.5, True])
-def test_invalid_counts(tmp_path, quantity, n):
-    with pytest.raises(ValueError, match=rf"{quantity}.n.*positive integer"):
-        SingleCellDataset(root=tmp_path, generation_config={quantity: {"n": n}})
+def test_invalid_counts(tmp_path, name, n):
+    with pytest.raises(ValueError, match=rf"{name}.*positive integer"):
+        SingleCellDataset(root=tmp_path, generation_config={name: n})
 
 
 def test_compute_parameters_defaults_to_seed_42(small_config):
@@ -980,13 +982,13 @@ def test_incomplete_saved_dataset_is_reported_without_overwriting(tmp_path, smal
 
 
 def test_generation_uses_explicit_parameter_overrides(tmp_path, small_config):
-    config = {**small_config, "noise": {"std": 0}}
+    config = {**small_config, "std_noise": 0}
     dataset = SingleCellDataset(root=tmp_path, generation_config=config)
     metadata = _state(dataset)
     parameters = dataset.model_parameters
     parameters["baseline_expr"] += 1
     generated = dataset.generate_from_dataset(seed=7, model_parameters=parameters)
-    assert generated.generation_config["noise"]["std"] == 0
+    assert generated.generation_config["std_noise"] == 0
     assert torch.count_nonzero(generated.cell_background["noise"]) == 0
     torch.testing.assert_close(generated.model_parameters, parameters, rtol=0, atol=0)
     torch.testing.assert_close(_reconstruct_counts(_state(generated), _concept_frame(generated)),

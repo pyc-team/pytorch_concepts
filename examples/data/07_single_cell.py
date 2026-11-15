@@ -53,12 +53,13 @@ dm = SingleCellDataModule(
     generation_seed=42,
     batch_size=64,
     generation_config={
-        "cells": {"n": 250},
-        "genes": {"n": 50},
-        "tissue": {"n": 1},
-        "celltype": {"n": 1},
-        "batch": {"n": 1},
-        "original_concept": {"n": 5, "std": 1},
+        "n_cells": 250,
+        "n_genes": 50,
+        "n_tissue": 1,
+        "n_celltype": 1,
+        "n_batch": 1,
+        "n_concepts": 5,
+        "std_concept": 1,
     },
 )
 dm.setup()

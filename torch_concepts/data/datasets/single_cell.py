@@ -1,19 +1,4 @@
-"""Synthetic single-cell counts following scCBGM's OmicsDataGenerator.
-
-Generation state is organized into three dictionaries:
-
-* ``generation_config``: counts and distribution settings for cells, genes,
-  batch, celltype, tissue, original_concept, baseline, library and noise.
-  Defaults are defined below in ``_DEFAULT_GENERATION_CONFIG``.
-* ``model_parameters``: global ``baseline_expr``, ``concept_effect``,
-  ``celltype_effect``, ``tissue_effect``, ``batch_effect``, ``p_batch``,
-  ``p_tissue``, ``p_celltype``, ``p_concept``, ``std_libsize`` and ``covariance``.
-* ``cell_background``: per-cell ``cell_indices``, ``celltype``, ``tissue``, ``batch``,
-  ``bernoulli_prob``, ``libsize``, ``noise`` and ``exog_noise``, held fixed
-  during concept interventions. Binary concepts are stored separately.
-
-Reference: https://github.com/almaan/scCBGM/blob/main/conceptlab/datagen/omics.py
-"""
+"Synthetic dataset and corresponding interventions introduced in scCBGM (https://arxiv.org/abs/2606.07760)"
 
 import hashlib
 import json
@@ -34,67 +19,63 @@ from ..base.dataset import ConceptDataset
 
 logger = logging.getLogger(__name__)
 
-# generation_config: supported quantities, settings and defaults before sampling.
 _DEFAULT_GENERATION_CONFIG = {
-    "cells": {"n": 10000},
-    "genes": {"n": 1000},
-    "batch": {"n": 3, "std": 0.08},
-    "celltype": {"n": 4, "std": 0.08},
-    "tissue": {"n": 2, "std": 0.07},
-    "original_concept": {
-        "n": 8,
-        "std": 0.05,
-        "zero_inflate": True,
-        "beta_a": 1,
-        "beta_b": 0.5,
-        "use_dependency": False,
-        "cov_prior_range": 5,
-    },
-    "baseline": {"lower": 1, "upper": 5},
-    "library": {"std_lower": 0.01, "std_upper": 0.03},
-    "noise": {"std": 0.01},
+    "n_cells": 10000,
+    "n_genes": 1000,
+    "n_batch": 3,
+    "n_celltype": 4,
+    "n_tissue": 2,
+    "n_concepts": 8,
+    "std_batch": 0.08,
+    "std_celltype": 0.08,
+    "std_tissue": 0.07,
+    "std_concept": 0.05,
+    "zero_inflate": True,
+    "beta_a": 1,
+    "beta_b": 0.5,
+    "use_concept_dependency": False,
+    "cov_prior_range": 5,
+    "baseline_lower": 1,
+    "baseline_upper": 5,
+    "std_libsize_lower": 0.01,
+    "std_libsize_upper": 0.03,
+    "std_noise": 0.01,
 }
 
 
 def _resolve_generation_config(generation_config):
-    """Merge partial quantity settings into independent defaults and validate them."""
-    config = {quantity: params.copy() for quantity, params in _DEFAULT_GENERATION_CONFIG.items()}
+    """Merge new generation settings with defaults and validate them."""
+    config = _DEFAULT_GENERATION_CONFIG.copy()
     if generation_config is not None:
         if not isinstance(generation_config, Mapping):
-            raise TypeError("generation_config must be a mapping of quantities to parameter mappings.")
-        for quantity, params in generation_config.items():
-            if quantity not in config:
-                raise ValueError(f"Unknown generation quantity: {quantity!r}.")
-            if not isinstance(params, Mapping):
-                raise TypeError(f"generation_config[{quantity!r}] must be a parameter mapping.")
-            for name in params:
-                if name not in config[quantity]:
-                    raise ValueError(f"Unknown parameter {name!r} for generation quantity {quantity!r}.")
-            config[quantity].update(params)
+            raise TypeError("generation_config must be a mapping of parameter names to values.")
+        for name in generation_config:
+            if name not in config:
+                raise ValueError(f"Unknown generation parameter: {name!r}.")
+        config.update(generation_config)
 
-    for quantity, params in config.items():
-        for name, value in params.items():
-            if name == "n":
-                if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)) or value < 1:
-                    raise ValueError(f"Expected {quantity}.n to be a positive integer.")
-                params[name] = int(value)
-            elif name in ("zero_inflate", "use_dependency"):
-                if not isinstance(value, (bool, np.bool_)):
-                    raise TypeError(f"Expected {quantity}.{name} to be a boolean.")
-                params[name] = bool(value)
-            else:
-                if isinstance(value, (bool, np.bool_)) or not isinstance(value, Real):
-                    raise TypeError(f"Expected {quantity}.{name} to be a real number.")
-                if not np.isfinite(value):
-                    raise ValueError(f"Expected {quantity}.{name} to be finite.")
-                if name == "std" and value < 0:
-                    raise ValueError("Noise and coefficient standard deviations must be nonnegative.")
-                params[name] = float(value)
-    if not 0 < config["baseline"]["lower"] <= config["baseline"]["upper"]:
-        raise ValueError("Expected 0 < baseline.lower <= baseline.upper.")
-    if not 0 <= config["library"]["std_lower"] <= config["library"]["std_upper"]:
-        raise ValueError("Expected 0 <= library.std_lower <= library.std_upper.")
-    if config["original_concept"]["beta_a"] <= 0 or config["original_concept"]["beta_b"] <= 0 or config["original_concept"]["cov_prior_range"] < 0:
+    for name, value in config.items():
+        if name.startswith("n_"):
+            if isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer)) or value < 1:
+                raise ValueError(f"Expected {name} to be a positive integer.")
+            config[name] = int(value)
+        elif name in ("zero_inflate", "use_concept_dependency"):
+            if not isinstance(value, (bool, np.bool_)):
+                raise TypeError(f"Expected {name} to be a boolean.")
+            config[name] = bool(value)
+        else:
+            if isinstance(value, (bool, np.bool_)) or not isinstance(value, Real):
+                raise TypeError(f"Expected {name} to be a real number.")
+            if not np.isfinite(value):
+                raise ValueError(f"Expected {name} to be finite.")
+            if name.startswith("std_") and value < 0:
+                raise ValueError("Noise and coefficient standard deviations must be nonnegative.")
+            config[name] = float(value)
+    if not 0 < config["baseline_lower"] <= config["baseline_upper"]:
+        raise ValueError("Expected 0 < baseline_lower <= baseline_upper.")
+    if not 0 <= config["std_libsize_lower"] <= config["std_libsize_upper"]:
+        raise ValueError("Expected 0 <= std_libsize_lower <= std_libsize_upper.")
+    if config["beta_a"] <= 0 or config["beta_b"] <= 0 or config["cov_prior_range"] < 0:
         raise ValueError("Beta parameters must be positive and cov_prior_range nonnegative.")
     return config
 
@@ -105,7 +86,7 @@ def _prepare_exog_noise(exog_noise, n_cells, n_genes):
         return None
     values = np.array(exog_noise, dtype=float, copy=True)
     if values.shape != (n_cells, n_genes):
-        raise ValueError("exog_noise must have shape (cells.n, genes.n).")
+        raise ValueError("exog_noise must have shape (n_cells, n_genes).")
     if not np.all(np.isfinite(values) & (values > 0) & (values < 1)):
         raise ValueError("exog_noise must contain finite quantiles strictly between 0 and 1.")
     return values
@@ -131,7 +112,7 @@ def _cache_key(config, seed, parameters=None, background=None, concepts=None,
 
 
 def _concept_names(config):
-    return [f"concept_{i}" for i in range(config["original_concept"]["n"])]
+    return [f"concept_{i}" for i in range(config["n_concepts"])]
 
 
 def _cell_names(indices):
@@ -145,29 +126,29 @@ def _validate_concepts(concepts):
 
 
 def _compute_model_parameters(config, rng=None) -> dict:
-    """Sample global model parameters, using seed 42 when rng is omitted."""
+    """Compute the parameters and coefficients of the model used to generate single-cell gene expression data. """
     rng = np.random.default_rng(42) if rng is None else rng
-    n_genes = config["genes"]["n"]
-    n_batches = config["batch"]["n"]
-    n_tissues = config["tissue"]["n"]
-    n_celltypes = config["celltype"]["n"]
-    n_original_concepts = config["original_concept"]["n"]
+    n_genes = config["n_genes"]
+    n_batches = config["n_batch"]
+    n_tissues = config["n_tissue"]
+    n_celltypes = config["n_celltype"]
+    n_original_concepts = config["n_concepts"]
     # Sample probabilities for batches, tissues, cell types, and concepts
     p_batch = rng.dirichlet(10 * np.ones(n_batches)) # probability of sampling each batch
     p_tissue = rng.dirichlet(10 * np.ones(n_tissues)) # probability of sampling each tissue
     p_celltype = rng.dirichlet(np.ones(n_celltypes), size=n_tissues) # probability of sampling each cell type within a tissue
     p_concept = rng.dirichlet(np.ones(n_original_concepts) / 5, size=n_celltypes) # probability of sampling each concept within a cell type
     # Sample standard deviation of library size for each batch
-    std_libsize = rng.uniform(config["library"]["std_lower"], config["library"]["std_upper"], size=n_batches)
+    std_libsize = rng.uniform(config["std_libsize_lower"], config["std_libsize_upper"], size=n_batches)
 
     # Sample effect coefficients for batches, cell types, tissues, and concepts
-    batch_effect = rng.normal(0, config["batch"]["std"], size=(n_batches, n_genes)) # batch effect coefficients for each batch and gene
-    celltype_effect = rng.normal(0, config["celltype"]["std"], size=(n_celltypes, n_genes)) # cell type effect coefficients for each cell type and gene
-    tissue_effect = rng.normal(0, config["tissue"]["std"], size=(n_tissues, n_genes)) # tissue effect coefficients for each tissue and gene
-    concept_effect = rng.normal(0, config["original_concept"]["std"], size=(n_original_concepts, n_genes)) # concept effect coefficients for each concept and gene
+    batch_effect = rng.normal(0, config["std_batch"], size=(n_batches, n_genes)) 
+    celltype_effect = rng.normal(0, config["std_celltype"], size=(n_celltypes, n_genes)) 
+    tissue_effect = rng.normal(0, config["std_tissue"], size=(n_tissues, n_genes)) 
+    concept_effect = rng.normal(0, config["std_concept"], size=(n_original_concepts, n_genes)) 
 
-    if config["original_concept"]["use_dependency"]:
-        cov_prior_range = config["original_concept"]["cov_prior_range"]
+    if config["use_concept_dependency"]:
+        cov_prior_range = config["cov_prior_range"]
         scale_matrix_elements = rng.uniform(
             -cov_prior_range, cov_prior_range, size=(n_original_concepts * (n_original_concepts + 1)) // 2
         )
@@ -184,12 +165,12 @@ def _compute_model_parameters(config, rng=None) -> dict:
         covariance = np.zeros((n_original_concepts, n_original_concepts))
 
     # Baseline expression for each variable
-    r, s = np.log(config["baseline"]["lower"]), np.log(config["baseline"]["upper"])
+    r, s = np.log(config["baseline_lower"]), np.log(config["baseline_upper"])
     baseline_expr = rng.uniform(r, s, size=n_genes)
 
-    if config["original_concept"]["zero_inflate"]:
+    if config["zero_inflate"]:
         # As in scCBGM, sparsity masks concept coefficients, not observed counts.
-        probability = 1 - rng.beta(config["original_concept"]["beta_a"], config["original_concept"]["beta_b"], size=n_original_concepts)
+        probability = 1 - rng.beta(config["beta_a"], config["beta_b"], size=n_original_concepts)
         mask = np.vstack([rng.binomial(1, probability[i], size=n_genes) for i in range(n_original_concepts)])
         concept_effect = concept_effect * mask
 
@@ -219,14 +200,16 @@ def model(
     std_noise=0.01,
     exog_noise=None,
 ) -> tuple[torch.Tensor, torch.Tensor, dict]:
-    """Compute concepts, background and counts in one loop over cells.
+    """Model for generating single-cell gene expression data based on provided model parameters.
 
-    Sample concepts and background when omitted; otherwise reuse supplied values.
-    Concepts must be binary. Celltype, tissue and batch are sampled with the
-    background and held fixed during interventions. Concept matrices are complete.
-    Return ``(inputs, concepts, cell_background)``. Counts and concepts are
-    float32; floating-point background retains float64 precision and context
-    uses int64 class indices.
+    Returns
+    -------
+    inputs : torch.Tensor
+        Generated gene expression counts for each cell.
+    concepts : torch.Tensor
+        Concept matrix for each cell.
+    cell_background : dict
+        Background information for each cell, including celltype, tissue, batch, and noise.
     """
     params = {name: value.numpy() for name, value in model_parameters.items()}
     if concepts is not None:
@@ -298,110 +281,42 @@ def model(
 
 
 class SingleCellDataset(ConceptDataset):
-    """Dataset class for synthetic single-cell data from scCBGM.
+    """Dataset class for synthetic single-cell gene expression dataset from scCBGM.
 
-    This dataset models the relationship between binary concepts, cell type,
-    tissue, batch effects, and gene expression as raw Poisson counts.
-    Concept annotations contain only binary indicators. Celltype, tissue and
-    batch are fixed cell background. No directed concept graph is assigned.
+    The dataset consists of simulated single-cell gene expression profiles, 
+    each influenced by different factors: baseline gene expression, 
+    experimental batch, tissue, cell type, gene-regulating factors, and random noise.
 
-    Generation state uses three ordinary dictionaries: ``generation_config``,
-    ``model_parameters`` and ``cell_background``. Binary ``concepts`` are stored
-    separately as supervision and intervention targets. All binary columns are
-    retained for interventions, including those omitted from ``concept_subset``.
+    Concepts correspond to these gene-regulating factors: each is active (1) or
+    inactive (0) in a cell. They are named ``concept_0``, ``concept_1``, and so on.
 
-    ``generation_config`` groups dimensions and distribution settings by quantity.
-    ``n`` counts cells, genes, batches, cell types, tissues, or original binary
-    concepts. ``original_concept`` configures the binary concept indicators.
-    Effect contributions sum to the log Poisson rate of each gene. Omitted
-    quantities and parameters use these defaults::
+    Use ``generate_interventions`` to turn concepts on or off in existing cells,
+    keeping their other characteristics fixed. Use ``generate_from_dataset``
+    to create new cells with the same model parameters.
+    Generated datasets are cached locally.
+    See Andersson et al. (2026), *scCBGM: Interpretable Single-Cell
+    Counterfactual Editing*, for details: https://arxiv.org/abs/2606.07760.
 
-        {
-            "cells": {"n": 10000},
-            "genes": {"n": 1000},
-            "batch": {"n": 3, "std": 0.08},
-            "celltype": {"n": 4, "std": 0.08},
-            "tissue": {"n": 2, "std": 0.07},
-            "original_concept": {
-                "n": 8,
-                "std": 0.05,
-                "zero_inflate": True,
-                "beta_a": 1,
-                "beta_b": 0.5,
-                "use_dependency": False,
-                "cov_prior_range": 5,
-            },
-            "baseline": {"lower": 1, "upper": 5},
-            "library": {"std_lower": 0.01, "std_upper": 0.03},
-            "noise": {"std": 0.01},
-        }
-
-    Baseline bounds are expression rates, sampled uniformly in log space.
-    The ``std`` parameters control effect coefficients and gene noise in log
-    space; library size adds a cell-level log offset with a batch-specific
-    standard deviation drawn between ``std_lower`` and ``std_upper``.
-    ``zero_inflate`` masks concept coefficients using the beta parameters.
-    ``use_dependency`` introduces covariance between concept logits, using
-    uniform draws in [-cov_prior_range, cov_prior_range] to construct the
-    Wishart scale. Unknown quantities or parameter names raise ``ValueError``.
-
-    ``exog_noise`` optionally supplies Poisson quantiles of shape
-    ``(cells.n, genes.n)`` strictly between 0 and 1. If omitted, they are
-    sampled uniformly and saved separately from the Gaussian gene noise.
-
-    The other two dictionaries hold sampled values:
-
-    * ``model_parameters``: ``baseline_expr`` (genes), ``concept_effect``
-      (concepts, genes, after sparsity masking), ``celltype_effect``,
-      ``tissue_effect``, ``batch_effect`` (respective classes, genes),
-      ``p_batch``, ``p_tissue``, ``p_celltype`` (tissues, cell types),
-      ``p_concept`` (cell types, concepts), ``std_libsize`` (batches), and
-      ``covariance`` (concepts, concepts).
-    * ``cell_background``: categorical ``celltype``, ``tissue`` and ``batch``
-      indices (cells, int64), ``libsize`` log offsets (cells), Gaussian ``noise``
-      and Poisson quantiles ``exog_noise`` (cells, genes), and
-      ``bernoulli_prob`` (cells, original concepts), the probabilities used
-      before sampling or overriding concept values. ``cell_indices`` (cells,
-      int64) identifies the original rows. All these values are held fixed
-      during concept interventions.
-
-    The three properties return independent copies. Floating-point parameters
-    and background use float64; counts and concepts use float32.
-
-    ``generate_interventions`` changes only binary indicators
-    while holding the cell background fixed. ``generate_from_dataset`` samples
-    new cells with the same global parameters. Both preserve the source dataset.
-
-    Construction generates or loads cached data. ``generation_state_path``
-    stores the three dictionaries, including the seed in ``generation_config``;
-    the seed is exposed separately as ``dataset.seed``. Inputs, concepts,
-    annotations and graph are saved in separate files. All concept columns
-    and background, including ``cell_background["cell_indices"]``, follow row
-    selection. ``generation_config["cells"]["n"]`` records the original
-    generated size; ``len(dataset)`` is the current size. ``load_raw()`` reads
-    the complete cached data before selection.
-
-    Settings and seed identify new dataset directories. Generated variants are
-    saved in sibling directories; identical requests reuse them. Load any saved
-    dataset with ``SingleCellDataset(root=dataset.root)``: its saved settings
-    and seed take precedence over generation arguments. Incomplete directories
-    raise ``RuntimeError``; repeat generation from the source to recreate a
-    variant, or use a new cache directory for initial generation.
-    Separate directories also isolate backbone embedding caches: their file
-    names do not identify generation settings or concept interventions.
-
-    The distributions and count equations follow scCBGM. All random draws
-    use the seeded generator here; upstream also uses global ``np.random``
-    for categorical draws and the covariance prior, so identical seeds do
-    not produce identical datasets across implementations.
+    Args:
+        root: Directory where generated data are stored. Defaults to
+            ./data/single_cell. Pass a saved dataset directory to reload it.
+        seed: Random seed for data generation.
+        concept_subset: Which of these factors to return as concept labels,
+            e.g. ["concept_0", "concept_2"]. Defaults to all concepts.
+            This selection does not change the generated gene expression.
+        generation_config: Flat dictionary with the settings for the generation
+            described above: dataset size, baseline expression, batch, tissue,
+            cell-type and concept effects, and noise. For example,
+            {"n_cells": 1000, "n_concepts": 5} generates 1000 cells with 5
+            concept factors. Omitted settings keep their defaults.
+        label_descriptions: Optional mapping from concept names to descriptions.
+        exog_noise: Optional values controlling count sampling, with shape
+            (n_cells, n_genes) and entries strictly between 0 and 1.
 
     Example::
 
-        dataset = SingleCellDataset(
-            seed=42,
-            generation_config={"cells": {"n": 1000}, "batch": {"n": 2, "std": 0.15}},
-        )
-        edited = dataset.generate_interventions(concepts={"concept_0": 1})
+        dataset = SingleCellDataset(generation_config={"n_cells": 1000})
+        edited = dataset.generate_interventions({"concept_0": 1})
         new_cells = dataset.generate_from_dataset(n_cells=500, seed=7)
     """
 
@@ -410,7 +325,7 @@ class SingleCellDataset(ConceptDataset):
         root: str | None = None,  # root directory to store/load the dataset
         seed: int = 42,  # seed for data generation
         concept_subset: list | None = None,  # subset of binary concept labels
-        generation_config: dict | None = None,  # partial counts and distribution parameters grouped by quantity
+        generation_config: dict | None = None,  # flat generation settings
         label_descriptions: dict | None = None,  # mapping from concept names to descriptions
         exog_noise=None,  # optional Poisson quantiles, one per cell and gene
     ):
@@ -422,8 +337,8 @@ class SingleCellDataset(ConceptDataset):
         if not any(os.path.exists(path) for path in self.processed_paths):
             self._generation_config = _resolve_generation_config(generation_config)
             self._exog_noise = _prepare_exog_noise(
-                exog_noise, self._generation_config["cells"]["n"],
-                self._generation_config["genes"]["n"],
+                exog_noise, self._generation_config["n_cells"],
+                self._generation_config["n_genes"],
             )
             self.root = os.path.join(self.root, _cache_key(
                 self._generation_config, seed, exog_noise=self._exog_noise,
@@ -490,7 +405,7 @@ class SingleCellDataset(ConceptDataset):
         rng = np.random.default_rng(self.seed)
         parameters = _compute_model_parameters(config, rng)
         inputs, concepts, background = model(
-            parameters, n_cells=config["cells"]["n"], rng=rng, std_noise=config["noise"]["std"],
+            parameters, n_cells=config["n_cells"], rng=rng, std_noise=config["std_noise"],
             exog_noise=self._exog_noise,
         )
         self._save_dataset(self.root, inputs, concepts, config, parameters, background,
@@ -500,7 +415,7 @@ class SingleCellDataset(ConceptDataset):
         """Write a complete dataset; initial generation and variants use the same format."""
         os.makedirs(root, exist_ok=True)
         paths = [os.path.join(root, name) for name in self.processed_filenames]
-        n_original_concepts = config["original_concept"]["n"]
+        n_original_concepts = config["n_concepts"]
         annotations = Annotations(
             labels=_concept_names(config),
             cardinalities=[1] * n_original_concepts,
@@ -529,7 +444,7 @@ class SingleCellDataset(ConceptDataset):
             raise ValueError("Provide at least one of n_cells, model_parameters or seed.")
         config = _resolve_generation_config({
             **self.generation_config,
-            "cells": {"n": len(self) if n_cells is None else n_cells},
+            "n_cells": len(self) if n_cells is None else n_cells,
         })
         parameters = self.model_parameters
         seed = self.seed if seed is None else seed
@@ -544,8 +459,8 @@ class SingleCellDataset(ConceptDataset):
         root = os.path.join(os.path.dirname(self.root), _cache_key(config, seed, parameters=parameters))
         if not all(os.path.isfile(os.path.join(root, name)) for name in self.processed_filenames):
             inputs, concepts, background = model(
-                parameters, n_cells=config["cells"]["n"], rng=np.random.default_rng(seed),
-                std_noise=config["noise"]["std"],
+                parameters, n_cells=config["n_cells"], rng=np.random.default_rng(seed),
+                std_noise=config["std_noise"],
             )
             self._save_dataset(root, inputs, concepts, config, parameters, background,
                                seed)
@@ -562,7 +477,7 @@ class SingleCellDataset(ConceptDataset):
         changes only its named cells and columns; all omitted values are retained.
         Parameters, untouched concepts and every background tensor stay fixed.
         """
-        config = {**self.generation_config, "cells": {"n": len(self)}}
+        config = {**self.generation_config, "n_cells": len(self)}
         names = _concept_names(self._generation_config)
         values = pd.DataFrame(
             self._full_concepts.numpy().astype(float),
