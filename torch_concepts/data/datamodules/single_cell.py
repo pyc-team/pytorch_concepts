@@ -38,12 +38,14 @@ class SingleCellDataModule(ConceptDataModule):
     generation_config : dict, optional
         Settings for the generation described in :class:`SingleCellDataset`,
         in a flat dictionary, e.g. {"n_cells": 1000, "n_concepts": 5}.
+        Set ``n_cells`` and ``n_genes`` here to control the generated dimensions.
         Omitted settings keep their defaults.
     exog_noise : array-like, optional
         Values controlling count sampling; see :class:`SingleCellDataset`.
     **kwargs
-        Additional arguments for ConceptDataModule, such as max_samples
-        and scalers.
+        Additional arguments for ConceptDataModule, such as scalers and
+        pin_memory. ``max_samples`` must be None; set the number of generated
+        cells with ``generation_config["n_cells"]``.
 
     Examples
     --------
@@ -70,6 +72,11 @@ class SingleCellDataModule(ConceptDataModule):
         exog_noise=None,
         **kwargs,
     ):
+        if kwargs.pop("max_samples", None) is not None:
+            raise ValueError(
+                'SingleCellDataModule does not support max_samples. '
+                'Set generation_config["n_cells"] to control the number of generated cells.'
+            )
         dataset = SingleCellDataset(
             root=root,
             seed=generation_seed,

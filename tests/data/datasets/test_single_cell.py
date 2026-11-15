@@ -9,6 +9,7 @@ import pytest
 import torch
 from scipy.stats import poisson
 
+from torch_concepts.data.base.datamodule import ConceptDataModule
 from torch_concepts.data.datamodules.single_cell import SingleCellDataModule
 import torch_concepts.data.datasets.single_cell as single_cell
 from torch_concepts.data.datasets.single_cell import (
@@ -237,16 +238,29 @@ def test_equivalent_configs_generate_identical_data(tmp_path, small_config):
     assert all(Path(path).is_file() for path in original.processed_paths)
 
 
-def test_datamodule_forwards_config_and_generation_seed(tmp_path, small_config):
+@pytest.mark.parametrize("kwargs", [{}, {"max_samples": None}])
+def test_datamodule_forwards_config_and_generation_seed(tmp_path, small_config, kwargs):
     config = deepcopy(small_config)
     config["std_dev_batch"] = 0.15
     module = SingleCellDataModule(root=tmp_path, generation_seed=7, seed=12,
-                                  generation_config=config)
+                                  generation_config=config, **kwargs)
+    assert module.dataset.input_data.shape == (config["n_cells"], config["n_genes"])
     expected = _generation_tensors(module.dataset)
     for actual, wanted in zip(module.dataset.load_raw()[:2], expected[:2]):
         torch.testing.assert_close(actual, wanted)
     module.setup("fit")
     assert sum(len(part) for part in (module.trainset, module.valset, module.testset)) == 10
+
+
+@pytest.mark.parametrize("max_samples", [0, 5, 10, 20, False])
+def test_datamodule_rejects_max_samples_before_generation(tmp_path, small_config, monkeypatch, max_samples):
+    def unexpected_dataset(*args, **kwargs):
+        raise AssertionError("Invalid max_samples must be rejected before constructing the dataset.")
+
+    monkeypatch.setattr(SingleCellDataset, "__init__", unexpected_dataset)
+    with pytest.raises(ValueError, match=r'max_samples.*generation_config\["n_cells"\]'):
+        SingleCellDataModule(root=tmp_path, generation_config=small_config,
+                             max_samples=max_samples)
 
 
 def test_numpy_counts_are_supported(tmp_path, small_config):
@@ -340,8 +354,8 @@ def test_generation_state_reconstructs_counts_and_is_reproducible(
 
 def test_datamodule_subsamples_generation_state_in_dataset_order(tmp_path, small_config):
     complete = SingleCellDataset(root=tmp_path, generation_config=small_config)
-    module = SingleCellDataModule(root=tmp_path, generation_config=small_config,
-                                  max_samples=5, seed=12, concept_subset=["concept_1"])
+    selected = SingleCellDataset(root=complete.root, concept_subset=["concept_1"])
+    module = ConceptDataModule(dataset=selected, max_samples=5, seed=12)
     dataset = module.dataset
     indices = torch.randperm(10, generator=torch.Generator().manual_seed(12))[:5]
     torch.testing.assert_close(_state(dataset)["cell_background"]["cell_indices"], indices)
@@ -655,8 +669,9 @@ def test_copy_of_intervened_dataset_preserves_existing_changes(tmp_path, small_c
 
 
 def test_copy_of_row_subset_keeps_selected_cells_and_raw_tensors(tmp_path, small_config):
-    module = SingleCellDataModule(root=tmp_path, generation_config=small_config,
-                                  max_samples=5, seed=12, concept_subset=["concept_1"])
+    dataset = SingleCellDataset(root=tmp_path, generation_config=small_config,
+                                concept_subset=["concept_1"])
+    module = ConceptDataModule(dataset=dataset, max_samples=5, seed=12)
     source = module.dataset
     copied = source.generate_interventions(concepts=source._full_concepts)
     assert copied.generation_config["n_cells"] == 5
