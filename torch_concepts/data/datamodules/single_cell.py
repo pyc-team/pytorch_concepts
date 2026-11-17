@@ -20,8 +20,10 @@ class SingleCellDataModule(ConceptDataModule):
         Random seed for data splitting.
     root : str, optional
         Directory for generated data. Defaults to ./data/single_cell.
-    generation_seed : int
+        A saved dataset directory is reloaded when generation settings are omitted.
+    generation_seed : int, optional
         Random seed for data generation, independent of the split seed.
+        Defaults to 42 when generating data.
     val_size, test_size : int or float
         Number or fraction of cells reserved for validation and testing.
     batch_size : int
@@ -60,7 +62,7 @@ class SingleCellDataModule(ConceptDataModule):
         self,
         seed: int = 42,
         root: str | None = None,
-        generation_seed: int = 42,
+        generation_seed: int | None = None,
         val_size: int | float = 0.1,
         test_size: int | float = 0.2,
         batch_size: int = 512,

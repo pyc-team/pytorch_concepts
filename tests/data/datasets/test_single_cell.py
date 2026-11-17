@@ -135,6 +135,22 @@ def test_model_reuses_saved_data_without_sampling(tmp_path, small_config, monkey
             torch.testing.assert_close(data[group][name], value, rtol=0, atol=0)
 
 
+@pytest.mark.parametrize("prepared_concepts", [False, True])
+def test_model_rejects_exog_noise_with_fixed_background(tmp_path, small_config, prepared_concepts):
+    dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
+    background = dataset.cell_background
+    original = deepcopy(background)
+    rng = np.random.default_rng(19)
+    rng_state = deepcopy(rng.bit_generator.state)
+    with pytest.raises(ValueError, match="exog_noise.*cell_background"):
+        model(dataset.model_parameters,
+              dataset._full_concepts if prepared_concepts else None,
+              n_cells=len(dataset), cell_background=background, rng=rng,
+              exog_noise=np.full((10, 6), 0.5))
+    torch.testing.assert_close(background, original, rtol=0, atol=0)
+    assert rng.bit_generator.state == rng_state
+
+
 def test_model_samples_background_from_prepared_concepts(tmp_path, small_config):
     dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
     parameters = deepcopy(dataset.model_parameters)
@@ -156,12 +172,47 @@ def test_model_samples_background_from_prepared_concepts(tmp_path, small_config)
         np.testing.assert_array_equal(background["bernoulli_prob"][i].numpy(), 1 / (1 + np.exp(-logits)))
         expected_library = rng.normal(0, parameters["std_dev_libsize"][batch].item())
         expected_noise = rng.normal(0, 0.3, size=6)
+        rng.uniform(0, 1, size=6)
         assert background["libsize"][i].item() == expected_library
         np.testing.assert_array_equal(background["noise"][i].numpy(), expected_noise)
     np.testing.assert_array_equal(background["exog_noise"].numpy(), quantiles)
     expected = _reconstruct_counts({"model_parameters": parameters, "cell_background": background}, concepts)
     torch.testing.assert_close(inputs, expected, rtol=0, atol=0)
     assert not np.shares_memory(background["exog_noise"].numpy(), quantiles)
+
+
+@pytest.mark.parametrize("dependency", [False, True])
+@pytest.mark.parametrize("prepared_concepts", [False, True])
+@pytest.mark.parametrize("reuse_quantiles", [False, True])
+def test_model_external_exog_noise_preserves_other_draws(
+    tmp_path, small_config, dependency, prepared_concepts, reuse_quantiles,
+):
+    config = dict(small_config, use_concept_dependency=dependency)
+    dataset = SingleCellDataset(root=tmp_path, generation_config=config)
+    concepts = dataset._full_concepts if prepared_concepts else None
+    parameters = dataset.model_parameters
+    baseline_rng = np.random.default_rng(19)
+    baseline_inputs, baseline_concepts, baseline_background = model(
+        parameters, concepts, n_cells=10, rng=baseline_rng,
+    )
+    quantiles = (baseline_background["exog_noise"].numpy().copy()
+                 if reuse_quantiles else np.full((10, 6), 0.5))
+    override_rng = np.random.default_rng(19)
+    inputs, actual_concepts, background = model(
+        parameters, concepts, n_cells=10, rng=override_rng, exog_noise=quantiles,
+    )
+    torch.testing.assert_close(actual_concepts, baseline_concepts, rtol=0, atol=0)
+    for name, value in baseline_background.items():
+        if name != "exog_noise":
+            torch.testing.assert_close(background[name], value, rtol=0, atol=0)
+    np.testing.assert_array_equal(background["exog_noise"].numpy(), quantiles)
+    np.testing.assert_array_equal(override_rng.random(10), baseline_rng.random(10))
+    expected = _reconstruct_counts(
+        {"model_parameters": parameters, "cell_background": background}, actual_concepts,
+    )
+    torch.testing.assert_close(inputs, expected, rtol=0, atol=0)
+    if reuse_quantiles:
+        torch.testing.assert_close(inputs, baseline_inputs, rtol=0, atol=0)
 
 
 def test_model_samples_concepts_background_and_counts_in_one_pass(tmp_path, small_config):
@@ -489,6 +540,62 @@ def test_parameter_overrides_reject_unknown_names_and_nonfinite_values(tmp_path,
     dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
     with pytest.raises(ValueError, match="parameter|Parameter"):
         dataset.generate_from_dataset(model_parameters=parameters)
+
+
+@pytest.mark.parametrize("entrypoint", ["model", "generate_from_dataset"])
+@pytest.mark.parametrize("name, value", [
+    ("p_batch", [-0.1, 1.1]),
+    ("p_batch", [0.2, 0.2]),
+    ("p_batch", [0.7, 0.7]),
+    ("p_tissue", [1.1, -0.1]),
+    ("p_tissue", [0.6, 0.6]),
+    ("p_celltype", [[-0.1, 0.5, 0.6], [0.2, 0.3, 0.5]]),
+    ("p_celltype", [[0.2, 0.3, 0.5], [0.2, 0.3, 0.4]]),
+    ("p_concept", [[-0.1, 0.5, 0.6], [0.2, 0.3, 0.5], [0.2, 0.3, 0.5]]),
+    ("p_concept", [[1.1, 0.5, 0.6], [0.2, 0.3, 0.5], [0.2, 0.3, 0.5]]),
+    ("covariance", [[1., 0.5, 0.], [0., 1., 0.], [0., 0., 1.]]),
+    ("covariance", [[1., 2., 0.], [2., 1., 0.], [0., 0., 1.]]),
+    ("covariance", [[float("nan"), 0., 0.], [0., 1., 0.], [0., 0., 1.]]),
+    ("std_dev_libsize", [-0.01, 0.02]),
+])
+def test_model_parameters_reject_invalid_distributions(tmp_path, small_config, entrypoint, name, value):
+    dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
+    original = _state(dataset)
+    with pytest.raises(ValueError, match=name):
+        if entrypoint == "model":
+            parameters = dataset.model_parameters
+            parameters[name] = torch.tensor(value, dtype=torch.float64)
+            model(parameters, n_cells=len(dataset))
+        else:
+            dataset.generate_from_dataset(model_parameters={name: value})
+    torch.testing.assert_close(_state(dataset), original, rtol=0, atol=0)
+    assert len(list(tmp_path.iterdir())) == 1
+
+
+@pytest.mark.parametrize("entrypoint", ["model", "generate_from_dataset"])
+@pytest.mark.parametrize("covariance", [torch.zeros(3, 3), torch.ones(3, 3), torch.eye(3)])
+def test_model_parameters_accept_valid_boundary_distributions(tmp_path, small_config, entrypoint, covariance):
+    dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
+    overrides = {
+        "p_batch": [0., 1.], "p_tissue": [1., 0.],
+        "p_celltype": [[1., 0., 0.], [0., 0.5, 0.5]],
+        # Each concept has its own Bernoulli probability; rows need not sum to 1.
+        "p_concept": [[0., 1., 0.8], [0.8, 0.8, 0.8], [0.8, 0.8, 0.8]],
+        "std_dev_libsize": [0., 0.], "covariance": covariance,
+    }
+    parameters = {**dataset.model_parameters,
+                  **{name: torch.as_tensor(value, dtype=torch.float64) for name, value in overrides.items()}}
+    if entrypoint == "model":
+        inputs, _, background = model(parameters, n_cells=len(dataset))
+    else:
+        generated = dataset.generate_from_dataset(model_parameters=overrides)
+        torch.testing.assert_close(generated.model_parameters, parameters, rtol=0, atol=0)
+        inputs, background = generated.input_data, generated.cell_background
+    assert inputs.isfinite().all()
+    assert torch.all(background["batch"] == 1)
+    assert torch.all(background["tissue"] == 0)
+    assert torch.all(background["celltype"] == 0)
+    assert torch.count_nonzero(background["libsize"]) == 0
 
 
 def test_interventions_keep_sampled_context(tmp_path, small_config):
@@ -947,6 +1054,54 @@ def test_generate_from_dataset_accepts_mixed_equal_and_changed_parameters(tmp_pa
     assert len(fresh) == len(dataset)
 
 
+@pytest.mark.parametrize("root", [
+    None, "data/single_cell", Path("data/single_cell"),
+    "~/data/single_cell", Path("~/data/single_cell"),
+])
+def test_root_normalization_keeps_saved_data_and_variants_consistent(
+    tmp_path, small_config, monkeypatch, root,
+):
+    user_dir = tmp_path / "user"
+    work_dir = tmp_path / "work"
+    user_dir.mkdir()
+    work_dir.mkdir()
+    # Isolate expansion of ~ without writing to the real user's data directory.
+    monkeypatch.setenv("HOME", str(user_dir))
+    monkeypatch.chdir(work_dir)
+    user_relative = root is not None and str(root).startswith("~/")
+    base = (user_dir if user_relative else work_dir) / "data" / "single_cell"
+
+    source = SingleCellDataset(root=root, generation_config=small_config)
+    datasets = [source, source.generate_from_dataset(n_cells=5, seed=7),
+                source.generate_interventions({"concept_0": 1})]
+    for dataset in datasets:
+        assert Path(dataset.root).parent == base
+        assert dataset.root == dataset.root_dir
+        assert all(Path(path).is_file() for path in dataset.processed_paths)
+        if user_relative:
+            saved_root = "~/" + str(Path(dataset.root).relative_to(user_dir))
+        else:
+            saved_root = str(Path(dataset.root).relative_to(work_dir))
+        if isinstance(root, Path):
+            saved_root = Path(saved_root)
+        restored = SingleCellDataset(root=saved_root)
+        assert restored.root == dataset.root
+        torch.testing.assert_close(_generation_tensors(restored),
+                                   _generation_tensors(dataset), rtol=0, atol=0)
+
+    # Existing instances and their variants must keep working after a chdir.
+    other_dir = tmp_path / "other"
+    other_dir.mkdir()
+    monkeypatch.chdir(other_dir)
+    for dataset in datasets:
+        torch.testing.assert_close(dataset.load_raw()[:2],
+                                   (dataset.input_data, dataset._full_concepts), rtol=0, atol=0)
+    assert source.generate_from_dataset(n_cells=5, seed=7).root == datasets[1].root
+    assert source.generate_interventions({"concept_0": 1}).root == datasets[2].root
+    assert not (work_dir / "~").exists()
+    assert not (other_dir / "data").exists()
+
+
 def test_build_saves_components_and_constructor_reloads_them(tmp_path, small_config, monkeypatch):
     dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
     assert len(dataset.processed_paths) == 5
@@ -971,6 +1126,89 @@ def test_build_saves_components_and_constructor_reloads_them(tmp_path, small_con
     torch.testing.assert_close(restored.input_data, dataset.input_data, rtol=0, atol=0)
     torch.testing.assert_close(_state(restored), metadata, rtol=0, atol=0)
     assert restored.concept_names == ["concept_1"]
+
+
+@pytest.mark.parametrize("changed", ["generation_config", "seed", "exog_noise"])
+def test_generation_respects_requests_when_root_contains_saved_data(tmp_path, small_config, changed):
+    source = SingleCellDataset(root=tmp_path, generation_config=small_config)
+    original_files = {path: Path(path).read_bytes() for path in source.processed_paths}
+    arguments = {"generation_config": small_config, "seed": 42}
+    if changed == "generation_config":
+        arguments[changed] = {**small_config, "n_cells": 5}
+    elif changed == "seed":
+        arguments[changed] = 7
+    else:
+        arguments[changed] = np.full((10, 6), 0.5)
+    generated = SingleCellDataset(root=source.root, **arguments)
+    expected = SingleCellDataset(root=tmp_path / "reference", **arguments)
+    assert Path(generated.root).parent == Path(source.root)
+    assert generated.seed == arguments["seed"]
+    assert generated.generation_config == expected.generation_config
+    torch.testing.assert_close(_generation_tensors(generated), _generation_tensors(expected), rtol=0, atol=0)
+    assert {path: Path(path).read_bytes() for path in original_files} == original_files
+
+
+@pytest.mark.parametrize("arguments", [
+    {"seed": 42}, {"seed": 7}, {"generation_config": {}},
+    {"exog_noise": np.full((10, 6), 0.5)},
+])
+def test_generation_arguments_take_precedence_over_saved_data(
+    tmp_path, small_config, monkeypatch, arguments,
+):
+    monkeypatch.setattr(single_cell, "_DEFAULT_GENERATION_CONFIG",
+                        _resolve_generation_config(small_config))
+    dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
+    before = {path: Path(path).read_bytes() for path in dataset.processed_paths}
+    generated = SingleCellDataset(root=dataset.root, **arguments)
+    expected = SingleCellDataset(root=tmp_path / "reference", **arguments)
+    assert Path(generated.root).parent == Path(dataset.root)
+    torch.testing.assert_close(_generation_tensors(generated),
+                               _generation_tensors(expected), rtol=0, atol=0)
+    assert {path: Path(path).read_bytes() for path in before} == before
+
+
+def test_missing_root_generates_dataset_automatically(tmp_path, small_config):
+    missing = tmp_path / "missing"
+    dataset = SingleCellDataset(root=missing, generation_config=small_config)
+    assert Path(dataset.root).parent == missing
+    assert len(dataset) == small_config["n_cells"]
+    assert all(Path(path).is_file() for path in dataset.processed_paths)
+
+
+def test_datamodule_loads_saved_dataset_with_independent_split_seed(tmp_path, small_config, monkeypatch):
+    source = SingleCellDataset(root=tmp_path, seed=7, generation_config=small_config)
+
+    def unexpected_generation(*args, **kwargs):
+        raise AssertionError("Loading saved data must not run generation.")
+
+    monkeypatch.setattr(single_cell, "model", unexpected_generation)
+    monkeypatch.setattr(single_cell, "_compute_model_parameters", unexpected_generation)
+    module = SingleCellDataModule(root=source.root, seed=12,
+                                 concept_subset=["concept_1"])
+    assert module.dataset.seed == 7
+    assert module.dataset.concept_names == ["concept_1"]
+    torch.testing.assert_close(_generation_tensors(module.dataset), _generation_tensors(source), rtol=0, atol=0)
+    module.setup()
+    assert len(module.train_dataloader().dataset) == 7
+
+
+@pytest.mark.parametrize("arguments", [
+    {"generation_seed": 42}, {"generation_config": {}},
+    {"exog_noise": np.full((10, 6), 0.5)},
+])
+def test_datamodule_generation_arguments_take_precedence_over_saved_data(
+    tmp_path, small_config, monkeypatch, arguments,
+):
+    monkeypatch.setattr(single_cell, "_DEFAULT_GENERATION_CONFIG",
+                        _resolve_generation_config(small_config))
+    source = SingleCellDataset(root=tmp_path, generation_config=small_config)
+    before = {path: Path(path).read_bytes() for path in source.processed_paths}
+    module = SingleCellDataModule(root=source.root, seed=12, **arguments)
+    reference = SingleCellDataModule(root=tmp_path / "reference", seed=12, **arguments)
+    assert Path(module.dataset.root).parent == Path(source.root)
+    torch.testing.assert_close(_generation_tensors(module.dataset),
+                               _generation_tensors(reference.dataset), rtol=0, atol=0)
+    assert {path: Path(path).read_bytes() for path in before} == before
 
 
 def test_cache_does_not_load_legacy_context_concept_files(tmp_path, small_config):

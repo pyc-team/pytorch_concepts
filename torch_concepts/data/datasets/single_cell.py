@@ -125,6 +125,28 @@ def _validate_concepts(concepts):
         raise ValueError("Original concepts must be binary (0 or 1).")
 
 
+def _validate_model_parameters(parameters):
+    """Check probability, covariance and scale constraints without changing values."""
+    for name, value in parameters.items():
+        if not value.isfinite().all():
+            raise ValueError(f"Parameter {name!r} must be finite.")
+    for name in ("p_batch", "p_tissue", "p_celltype", "p_concept"):
+        value = parameters[name]
+        if ((value < 0) | (value > 1)).any():
+            raise ValueError(f"Parameter {name!r} must contain probabilities between 0 and 1.")
+        # Concepts are independent Bernoulli probabilities, not a categorical distribution.
+        if name != "p_concept":
+            total = value.sum(dim=-1)
+            if not torch.allclose(total, torch.ones_like(total), rtol=1e-7, atol=1e-8):
+                raise ValueError(f"Parameter {name!r} must sum to 1 along its last dimension.")
+    covariance = parameters["covariance"]
+    if (not torch.allclose(covariance, covariance.T, rtol=1e-7, atol=1e-8)
+            or torch.linalg.eigvalsh(covariance).min() < -1e-8):
+        raise ValueError("Parameter 'covariance' must be symmetric and positive semidefinite.")
+    if (parameters["std_dev_libsize"] < 0).any():
+        raise ValueError("Parameter 'std_dev_libsize' must be nonnegative.")
+
+
 def _compute_model_parameters(config, rng=None) -> dict:
     """Compute the parameters and coefficients of the model used to generate single-cell gene expression data (see "model"). """
     rng = np.random.default_rng(42) if rng is None else rng
@@ -211,6 +233,8 @@ def model(
     binary concept activations (concepts), and additional cell-specific
     information (cell_background). This separation allows concept interventions
     to regenerate gene expression while preserving the other cell characteristics.
+    A supplied cell_background includes the count-sampling quantiles and cannot
+    be combined with exog_noise; doing so raises ValueError.
 
     Returns
     -------
@@ -222,6 +246,9 @@ def model(
         Cell-specific information, including batch, tissue, cell type,
         library size, concept activation probabilities, and noise.
     """
+    if cell_background is not None and exog_noise is not None:
+        raise ValueError("exog_noise cannot be provided together with cell_background.")
+    _validate_model_parameters(model_parameters)
     params = {name: value.numpy() for name, value in model_parameters.items()}
     if concepts is not None:
         if concepts.ndim != 2 or concepts.shape[1] != len(params["concept_effect"]):
@@ -276,8 +303,9 @@ def model(
             background["bernoulli_prob"][i] = bernoulli_prob
             background["libsize"][i] = rng.normal(0, params["std_dev_libsize"][batch])
             background["noise"][i] = rng.normal(0, std_dev_noise, size=n_genes)
+            sampled_exog_noise = rng.uniform(0, 1, size=n_genes)
             if exog_noise is None:
-                background["exog_noise"][i] = rng.uniform(0, 1, size=n_genes)
+                background["exog_noise"][i] = sampled_exog_noise
         log_lambda = (
             params["baseline_expr"]
             + np.sum(params["concept_effect"] * values[i, :, None], axis=0)
@@ -311,9 +339,12 @@ class SingleCellDataset(ConceptDataset):
     Counterfactual Editing*, for details: https://arxiv.org/abs/2606.07760.
 
     Args:
-        root: Directory where generated data are stored. Defaults to
-            ./data/single_cell. Pass a saved dataset directory to reload it.
-        seed: Random seed for data generation.
+        root: Directory where generated data are stored in a subdirectory
+            identified by the generation settings. Defaults to ./data/single_cell.
+            A saved dataset directory is reloaded automatically when seed,
+            generation_config and exog_noise are omitted.
+            User paths (~) are expanded and relative paths made absolute.
+        seed: Random seed for data generation. Defaults to 42.
         concept_subset: Which of these factors to return as concept labels,
             e.g. ["concept_0", "concept_2"]. Defaults to all concepts.
             This selection does not change the generated gene expression.
@@ -331,30 +362,32 @@ class SingleCellDataset(ConceptDataset):
         dataset = SingleCellDataset(generation_config={"n_cells": 1000})
         edited = dataset.generate_interventions({"concept_0": 1})
         new_cells = dataset.generate_from_dataset(n_cells=500, seed=7)
+        restored = SingleCellDataset(root=dataset.root)
     """
 
     def __init__(
         self,
         root: str | None = None,  # root directory to store/load the dataset
-        seed: int = 42,  # seed for data generation
+        seed: int | None = None,  # defaults to 42 for generation
         concept_subset: list | None = None,  # subset of binary concept labels
         generation_config: dict | None = None,  # flat generation settings
         label_descriptions: dict | None = None,  # mapping from concept names to descriptions
         exog_noise=None,  # optional Poisson quantiles, one per cell and gene
     ):
-        self.root = os.fspath(root) if root is not None else os.path.join(os.getcwd(), "data", "single_cell")
-        self.seed = seed
+        root = root if root is not None else os.path.join("data", "single_cell")
+        self.root = os.fspath(root)
+        self.root = os.path.abspath(self.root_dir)
+        self.seed = 42 if seed is None else seed
         self.label_descriptions = label_descriptions
-        # A saved dataset can be loaded by its directory alone. New requests
-        # get a separate directory identified by their settings and seed.
-        if not any(os.path.exists(path) for path in self.processed_paths):
+        if (seed is not None or generation_config is not None or exog_noise is not None
+                or not any(os.path.exists(path) for path in self.processed_paths)):
             self._generation_config = _resolve_generation_config(generation_config)
             self._exog_noise = _prepare_exog_noise(
                 exog_noise, self._generation_config["n_cells"],
                 self._generation_config["n_genes"],
             )
             self.root = os.path.join(self.root, _cache_key(
-                self._generation_config, seed, exog_noise=self._exog_noise,
+                self._generation_config, self.seed, exog_noise=self._exog_noise,
             ))
         inputs, concepts, annotations, graph = self.load()
         self._full_concepts = concepts
@@ -421,13 +454,13 @@ class SingleCellDataset(ConceptDataset):
             parameters, n_cells=config["n_cells"], rng=rng, std_dev_noise=config["std_dev_noise"],
             exog_noise=self._exog_noise,
         )
-        self._save_dataset(self.root, inputs, concepts, config, parameters, background,
+        self._save_dataset(self.processed_paths, inputs, concepts, config, parameters, background,
                            self.seed)
 
-    def _save_dataset(self, root, inputs, concepts, config, parameters, background, seed):
-        """Write a complete dataset; initial generation and variants use the same format."""
+    def _save_dataset(self, paths, inputs, concepts, config, parameters, background, seed):
+        """Write the supplied files; initial generation and variants share the format."""
+        root = os.path.dirname(paths[0])
         os.makedirs(root, exist_ok=True)
-        paths = [os.path.join(root, name) for name in self.processed_filenames]
         n_original_concepts = config["n_concepts"]
         annotations = Annotations(
             labels=_concept_names(config),
@@ -447,11 +480,11 @@ class SingleCellDataset(ConceptDataset):
     def generate_from_dataset(self, *, n_cells=None, model_parameters=None, seed=None):
         """Sample new cells with copied global parameters and optional overrides.
 
-        Always samples new concepts and background, even when n_cells is unchanged
-        or omitted. Defaults to the current number of cells and the source seed.
         Note: model_parameters accepts a partial dictionary, e.g.
         {"baseline_expr": new_baseline}. Every omitted parameter retains
-        its value from this dataset.
+        its value from this dataset. Probabilities must be in [0, 1]; categorical
+        distributions must sum to 1 along the last dimension. The covariance
+        must be symmetric positive semidefinite and std_dev_libsize nonnegative.
         """
         if n_cells is None and model_parameters is None and seed is None:
             raise ValueError("Provide at least one of n_cells, model_parameters or seed.")
@@ -469,13 +502,15 @@ class SingleCellDataset(ConceptDataset):
             if value.shape != expected_shape or not value.isfinite().all():
                 raise ValueError(f"Parameter {name!r} must be finite and have shape {tuple(expected_shape)}.")
             parameters[name] = value.clone()
+        _validate_model_parameters(parameters)
         root = os.path.join(os.path.dirname(self.root), _cache_key(config, seed, parameters=parameters))
-        if not all(os.path.isfile(os.path.join(root, name)) for name in self.processed_filenames):
+        paths = [os.path.join(root, name) for name in self.processed_filenames]
+        if not all(os.path.isfile(path) for path in paths):
             inputs, concepts, background = model(
                 parameters, n_cells=config["n_cells"], rng=np.random.default_rng(seed),
                 std_dev_noise=config["std_dev_noise"],
             )
-            self._save_dataset(root, inputs, concepts, config, parameters, background,
+            self._save_dataset(paths, inputs, concepts, config, parameters, background,
                                seed)
         return type(self)(root=root, concept_subset=self.concept_names,
                           label_descriptions=deepcopy(self.label_descriptions))
@@ -518,9 +553,10 @@ class SingleCellDataset(ConceptDataset):
         root = os.path.join(os.path.dirname(self.root), _cache_key(
             config, self.seed, parameters, background, concepts,
         ))
-        if not all(os.path.isfile(os.path.join(root, name)) for name in self.processed_filenames):
+        paths = [os.path.join(root, name) for name in self.processed_filenames]
+        if not all(os.path.isfile(path) for path in paths):
             inputs, concepts, background = model(parameters, concepts, cell_background=background)
-            self._save_dataset(root, inputs, concepts, config, parameters, background,
+            self._save_dataset(paths, inputs, concepts, config, parameters, background,
                                self.seed)
         return type(self)(root=root, concept_subset=self.concept_names,
                           label_descriptions=deepcopy(self.label_descriptions))
