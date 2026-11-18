@@ -15,6 +15,7 @@ from scipy.stats import poisson, wishart
 
 from ...annotations import Annotations
 from ..base.dataset import ConceptDataset
+from ..splitters import FixedIndicesSplitter
 
 
 logger = logging.getLogger(__name__)
@@ -331,8 +332,8 @@ class SingleCellDataset(ConceptDataset):
     Each concept can be active (1) or inactive (0) in a cell, with an activation probability depending on the cell type, 
     and influences gene expression through concept-specific coefficients.
 
-    The class also supports interventions on concepts, allowing their activation states to be changed and the corresponding gene expression profiles 
-    to be regenerated while keeping all other cell characteristics and model parameters fixed. 
+    :meth:`generate_intervened_dataset` creates a new synthetic dataset with modified
+    concept values, keeping the same cell background and generator parameters.
     New cells can also be generated using the same model parameters.
 
     For more details, see Andersson et al. (2026), *scCBGM: Interpretable Single-Cell
@@ -363,7 +364,7 @@ class SingleCellDataset(ConceptDataset):
     Example::
 
         dataset = SingleCellDataset(generation_config={"n_cells": 1000})
-        edited = dataset.generate_interventions({"concept_0": 1})
+        edited = dataset.generate_intervened_dataset({"concept_0": 1})
         new_cells = dataset.generate_from_dataset(n_cells=500, seed=7)
         restored = SingleCellDataset(root=dataset.root)
     """
@@ -520,8 +521,15 @@ class SingleCellDataset(ConceptDataset):
         return type(self)(root=root, normalize=self.normalize, concept_subset=self.concept_names,
                           label_descriptions=deepcopy(self.label_descriptions))
 
-    def generate_interventions(self, concepts):
-        """Change concepts of the existing cells, preserving their background.
+    def generate_intervened_dataset(
+        self, concepts, *, generate_split=False, cell_type=None, split_seed=42,
+    ):
+        """Generate a new synthetic dataset with modified concept values.
+
+        This changes the concepts used by the data generator and regenerates
+        gene expression with the same cell background.
+        Note: This is different from usual concept interventions in the library,
+        which instead change the concepts predicted by a model during inference.
 
         Accepts named overrides, a DataFrame with any subset of cell and concept names,
         or a matrix in binary concept order. Concepts must be 0 or 1.
@@ -529,8 +537,42 @@ class SingleCellDataset(ConceptDataset):
         Note: {"concept_0": 1} changes only concept_0. A partial DataFrame
         changes only its named cells and columns; all omitted values are retained.
         Parameters, untouched concepts and every background tensor stay fixed.
+
+        Args:
+            concepts: Concept overrides as described above.
+            cell_type: Restrict changes to this cell type (zero-based ID).
+                None changes all cell types, as before.
+            generate_split: Also create the scCBGM counterfactual split.
+                Requires cell_type and a nonempty mapping of concept names to
+                constant binary values. Cells of that type already matching
+                all requested values are excluded. Half of the remaining cells
+                of that type, rounded down, become test; all other eligible
+                cells become train. Validation is empty, as in the source script.
+            split_seed: Seed for the split only; does not affect generated data.
+
+        The result keeps all rows aligned with this dataset. With generate_split=True,
+        assign its FixedIndicesSplitter to the original datamodule before setup()::
+
+            intervened = dm.dataset.generate_intervened_dataset(
+                {"concept_0": 1}, cell_type=2, generate_split=True, split_seed=42,
+            )
+            dm.splitter = intervened.splitter
+            dm.setup()
+
+        Training then uses original data; intervened.input_data at the same test
+        indices provides the paired counterfactual targets. With generate_split=False,
+        result.splitter is None: keep the datamodule's existing splitter unchanged.
+        generate_interventions is an alias for this method.
         """
         config = {**self.generation_config, "n_cells": len(self)}
+        if cell_type is not None and (
+            isinstance(cell_type, (bool, np.bool_))
+            or not isinstance(cell_type, (int, np.integer))
+            or not 0 <= cell_type < config["n_celltype"]
+        ):
+            raise ValueError("cell_type must be an integer ID in [0, n_celltype).")
+        cell_mask = (np.ones(len(self), dtype=bool) if cell_type is None
+                     else self._cell_background["celltype"].numpy() == cell_type)
         names = _concept_names(self._generation_config)
         values = pd.DataFrame(
             self._full_concepts.numpy().astype(float),
@@ -550,6 +592,25 @@ class SingleCellDataset(ConceptDataset):
             raise ValueError("Invalid concepts: expected known names and finite values.")
         if not replacement.index.is_unique or not replacement.index.isin(values.index).all():
             raise ValueError("Invalid cells: expected unique existing cell names.")
+        splitter = None
+        if generate_split:
+            if cell_type is None:
+                raise ValueError("cell_type is required when generate_split=True.")
+            if not isinstance(concepts, Mapping) or not concepts or any(
+                not np.isscalar(value) for value in concepts.values()
+            ):
+                raise ValueError("generate_split requires named concepts with constant binary values.")
+            target = pd.Series(concepts, dtype=float)
+            _validate_concepts(target)
+            matches = values[list(concepts)].eq(target).all(axis=1).to_numpy()
+            controls = np.flatnonzero(cell_mask & ~matches)
+            test_idxs = np.random.default_rng(split_seed).permutation(controls)[:len(controls) // 2]
+            train_mask = ~(cell_mask & matches)
+            train_mask[test_idxs] = False
+            splitter = FixedIndicesSplitter(
+                train_idxs=np.flatnonzero(train_mask), val_idxs=[], test_idxs=test_idxs,
+            )
+        replacement = replacement.loc[replacement.index.isin(values.index[cell_mask])]
         values.loc[replacement.index, replacement.columns] = replacement
         _validate_concepts(values)
 
@@ -563,8 +624,12 @@ class SingleCellDataset(ConceptDataset):
             inputs, concepts, background = model(parameters, concepts, cell_background=background)
             self._save_dataset(paths, inputs, concepts, config, parameters, background,
                                self.seed)
-        return type(self)(root=root, normalize=self.normalize, concept_subset=self.concept_names,
-                          label_descriptions=deepcopy(self.label_descriptions))
+        intervened = type(self)(root=root, normalize=self.normalize, concept_subset=self.concept_names,
+                               label_descriptions=deepcopy(self.label_descriptions))
+        intervened.splitter = splitter
+        return intervened
+
+    generate_interventions = generate_intervened_dataset
 
     def _subset_rows(self, indices) -> None:
         """Also subset full concepts and background, including cell identifiers."""

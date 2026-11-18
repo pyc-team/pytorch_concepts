@@ -11,6 +11,7 @@ from scipy.stats import poisson
 
 from torch_concepts.data.base.datamodule import ConceptDataModule
 from torch_concepts.data.datamodules.single_cell import SingleCellDataModule
+from torch_concepts.data.splitters import FixedIndicesSplitter, RandomSplitter
 import torch_concepts.data.datasets.single_cell as single_cell
 from torch_concepts.data.datasets.single_cell import (
     model,
@@ -49,6 +50,23 @@ def small_config():
         "n_cells": 10, "n_genes": 6, "n_batch": 2,
         "n_tissue": 2, "n_celltype": 3, "n_concepts": 3,
     }
+
+
+@pytest.fixture
+def counterfactual_source(tmp_path, small_config):
+    """A known population: type 2 has six concept-off and four concept-on cells."""
+    source = SingleCellDataset(root=tmp_path, generation_config={**small_config, "n_cells": 16})
+    background = source.cell_background
+    background["celltype"] = torch.tensor([2] * 10 + [0] * 3 + [1] * 3)
+    concepts = torch.stack((
+        torch.tensor([0] * 6 + [1] * 4 + [0, 1, 0, 1, 0, 1]),
+        torch.arange(16) % 2,
+        torch.arange(16) // 2 % 2,
+    ), dim=1).float()
+    inputs, concepts, background = model(source.model_parameters, concepts, cell_background=background)
+    source._save_dataset(source.processed_paths, inputs, concepts, source.generation_config,
+                         source.model_parameters, background, source.seed)
+    return SingleCellDataset(root=source.root)
 
 
 def test_default_counts_and_partial_distribution_settings():
@@ -109,7 +127,7 @@ def test_generator_applies_concepts_before_counts(tmp_path, small_config, depend
         "dataframe": pd.DataFrame(replacement.numpy(), index=_concept_frame(dataset).index,
                                   columns=_concept_frame(dataset).columns).iloc[::-1, ::-1],
     }[input_kind]
-    edited = dataset.generate_interventions(overrides)
+    edited = dataset.generate_intervened_dataset(overrides)
     torch.testing.assert_close(edited._full_concepts, replacement)
     torch.testing.assert_close(edited.input_data, _reconstruct_counts(data, replacement), rtol=0, atol=0)
     for name, value in data["cell_background"].items():
@@ -358,7 +376,7 @@ def test_normalization_is_preserved_in_generated_variants(
     source._subset_rows([7, 2, 9])
     original = _generation_tensors(source)
     saved_files = {path: Path(path).read_bytes() for path in source.processed_paths}
-    variant = (source.generate_interventions({"concept_0": 1}) if kind == "intervened"
+    variant = (source.generate_intervened_dataset({"concept_0": 1}) if kind == "intervened"
                else source.generate_from_dataset(n_cells=5, seed=7))
     counts = variant.load_raw()[0]
     if normalize:
@@ -372,7 +390,7 @@ def test_normalization_is_preserved_in_generated_variants(
     restored = SingleCellDataset(root=variant.root, normalize=normalize)
     torch.testing.assert_close(_generation_tensors(restored),
                                _generation_tensors(variant), rtol=0, atol=0)
-    unchanged = variant.generate_interventions({})
+    unchanged = variant.generate_intervened_dataset({})
     assert unchanged.normalize == normalize
     torch.testing.assert_close(unchanged.input_data, variant.input_data, rtol=0, atol=0)
     torch.testing.assert_close(_generation_tensors(source), original, rtol=0, atol=0)
@@ -455,7 +473,7 @@ def test_generation_state_reconstructs_counts_and_is_reproducible(
     if supplied_quantiles:
         np.testing.assert_array_equal(state["exog_noise"].numpy(), quantiles)
     torch.testing.assert_close(_reconstruct_counts(saved, raw_concepts), dataset.input_data, rtol=0, atol=0)
-    replayed, concepts, _ = _generation_tensors(dataset.generate_interventions(concepts=raw_concepts))
+    replayed, concepts, _ = _generation_tensors(dataset.generate_intervened_dataset(concepts=raw_concepts))
     torch.testing.assert_close(replayed, dataset.input_data, rtol=0, atol=0)
     torch.testing.assert_close(concepts, raw_concepts, rtol=0, atol=0)
 
@@ -486,7 +504,7 @@ def test_datamodule_subsamples_generation_state_in_dataset_order(tmp_path, small
     dataset._subset_rows([3, 1])
     torch.testing.assert_close(_reconstruct_counts(_state(dataset), _concept_frame(dataset)), dataset.input_data, rtol=0, atol=0)
     torch.testing.assert_close(_state(dataset)["cell_background"]["cell_indices"], indices[[3, 1]])
-    replayed, _, _ = _generation_tensors(dataset.generate_interventions(concepts=_concept_frame(dataset)))
+    replayed, _, _ = _generation_tensors(dataset.generate_intervened_dataset(concepts=_concept_frame(dataset)))
     torch.testing.assert_close(replayed, dataset.input_data, rtol=0, atol=0)
 
 
@@ -514,7 +532,7 @@ def test_public_generator_intervenes_with_fixed_noise_and_preserves_source(tmp_p
         raise AssertionError("Reusing state must not draw fresh randomness.")
 
     monkeypatch.setattr(np.random, "default_rng", unexpected_sampling)
-    inputs, concepts, updated = _generation_tensors(dataset.generate_interventions(concepts=edited.numpy() if as_numpy else edited))
+    inputs, concepts, updated = _generation_tensors(dataset.generate_intervened_dataset(concepts=edited.numpy() if as_numpy else edited))
     expected = torch.from_numpy(poisson.ppf(quantiles, np.exp(np.log(3) + np.log(2)))).float()
     torch.testing.assert_close(inputs, expected, rtol=0, atol=0)
     torch.testing.assert_close(concepts, edited)
@@ -524,7 +542,7 @@ def test_public_generator_intervenes_with_fixed_noise_and_preserves_source(tmp_p
             torch.testing.assert_close(state[group][name], values, rtol=0, atol=0)
     edited[:] = 0
     assert torch.all(concepts[:, 0] == 1)
-    replayed, _, _ = _generation_tensors(dataset.generate_interventions(concepts=concepts))
+    replayed, _, _ = _generation_tensors(dataset.generate_intervened_dataset(concepts=concepts))
     torch.testing.assert_close(replayed, inputs, rtol=0, atol=0)
 
 
@@ -533,7 +551,7 @@ def test_public_generator_intervenes_with_fixed_noise_and_preserves_source(tmp_p
 def test_generator_rejects_invalid_interventions(tmp_path, small_config, concepts):
     dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
     with pytest.raises(ValueError, match="concepts|class indices"):
-        _generation_tensors(dataset.generate_interventions(concepts=concepts))
+        _generation_tensors(dataset.generate_intervened_dataset(concepts=concepts))
 
 
 def test_generation_state_can_be_copied_independently(tmp_path, small_config):
@@ -669,7 +687,7 @@ def test_interventions_keep_sampled_context(tmp_path, small_config):
         n_cells=5, seed=19,
         model_parameters={"p_tissue": [1., 0.], "p_celltype": [[1., 0., 0.], [0., 1., 0.]]},
     )
-    edited = fresh.generate_interventions({"concept_0": 1})
+    edited = fresh.generate_intervened_dataset({"concept_0": 1})
     assert torch.all(edited.cell_background["tissue"] == 0)
     assert torch.all(edited.cell_background["celltype"] == 0)
     for name, value in fresh.cell_background.items():
@@ -686,7 +704,7 @@ def test_context_is_not_a_concept_or_intervention_target(tmp_path, small_config,
     if kind == "dataframe":
         changes = pd.DataFrame(changes, index=_concept_frame(dataset).index)
     with pytest.raises(ValueError, match="concept"):
-        dataset.generate_interventions(changes)
+        dataset.generate_intervened_dataset(changes)
 
 
 def test_legacy_context_concept_arrays_are_rejected(tmp_path, small_config):
@@ -695,7 +713,7 @@ def test_legacy_context_concept_arrays_are_rejected(tmp_path, small_config):
                         torch.stack([dataset.cell_background[name]
                                      for name in ("celltype", "tissue", "batch")], dim=1)], dim=1)
     with pytest.raises(ValueError, match="shape"):
-        dataset.generate_interventions(legacy)
+        dataset.generate_intervened_dataset(legacy)
     with pytest.raises(ValueError, match="binary concept columns"):
         model(dataset.model_parameters, legacy, cell_background=dataset.cell_background)
 
@@ -727,19 +745,176 @@ def test_interventions_reject_nonbinary_concepts(tmp_path, small_config, kind, v
                                  columns=frame.columns).iloc[::-1, ::-1],
     }[kind]
     with pytest.raises(ValueError, match="binary"):
-        dataset.generate_interventions(concepts=overrides)
+        dataset.generate_intervened_dataset(concepts=overrides)
     with pytest.raises(ValueError, match="binary"):
         model(dataset.model_parameters, replacement, cell_background=dataset.cell_background)
+
+
+@pytest.mark.parametrize("method", ["generate_interventions", "generate_intervened_dataset"])
+@pytest.mark.parametrize("normalize", [False, True])
+def test_counterfactual_split_trains_original_data(counterfactual_source, method, normalize):
+    module = SingleCellDataModule(root=counterfactual_source.root, seed=12, normalize=normalize,
+                                 concept_subset=["concept_1"], batch_size=2)
+    source = module.dataset
+    original = _generation_tensors(source)
+    saved_files = {path: Path(path).read_bytes() for path in source.processed_paths}
+    module.setup()
+    default_splitter = module.splitter
+    intervened = getattr(source, method)({"concept_0": 1}, cell_type=2,
+                                      generate_split=True, split_seed=42)
+    assert module.splitter is default_splitter
+    assert isinstance(intervened.splitter, FixedIndicesSplitter)
+    split = intervened.splitter
+    assert split.fitted
+    assert len(split.test_idxs) == 3
+    assert split.val_idxs == []
+    assert set(split.test_idxs).issubset(range(6))
+    assert set(split.train_idxs).isdisjoint(split.test_idxs)
+    assert set(split.train_idxs) | set(split.test_idxs) == set(range(16)) - set(range(6, 10))
+    assert set(range(10, 16)).issubset(split.train_idxs)
+    assert len(set(split.train_idxs) & set(range(6))) == 3
+    assert len(intervened) == len(source)
+    assert intervened.normalize == normalize
+    assert intervened.concept_names == source.concept_names
+    assert torch.all(intervened._full_concepts[:10, 0] == 1)
+    torch.testing.assert_close(intervened._full_concepts[10:], original[1][10:], rtol=0, atol=0)
+    torch.testing.assert_close(intervened.input_data[10:], original[0][10:], rtol=0, atol=0)
+    torch.testing.assert_close(_generation_tensors(source), original, rtol=0, atol=0)
+    torch.testing.assert_close(intervened.cell_background, source.cell_background, rtol=0, atol=0)
+    assert {path: Path(path).read_bytes() for path in saved_files} == saved_files
+
+    module.splitter = intervened.splitter
+    module.setup()
+    assert module.trainset.dataset is source
+    assert module.testset.dataset is source
+    assert module.valset is None
+    assert module.trainset.indices == split.train_idxs
+    assert module.testset.indices == split.test_idxs
+    torch.testing.assert_close(module.trainset[0]["inputs"]["x"],
+                               original[0][split.train_idxs[0]], rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("kind", ["mapping", "tensor", "numpy", "dataframe", "list"])
+def test_cell_type_interventions_filter_by_current_cell_names(counterfactual_source, kind):
+    source = counterfactual_source
+    source._subset_rows([12, 1, 7, 3])
+    original = _generation_tensors(source)
+    replacement = source._full_concepts.clone()
+    replacement[:, 0] = 1
+    overrides = {
+        "mapping": {"concept_0": 1}, "tensor": replacement,
+        "numpy": replacement.numpy(), "list": replacement.tolist(),
+        "dataframe": pd.DataFrame(replacement.numpy(), index=_concept_frame(source).index,
+                                  columns=source.concept_names).iloc[::-1, ::-1],
+    }
+    intervened = source.generate_intervened_dataset(overrides[kind], cell_type=2)
+    expected = original[1].clone()
+    expected[1:, 0] = 1
+    torch.testing.assert_close(intervened._full_concepts, expected, rtol=0, atol=0)
+    torch.testing.assert_close(intervened.input_data, _reconstruct_counts(original[2], expected), rtol=0, atol=0)
+    torch.testing.assert_close(intervened.cell_background["cell_indices"], torch.tensor([12, 1, 7, 3]))
+    assert intervened.splitter is None
+
+
+@pytest.mark.parametrize("targets, dropped, control_count", [
+    ({"concept_0": 1}, [6, 7, 8, 9], 6),
+    ({"concept_0": 0}, [0, 1, 2, 3, 4, 5], 4),
+    ({"concept_0": 1, "concept_1": 0}, [6, 8], 8),
+])
+def test_counterfactual_split_excludes_original_target_pattern(
+    counterfactual_source, targets, dropped, control_count,
+):
+    source = counterfactual_source
+    intervened = source.generate_intervened_dataset(targets, cell_type=2, generate_split=True)
+    split = intervened.splitter
+    assert len(split.test_idxs) == control_count // 2
+    assert set(split.train_idxs) | set(split.test_idxs) == set(range(16)) - set(dropped)
+    for name, value in targets.items():
+        assert (_concept_frame(intervened).loc[[f"cell_{i}" for i in range(10)], name] == value).all()
+
+
+def test_counterfactual_split_seed_reuses_data_and_preserves_global_rng(counterfactual_source, monkeypatch):
+    source = counterfactual_source
+    rng_state = np.random.get_state()
+    first = source.generate_interventions({"concept_0": 1}, cell_type=2, generate_split=True, split_seed=42)
+
+    def unexpected_generation(*args, **kwargs):
+        raise AssertionError("Changing only the split seed must reuse the generated data.")
+
+    monkeypatch.setattr(single_cell, "model", unexpected_generation)
+    repeated = source.generate_interventions({"concept_0": 1}, cell_type=2, generate_split=True, split_seed=42)
+    different = source.generate_interventions({"concept_0": 1}, cell_type=2, generate_split=True, split_seed=7)
+    assert repeated.splitter.indices == first.splitter.indices
+    assert set(different.splitter.test_idxs) != set(first.splitter.test_idxs)
+    assert first.root == repeated.root == different.root
+    torch.testing.assert_close(_generation_tensors(first), _generation_tensors(different), rtol=0, atol=0)
+    current_state = np.random.get_state()
+    assert current_state[0] == rng_state[0] and current_state[2:] == rng_state[2:]
+    np.testing.assert_array_equal(current_state[1], rng_state[1])
+
+
+def test_counterfactual_split_uses_positions_in_selected_row_order(counterfactual_source):
+    source = counterfactual_source
+    source._subset_rows([12, 4, 7, 1, 10, 5])
+    intervened = source.generate_interventions({"concept_0": 1}, cell_type=2, generate_split=True)
+    split = intervened.splitter
+    assert len(split.test_idxs) == 1
+    assert set(split.test_idxs).issubset({1, 3, 5})
+    assert set(split.train_idxs) | set(split.test_idxs) == {0, 1, 3, 4, 5}
+    torch.testing.assert_close(intervened.cell_background["cell_indices"], torch.tensor([12, 4, 7, 1, 10, 5]))
+
+
+@pytest.mark.parametrize("control_count", [0, 1, 3, 6])
+def test_counterfactual_split_handles_small_control_groups(counterfactual_source, control_count):
+    source = counterfactual_source
+    source._subset_rows(list(range(control_count)) + [6, 7, 8, 9, 10, 11])
+    intervened = source.generate_interventions({"concept_0": 1}, cell_type=2, generate_split=True)
+    assert len(intervened.splitter.test_idxs) == control_count // 2
+    assert len(intervened.splitter.train_idxs) == control_count - control_count // 2 + 2
+    assert intervened.splitter.val_idxs == []
+
+
+def test_no_counterfactual_split_keeps_default_datamodule_splitting(counterfactual_source):
+    module = SingleCellDataModule(root=counterfactual_source.root, seed=12)
+    default_splitter = module.splitter
+    intervened = module.dataset.generate_interventions({"concept_0": 1}, cell_type=2, generate_split=False)
+    assert intervened.splitter is None
+    assert module.splitter is default_splitter
+    assert isinstance(module.splitter, RandomSplitter)
+    module.setup()
+    assert len(module.trainset) + len(module.valset) + len(module.testset) == 16
+
+
+@pytest.mark.parametrize("cell_type", [-1, 3, 1.5, "2", True])
+def test_cell_type_interventions_reject_invalid_ids(counterfactual_source, cell_type):
+    with pytest.raises(ValueError, match="cell_type"):
+        counterfactual_source.generate_interventions({"concept_0": 1}, cell_type=cell_type)
+
+
+def test_counterfactual_split_requires_cell_type(counterfactual_source):
+    with pytest.raises(ValueError, match="cell_type.*required"):
+        counterfactual_source.generate_interventions({"concept_0": 1}, generate_split=True)
+
+
+@pytest.mark.parametrize("kind", ["empty", "dataframe", "matrix", "per_cell_values"])
+def test_counterfactual_split_requires_constant_named_targets(counterfactual_source, kind):
+    source = counterfactual_source
+    overrides = {
+        "empty": {}, "dataframe": _concept_frame(source), "matrix": source._full_concepts,
+        "per_cell_values": {"concept_0": [1] * len(source)},
+    }
+    with pytest.raises(ValueError, match="generate_split"):
+        source.generate_interventions(overrides[kind], cell_type=2, generate_split=True)
 
 
 def test_interventions_preserve_source_and_return_independent_datasets(tmp_path, small_config):
     dataset = SingleCellDataset(root=tmp_path, generation_config=small_config,
                                 concept_subset=["concept_1"])
     source = deepcopy(_state(dataset))
-    copied = dataset.generate_interventions(dataset._full_concepts)
+    copied = dataset.generate_intervened_dataset(dataset._full_concepts)
     torch.testing.assert_close(copied.input_data, dataset.input_data, rtol=0, atol=0)
     assert copied.concept_names == dataset.concept_names
-    edited = dataset.generate_interventions({"concept_0": 1, "concept_1": 0})
+    edited = dataset.generate_intervened_dataset({"concept_0": 1, "concept_1": 0})
     frame = _concept_frame(edited)
     assert (frame["concept_0"] == 1).all()
     assert (frame["concept_1"] == 0).all()
@@ -765,7 +940,7 @@ def test_dataset_overrides_only_evaluate_final_model(tmp_path, small_config, mon
     monkeypatch.setattr(single_cell, "_compute_model_parameters", unexpected_parameters)
     monkeypatch.setattr(single_cell, "model", evaluate)
     if change == "concepts":
-        edited = dataset.generate_interventions({"concept_0": 1})
+        edited = dataset.generate_intervened_dataset({"concept_0": 1})
         assert calls[0] is dataset._cell_background
     else:
         edited = dataset.generate_from_dataset(model_parameters={"baseline_expr": dataset.model_parameters["baseline_expr"] + 1})
@@ -779,9 +954,9 @@ def test_dataframe_interventions_align_by_name(tmp_path, small_config):
     concepts = _concept_frame(dataset)
     concepts.loc[concepts.index[:4], "concept_0"] = 1
     shuffled = concepts.iloc[::-1, ::-1]
-    edited = dataset.generate_interventions(concepts=shuffled)
+    edited = dataset.generate_intervened_dataset(concepts=shuffled)
     pd.testing.assert_frame_equal(_concept_frame(edited), concepts)
-    expected = dataset.generate_interventions(concepts={"concept_0": concepts["concept_0"].values})
+    expected = dataset.generate_intervened_dataset(concepts={"concept_0": concepts["concept_0"].values})
     torch.testing.assert_close(edited.input_data, expected.input_data, rtol=0, atol=0)
 
 
@@ -800,14 +975,14 @@ def test_partial_dataframe_interventions_preserve_omitted_cells_and_concepts(tmp
         raise AssertionError("Omitted concepts must be retained, without resampling.")
 
     monkeypatch.setattr(np.random, "default_rng", unexpected_sampling)
-    edited = dataset.generate_interventions(changes)
+    edited = dataset.generate_intervened_dataset(changes)
     pd.testing.assert_frame_equal(_concept_frame(edited), expected)
     pd.testing.assert_frame_equal(_concept_frame(dataset), original_concepts)
     torch.testing.assert_close(_state(dataset), source, rtol=0, atol=0)
     for group in ("model_parameters", "cell_background"):
         torch.testing.assert_close(_state(edited)[group], source[group], rtol=0, atol=0)
     torch.testing.assert_close(edited.input_data, _reconstruct_counts(source, expected), rtol=0, atol=0)
-    complete = dataset.generate_interventions(expected)
+    complete = dataset.generate_intervened_dataset(expected)
     assert complete.processed_paths == edited.processed_paths
 
 
@@ -816,7 +991,7 @@ def test_partial_dataframe_interventions_reject_invalid_cells(tmp_path, small_co
     dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
     changes = pd.DataFrame({"concept_0": 1.0}, index=cell_names)
     with pytest.raises(ValueError, match="cells"):
-        dataset.generate_interventions(changes)
+        dataset.generate_intervened_dataset(changes)
 
 
 def test_copy_of_intervened_dataset_preserves_existing_changes(tmp_path, small_config):
@@ -824,19 +999,19 @@ def test_copy_of_intervened_dataset_preserves_existing_changes(tmp_path, small_c
     baseline = original.model_parameters["baseline_expr"] + 1
     edited = original.generate_from_dataset(
         model_parameters={"baseline_expr": baseline},
-    ).generate_interventions({"concept_0": 1})
-    copied = edited.generate_interventions(concepts=edited._full_concepts)
+    ).generate_intervened_dataset({"concept_0": 1})
+    copied = edited.generate_intervened_dataset(concepts=edited._full_concepts)
     torch.testing.assert_close(copied.input_data, edited.input_data, rtol=0, atol=0)
     pd.testing.assert_frame_equal(_concept_frame(copied), _concept_frame(edited))
     torch.testing.assert_close(copied.model_parameters["baseline_expr"], baseline)
     for name, value in edited.cell_background.items():
         torch.testing.assert_close(copied.cell_background[name], value, rtol=0, atol=0)
-    chained = copied.generate_interventions(concepts={"concept_1": 0})
+    chained = copied.generate_intervened_dataset(concepts={"concept_1": 0})
     assert (_concept_frame(chained)["concept_0"] == 1).all()
     assert (_concept_frame(chained)["concept_1"] == 0).all()
     assert copied.scalers is not edited.scalers
     assert copied.generated_concepts is not edited.generated_concepts
-    repeated = copied.generate_interventions(concepts=copied._full_concepts)
+    repeated = copied.generate_intervened_dataset(concepts=copied._full_concepts)
     torch.testing.assert_close(repeated.input_data, copied.input_data, rtol=0, atol=0)
 
 
@@ -845,7 +1020,7 @@ def test_copy_of_row_subset_keeps_selected_cells_and_raw_tensors(tmp_path, small
                                 concept_subset=["concept_1"])
     module = ConceptDataModule(dataset=dataset, max_samples=5, seed=12)
     source = module.dataset
-    copied = source.generate_interventions(concepts=source._full_concepts)
+    copied = source.generate_intervened_dataset(concepts=source._full_concepts)
     assert copied.generation_config["n_cells"] == 5
     assert copied.concept_names == source.concept_names
     torch.testing.assert_close(_state(copied)["cell_background"]["cell_indices"], _state(source)["cell_background"]["cell_indices"])
@@ -865,7 +1040,7 @@ def test_dataframe_intervention_on_selected_cells_preserves_identifiers(tmp_path
     concepts = _concept_frame(original)
     assert concepts.index.tolist() == ["cell_7", "cell_2", "cell_9"]
     concepts.loc["cell_2", "concept_0"] = 1
-    edited = original.generate_interventions(concepts=concepts.iloc[::-1, ::-1])
+    edited = original.generate_intervened_dataset(concepts=concepts.iloc[::-1, ::-1])
     pd.testing.assert_frame_equal(_concept_frame(edited), concepts)
     torch.testing.assert_close(_state(edited)["cell_background"]["cell_indices"], torch.tensor([7, 2, 9]))
 
@@ -894,7 +1069,7 @@ def test_new_cells_apply_modified_sampling_parameters_then_interventions(tmp_pat
     dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
     fresh = dataset.generate_from_dataset(n_cells=5, seed=19,
         model_parameters={"p_tissue": [0, 1], "p_batch": [0, 1], "std_dev_libsize": [0, 0]})
-    edited = fresh.generate_interventions({"concept_0": 1})
+    edited = fresh.generate_intervened_dataset({"concept_0": 1})
     inputs, concepts, data = _generation_tensors(edited)
     assert inputs.shape == (5, 6)
     assert torch.all(concepts[:, 0] == 1)
@@ -911,7 +1086,7 @@ def test_new_cells_apply_modified_sampling_parameters_then_interventions(tmp_pat
 def test_named_intervention_validation(tmp_path, small_config, changes):
     dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
     with pytest.raises(ValueError):
-        dataset.generate_interventions(concepts=changes)
+        dataset.generate_intervened_dataset(concepts=changes)
 
 
 def test_plot_uses_umap_with_numeric_concepts_and_categorical_context(tmp_path, small_config):
@@ -1038,7 +1213,7 @@ def test_variants_save_separate_files_beside_source(tmp_path, small_config, monk
 
     monkeypatch.setattr(torch, "save", save_variant)
     dataset = (source.generate_from_dataset(seed=7) if kind == "generated"
-               else source.generate_interventions({"concept_0": 0}))
+               else source.generate_intervened_dataset({"concept_0": 0}))
     assert Path(dataset.root).parent == Path(source.root).parent
     assert set(dataset.processed_paths).isdisjoint(source.processed_paths)
     assert all(Path(path).is_file() for path in dataset.processed_paths)
@@ -1138,7 +1313,7 @@ def test_root_normalization_keeps_saved_data_and_variants_consistent(
 
     source = SingleCellDataset(root=root, generation_config=small_config)
     datasets = [source, source.generate_from_dataset(n_cells=5, seed=7),
-                source.generate_interventions({"concept_0": 1})]
+                source.generate_intervened_dataset({"concept_0": 1})]
     for dataset in datasets:
         assert Path(dataset.root).parent == base
         assert dataset.root == dataset.root_dir
@@ -1162,7 +1337,7 @@ def test_root_normalization_keeps_saved_data_and_variants_consistent(
         torch.testing.assert_close(dataset.load_raw()[:2],
                                    (dataset.input_data, dataset._full_concepts), rtol=0, atol=0)
     assert source.generate_from_dataset(n_cells=5, seed=7).root == datasets[1].root
-    assert source.generate_interventions({"concept_0": 1}).root == datasets[2].root
+    assert source.generate_intervened_dataset({"concept_0": 1}).root == datasets[2].root
     assert not (work_dir / "~").exists()
     assert not (other_dir / "data").exists()
 
@@ -1337,11 +1512,11 @@ def test_model_parameters_separate_cache_and_equivalent_requests_share_it(tmp_pa
 
 def test_intervention_values_and_background_separate_cache(tmp_path, small_config, monkeypatch):
     source = SingleCellDataset(root=tmp_path, generation_config=small_config)
-    first = source.generate_interventions({"concept_0": 0})
-    second = source.generate_interventions({"concept_0": 1})
+    first = source.generate_intervened_dataset({"concept_0": 0})
+    second = source.generate_intervened_dataset({"concept_0": 1})
     assert set(first.processed_paths).isdisjoint(second.processed_paths)
     new_cells = source.generate_from_dataset(seed=7)
-    third = new_cells.generate_interventions({"concept_0": 0})
+    third = new_cells.generate_intervened_dataset({"concept_0": 0})
     assert set(first.processed_paths).isdisjoint(third.processed_paths)
     torch.testing.assert_close(third.cell_background, new_cells.cell_background, rtol=0, atol=0)
 
@@ -1349,7 +1524,7 @@ def test_intervention_values_and_background_separate_cache(tmp_path, small_confi
         raise AssertionError("Equivalent interventions must reuse their saved data.")
 
     monkeypatch.setattr(single_cell, "model", unexpected_model)
-    restored = new_cells.generate_interventions({"concept_0": 0})
+    restored = new_cells.generate_intervened_dataset({"concept_0": 0})
     assert restored.processed_paths == third.processed_paths
     torch.testing.assert_close(restored.input_data, third.input_data, rtol=0, atol=0)
 
@@ -1363,7 +1538,7 @@ def test_incomplete_variant_can_be_regenerated_from_source(tmp_path, small_confi
     def generate():
         if kind == "generated":
             return source.generate_from_dataset(seed=7)
-        return source.generate_interventions({"concept_0": 0})
+        return source.generate_intervened_dataset({"concept_0": 0})
 
     variant = generate()
     expected = _generation_tensors(variant)
@@ -1388,7 +1563,7 @@ def test_saved_variant_loads_by_directory_without_generation(tmp_path, small_con
     if kind == "generated":
         variant = source.generate_from_dataset(n_cells=5, seed=7)
     else:
-        variant = source.generate_interventions({"concept_0": 1})
+        variant = source.generate_intervened_dataset({"concept_0": 1})
     target = tmp_path / "copied_dataset"
     shutil.copytree(variant.root, target)
 
@@ -1406,13 +1581,13 @@ def test_saved_variant_loads_by_directory_without_generation(tmp_path, small_con
 def test_intervention_cache_reuses_saved_selected_cells(tmp_path, small_config, monkeypatch):
     source = SingleCellDataset(root=tmp_path, generation_config=small_config)
     source._subset_rows([7, 2, 9])
-    first = source.generate_interventions({"concept_0": 0})
+    first = source.generate_intervened_dataset({"concept_0": 0})
 
     def unexpected_model(*args, **kwargs):
         raise AssertionError("Saved intervention data must reload without evaluating the model.")
 
     monkeypatch.setattr(single_cell, "model", unexpected_model)
-    restored = first.generate_interventions({})
+    restored = first.generate_intervened_dataset({})
     assert restored.processed_paths == first.processed_paths
     torch.testing.assert_close(restored.input_data, first.input_data, rtol=0, atol=0)
     torch.testing.assert_close(_state(restored)["cell_background"]["cell_indices"], torch.tensor([7, 2, 9]))
@@ -1428,7 +1603,7 @@ def test_constructor_accepts_settings_only(tmp_path, name):
 def test_interventions_reject_incompatible_concept_matrices(tmp_path, small_config, concepts):
     dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
     with pytest.raises(ValueError, match="concepts"):
-        dataset.generate_interventions(concepts)
+        dataset.generate_intervened_dataset(concepts)
 
 
 def test_interventions_reject_duplicate_cell_identifiers(tmp_path, small_config):
@@ -1436,7 +1611,7 @@ def test_interventions_reject_duplicate_cell_identifiers(tmp_path, small_config)
     concepts = _concept_frame(dataset)
     concepts.index = ["cell_0"] * len(dataset)
     with pytest.raises(ValueError, match="unique|cells"):
-        dataset.generate_interventions(concepts)
+        dataset.generate_intervened_dataset(concepts)
 
 
 @pytest.mark.parametrize("kind", ["generated", "intervened", "constructor"])
@@ -1446,7 +1621,7 @@ def test_rebuild_is_independent_of_exposed_parameters(tmp_path, small_config, ki
     if kind == "generated":
         variant = source.generate_from_dataset(seed=7)
     elif kind == "intervened":
-        variant = source.generate_interventions({"concept_0": 1})
+        variant = source.generate_intervened_dataset({"concept_0": 1})
     else:
         variant = SingleCellDataset(root=source.root)
     expected = _generation_tensors(variant)

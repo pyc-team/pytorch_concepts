@@ -10,6 +10,9 @@ class SingleCellDataModule(ConceptDataModule):
     Generates gene counts with binary concept labels and prepares train,
     validation and test dataloaders. Concepts indicate whether each simulated
     gene-regulating factor is active (1) or inactive (0).
+    For a counterfactual experiment, generate paired data and a split with
+    :meth:`SingleCellDataset.generate_intervened_dataset`, then assign the
+    returned splitter to this datamodule to train on the original cells.
     See :class:`SingleCellDataset` for the dataset description and concept editing
     and the scCBGM paper for the generative model:
     https://arxiv.org/abs/2606.07760.
