@@ -294,7 +294,7 @@ def test_datamodule_forwards_config_and_generation_seed(tmp_path, small_config, 
     config = deepcopy(small_config)
     config["std_dev_batch"] = 0.15
     module = SingleCellDataModule(root=tmp_path, generation_seed=7, seed=12,
-                                  generation_config=config, **kwargs)
+                                  generation_config=config, normalize=False, **kwargs)
     assert module.dataset.input_data.shape == (config["n_cells"], config["n_genes"])
     expected = _generation_tensors(module.dataset)
     for actual, wanted in zip(module.dataset.load_raw()[:2], expected[:2]):
@@ -312,6 +312,71 @@ def test_datamodule_rejects_max_samples_before_generation(tmp_path, small_config
     with pytest.raises(ValueError, match=r'max_samples.*generation_config\["n_cells"\]'):
         SingleCellDataModule(root=tmp_path, generation_config=small_config,
                              max_samples=max_samples)
+
+
+def test_datamodule_normalizes_like_sccbgm_and_keeps_saved_counts(tmp_path, small_config):
+    source = SingleCellDataset(root=tmp_path, generation_config=small_config)
+    counts = source.input_data.clone()
+    counts[0] = torch.tensor([1, 3, 0, 0, 0, 0])
+    counts[1] = 2 * counts[0]
+    counts[2] = 0
+    torch.save(counts, source.processed_paths[0])
+    saved_files = {path: Path(path).read_bytes() for path in source.processed_paths}
+
+    module = SingleCellDataModule(root=source.root, batch_size=3)
+    expression = module.dataset.input_data
+    expected = torch.tensor([np.log1p(2500), np.log1p(7500), 0, 0, 0, 0], dtype=torch.float32)
+    torch.testing.assert_close(expression[0], expected)
+    torch.testing.assert_close(expression[1], expression[0], rtol=0, atol=0)
+    assert torch.count_nonzero(expression[2]) == 0
+    assert expression.dtype == torch.float32
+    assert expression.isfinite().all()
+    totals = expression.expm1().sum(dim=1)
+    torch.testing.assert_close(totals[counts.sum(dim=1) > 0], torch.full((9,), 1e4))
+    torch.testing.assert_close(module.dataset.load_raw()[0], counts, rtol=0, atol=0)
+    torch.testing.assert_close(module.dataset.concepts.tensor, source.concepts.tensor, rtol=0, atol=0)
+    assert {path: Path(path).read_bytes() for path in saved_files} == saved_files
+
+    module.setup()
+    batch = next(iter(module.train_dataloader()))["inputs"]["x"]
+    assert torch.all((batch == 0).all(dim=1) | torch.isclose(batch.expm1().sum(dim=1), torch.tensor(1e4)))
+    restored = SingleCellDataModule(root=source.root)
+    torch.testing.assert_close(restored.dataset.input_data, expression, rtol=0, atol=0)
+    raw = SingleCellDataModule(root=source.root, normalize=False)
+    torch.testing.assert_close(raw.dataset.input_data, counts, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("normalize", [False, True])
+@pytest.mark.parametrize("kind", ["intervened", "generated"])
+@pytest.mark.parametrize("entrypoint", ["dataset", "datamodule"])
+def test_normalization_is_preserved_in_generated_variants(
+    tmp_path, small_config, normalize, kind, entrypoint,
+):
+    kwargs = {"root": tmp_path, "generation_config": small_config, "normalize": normalize}
+    source = (SingleCellDataset(**kwargs) if entrypoint == "dataset"
+              else SingleCellDataModule(**kwargs).dataset)
+    source._subset_rows([7, 2, 9])
+    original = _generation_tensors(source)
+    saved_files = {path: Path(path).read_bytes() for path in source.processed_paths}
+    variant = (source.generate_interventions({"concept_0": 1}) if kind == "intervened"
+               else source.generate_from_dataset(n_cells=5, seed=7))
+    counts = variant.load_raw()[0]
+    if normalize:
+        nonempty = counts.sum(dim=1) > 0
+        totals = variant.input_data.expm1().sum(dim=1)
+        torch.testing.assert_close(totals[nonempty], torch.full_like(totals[nonempty], 1e4))
+    else:
+        torch.testing.assert_close(variant.input_data, counts, rtol=0, atol=0)
+    assert source.normalize == variant.normalize == normalize
+    torch.testing.assert_close(variant.load()[0], variant.input_data, rtol=0, atol=0)
+    restored = SingleCellDataset(root=variant.root, normalize=normalize)
+    torch.testing.assert_close(_generation_tensors(restored),
+                               _generation_tensors(variant), rtol=0, atol=0)
+    unchanged = variant.generate_interventions({})
+    assert unchanged.normalize == normalize
+    torch.testing.assert_close(unchanged.input_data, variant.input_data, rtol=0, atol=0)
+    torch.testing.assert_close(_generation_tensors(source), original, rtol=0, atol=0)
+    assert {path: Path(path).read_bytes() for path in saved_files} == saved_files
 
 
 def test_numpy_counts_are_supported(tmp_path, small_config):
@@ -1184,7 +1249,7 @@ def test_datamodule_loads_saved_dataset_with_independent_split_seed(tmp_path, sm
     monkeypatch.setattr(single_cell, "model", unexpected_generation)
     monkeypatch.setattr(single_cell, "_compute_model_parameters", unexpected_generation)
     module = SingleCellDataModule(root=source.root, seed=12,
-                                 concept_subset=["concept_1"])
+                                 concept_subset=["concept_1"], normalize=False)
     assert module.dataset.seed == 7
     assert module.dataset.concept_names == ["concept_1"]
     torch.testing.assert_close(_generation_tensors(module.dataset), _generation_tensors(source), rtol=0, atol=0)

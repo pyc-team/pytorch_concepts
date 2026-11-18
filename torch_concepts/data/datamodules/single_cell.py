@@ -1,4 +1,4 @@
-"""DataModule for synthetic single-cell gene counts."""
+"""DataModule for synthetic single-cell gene expression."""
 
 from ..base.datamodule import ConceptDataModule
 from ..datasets.single_cell import SingleCellDataset
@@ -44,6 +44,11 @@ class SingleCellDataModule(ConceptDataModule):
         Omitted settings keep their defaults.
     exog_noise : array-like, optional
         Values controlling count sampling; see :class:`SingleCellDataset`.
+    normalize : bool
+        Normalize each cell to a total count of 10,000, then apply log1p,
+        as in the original scCBGM DataModule. Defaults to True.
+        Passed to the dataset and retained by its generated variants.
+        Set False to use raw counts. Saved counts are unchanged.
     **kwargs
         Additional arguments for ConceptDataModule, such as scalers and
         pin_memory. ``max_samples`` must be None; set the number of generated
@@ -72,6 +77,7 @@ class SingleCellDataModule(ConceptDataModule):
         splitter=None,
         generation_config: dict | None = None,
         exog_noise=None,
+        normalize: bool = True,
         **kwargs,
     ):
         if kwargs.pop("max_samples", None) is not None:
@@ -86,6 +92,7 @@ class SingleCellDataModule(ConceptDataModule):
             label_descriptions=label_descriptions,
             generation_config=generation_config,
             exog_noise=exog_noise,
+            normalize=normalize,
         )
         super().__init__(
             dataset=dataset,

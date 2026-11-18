@@ -356,6 +356,9 @@ class SingleCellDataset(ConceptDataset):
         label_descriptions: Optional mapping from concept names to descriptions.
         exog_noise: Optional values controlling count sampling, with shape
             (n_cells, n_genes) and entries strictly between 0 and 1.
+        normalize: Normalize each cell to 10,000 total counts, then apply log1p.
+            Defaults to False (raw counts). Generated variants retain this choice;
+            load_raw() and saved files always contain raw counts.
 
     Example::
 
@@ -373,12 +376,14 @@ class SingleCellDataset(ConceptDataset):
         generation_config: dict | None = None,  # flat generation settings
         label_descriptions: dict | None = None,  # mapping from concept names to descriptions
         exog_noise=None,  # optional Poisson quantiles, one per cell and gene
+        normalize: bool = False,
     ):
         root = root if root is not None else os.path.join("data", "single_cell")
         self.root = os.fspath(root)
         self.root = os.path.abspath(self.root_dir)
         self.seed = 42 if seed is None else seed
         self.label_descriptions = label_descriptions
+        self.normalize = normalize
         if (seed is not None or generation_config is not None or exog_noise is not None
                 or not any(os.path.exists(path) for path in self.processed_paths)):
             self._generation_config = _resolve_generation_config(generation_config)
@@ -512,7 +517,7 @@ class SingleCellDataset(ConceptDataset):
             )
             self._save_dataset(paths, inputs, concepts, config, parameters, background,
                                seed)
-        return type(self)(root=root, concept_subset=self.concept_names,
+        return type(self)(root=root, normalize=self.normalize, concept_subset=self.concept_names,
                           label_descriptions=deepcopy(self.label_descriptions))
 
     def generate_interventions(self, concepts):
@@ -558,7 +563,7 @@ class SingleCellDataset(ConceptDataset):
             inputs, concepts, background = model(parameters, concepts, cell_background=background)
             self._save_dataset(paths, inputs, concepts, config, parameters, background,
                                self.seed)
-        return type(self)(root=root, concept_subset=self.concept_names,
+        return type(self)(root=root, normalize=self.normalize, concept_subset=self.concept_names,
                           label_descriptions=deepcopy(self.label_descriptions))
 
     def _subset_rows(self, indices) -> None:
@@ -570,6 +575,17 @@ class SingleCellDataset(ConceptDataset):
             name: values[row_indices]
             for name, values in self._cell_background.items()
         }
+
+    def load(self):
+        """Load counts and optionally normalize gene expression for each cell."""
+        inputs, concepts, annotations, graph = self.load_raw()
+        if self.normalize:
+            counts = inputs.float().numpy()
+            totals = counts.sum(axis=1, keepdims=True)
+            inputs = torch.from_numpy(
+                np.log1p(counts / np.where(totals == 0, 1, totals) * 1e4)
+            )
+        return inputs, concepts, annotations, graph
 
     def load_raw(self):
         self.maybe_build()

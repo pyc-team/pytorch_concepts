@@ -21,8 +21,9 @@ largest variance. Save raw arrays for numerical comparison with upstream,
 and plot expression before/after intervention per cell and on average.
 The plots use the same genes and affected-cell indices shown in the saved
 tutorial figures; its original plotting selections were not seeded.
-A small CBM trains an MLP backbone and its concept/task heads together on the
-original counts. The last concept is a toy prediction target; the short
+A small CBM trains an MLP backbone and its concept/task heads together on
+log1p expression after normalizing each cell to 10,000 total counts, as in
+the original DataModule. The last concept is a toy prediction target; the short
 training run checks the complete pipeline.
 
 Data: 250 synthetic cells, 50 genes and 5 binary concepts, generated locally.
@@ -52,6 +53,7 @@ dm = SingleCellDataModule(
     seed=42,
     generation_seed=42,
     batch_size=64,
+    normalize=True,  # False keeps raw counts for training.
     generation_config={
         "n_cells": 250,
         "n_genes": 50,
@@ -72,7 +74,7 @@ batch = next(iter(dm.train_dataloader()))
 print(f"inputs:   {tuple(batch['inputs']['x'].shape)}")
 print(f"concepts: {tuple(batch['concepts']['c'].shape)}")
 
-counts_before = original.input_data.numpy()
+counts_before = original.load_raw()[0].numpy()
 concepts_before = original.concepts.tensor.numpy()
 
 # %%
@@ -83,7 +85,7 @@ concept_index = int(np.argmax(np.var(concepts_before, axis=0)))
 concept_name = original.concept_names[concept_index]
 changed_cells = concepts_before[:, concept_index] == 0
 edited = original.generate_interventions({concept_name: 1})
-counts_after = edited.input_data.numpy()
+counts_after = edited.load_raw()[0].numpy()
 concepts_after = edited.concepts.tensor.numpy()
 print(f"Generated {counts_before.shape[0]} cells and {counts_before.shape[1]} genes")
 print(f"Intervention: {concept_name}, 0 -> 1 in {changed_cells.sum()} cells")
@@ -186,7 +188,7 @@ initial_weight = backbone[0].weight.detach().clone()
 # %%
 # Training
 # --------
-# Train the backbone and heads together directly on raw counts.
+# Train the backbone and heads together on normalized gene expression.
 for epoch in range(5):
     model.train()
     total_loss = 0.0
