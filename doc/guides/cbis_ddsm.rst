@@ -136,11 +136,13 @@ both official CSVs and provides annotated dictionary batches:
 By default, validation holds out 10% of the official training patients, keeping
 every observation of a patient together. An integer ``val_size`` counts
 patients; ``val_size=0`` uses the entire official training CSV. The official
-test CSV remains the test split. No final partial batch is dropped. A custom
-``splitter`` overrides these defaults, and ``max_samples`` subsamples across
-all splits. ``train_transform`` can replace ``transform`` for training only;
-validation and testing always use ``transform``. Both receive native decoded
-images, and the datamodule preserves the dataset's native concept definitions.
+test CSV remains the test split. Setup and data loading follow
+``ConceptDataModule``: training drops the final partial batch, validation and
+testing retain it, and ``val_dataloader()`` returns ``None`` when validation is
+disabled. A custom ``splitter`` overrides the default split membership, and
+``max_samples`` subsamples across all splits. The shared ``transform`` receives
+native decoded images in every split, and the datamodule preserves the
+dataset's native concept definitions.
 
 For ``CBISDDSMDataset``, the selected official CSV defines the split; no random
 split is generated.
