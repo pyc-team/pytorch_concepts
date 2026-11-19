@@ -94,7 +94,7 @@ def _prepare_exog_noise(exog_noise, n_cells, n_genes):
 
 def _cache_key(config, seed, parameters=None, background=None, concepts=None,
                exog_noise=None):
-    """Identify generation inputs before sampling, including any fixed state."""
+    """Generate a unique cache key for the dataset based on configuration and inputs."""
     digest = hashlib.sha256(json.dumps(config, sort_keys=True).encode())
     tensors = {f"{group}.{name}": value
                for group, values in (("parameters", parameters), ("background", background))
@@ -236,6 +236,8 @@ def model(
     A supplied cell_background includes the count-sampling quantiles and cannot
     be combined with exog_noise; doing so raises ValueError.
 
+    See paper: https://arxiv.org/abs/2606.07760 for the scCBGM generative model.
+
     Returns
     -------
     inputs : torch.Tensor
@@ -331,6 +333,8 @@ class SingleCellDataset(ConceptDataset):
     Each concept can be active (1) or inactive (0) in a cell, with an activation probability depending on the cell type, 
     and influences gene expression through concept-specific coefficients.
 
+    :meth:`generate_from_dataset` generates a new synthetic dataset using the same model parameters and cell background as the current dataset.
+
     :meth:`generate_interventions` creates a new synthetic dataset with modified
     concept values, keeping the same cell background and generator parameters.
     New cells can also be generated using the same model parameters.
@@ -356,15 +360,18 @@ class SingleCellDataset(ConceptDataset):
         label_descriptions: Optional mapping from concept names to descriptions.
         exog_noise: Optional values controlling count sampling, with shape
             (n_cells, n_genes) and entries strictly between 0 and 1.
-        normalize: Normalize each cell to 10,000 total counts, then apply log1p.
+        normalize: Scale each nonempty cell to target_sum total counts, then apply log1p.
             Defaults to False (raw counts). Generated variants retain this choice;
             load_raw() and saved files always contain raw counts.
+        target_sum: Positive, finite total count per cell before log1p.
+            Defaults to 10,000. Generated variants retain this value.
+            Empty cells remain zero. Ignored when normalize=False.
 
     Example::
 
         dataset = SingleCellDataset(generation_config={"n_cells": 1000})
-        edited = dataset.generate_interventions({"concept_0": 1})
         new_cells = dataset.generate_from_dataset(n_cells=500, seed=7)
+        edited = dataset.generate_interventions({"concept_0": 1})
         restored = SingleCellDataset(root=dataset.root)
     """
 
@@ -377,13 +384,18 @@ class SingleCellDataset(ConceptDataset):
         label_descriptions: dict | None = None,  # mapping from concept names to descriptions
         exog_noise=None,  # optional Poisson quantiles, one per cell and gene
         normalize: bool = False,
+        target_sum: float = 10_000,
     ):
+        if (isinstance(target_sum, (bool, np.bool_)) or not isinstance(target_sum, Real)
+                or not np.isfinite(target_sum) or target_sum <= 0):
+            raise ValueError("target_sum must be a positive finite number.")
         root = root if root is not None else os.path.join("data", "single_cell")
         self.root = os.fspath(root)
         self.root = os.path.abspath(self.root_dir)
         self.seed = 42 if seed is None else seed
         self.label_descriptions = label_descriptions
         self.normalize = normalize
+        self.target_sum = float(target_sum)
         if (seed is not None or generation_config is not None or exog_noise is not None
                 or not any(os.path.exists(path) for path in self.processed_paths)):
             self._generation_config = _resolve_generation_config(generation_config)
@@ -522,7 +534,7 @@ class SingleCellDataset(ConceptDataset):
             )
             self._save_dataset(paths, inputs, concepts, config, parameters, background,
                                seed)
-        return type(self)(root=root, normalize=self.normalize,
+        return type(self)(root=root, normalize=self.normalize, target_sum=self.target_sum,
                           concept_subset=list(self.native_concepts.annotations.labels),
                           label_descriptions=deepcopy(self.label_descriptions))
 
@@ -591,7 +603,7 @@ class SingleCellDataset(ConceptDataset):
             inputs, concepts, background = model(parameters, concepts, cell_background=background)
             self._save_dataset(paths, inputs, concepts, config, parameters, background,
                                self.seed)
-        return type(self)(root=root, normalize=self.normalize,
+        return type(self)(root=root, normalize=self.normalize, target_sum=self.target_sum,
                           concept_subset=list(self.native_concepts.annotations.labels),
                           label_descriptions=deepcopy(self.label_descriptions))
 
@@ -612,7 +624,7 @@ class SingleCellDataset(ConceptDataset):
             counts = inputs.float().numpy()
             totals = counts.sum(axis=1, keepdims=True)
             inputs = torch.from_numpy(
-                np.log1p(counts / np.where(totals == 0, 1, totals) * 1e4)
+                np.log1p(counts / np.where(totals == 0, 1, totals) * self.target_sum)
             )
         return inputs, concepts, annotations, graph
 

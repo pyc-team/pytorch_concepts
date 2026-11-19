@@ -8,11 +8,7 @@ class SingleCellDataModule(ConceptDataModule):
     """DataModule for synthetic single-cell gene expression from scCBGM.
 
     Generates gene counts with binary concept labels and prepares train,
-    validation and test dataloaders. Concepts indicate whether each simulated
-    gene-regulating factor is active (1) or inactive (0).
-    For a counterfactual experiment, generate paired data with
-    :meth:`SingleCellDataset.generate_interventions`. Choose the split
-    separately and pass it through the splitter parameter.
+    validation and test dataloaders.
     See :class:`SingleCellDataset` for the dataset description and concept editing
     and the scCBGM paper for the generative model:
     https://arxiv.org/abs/2606.07760.
@@ -48,10 +44,15 @@ class SingleCellDataModule(ConceptDataModule):
     exog_noise : array-like, optional
         Values controlling count sampling; see :class:`SingleCellDataset`.
     normalize : bool
-        Normalize each cell to a total count of 10,000, then apply log1p,
-        as in the original scCBGM DataModule. Defaults to True.
-        Passed to the dataset and retained by its generated variants.
+        Scale each nonempty cell to ``target_sum`` total counts, then apply
+        log1p. Defaults to True, as in the original scCBGM DataModule.
         Set False to use raw counts. Saved counts are unchanged.
+    target_sum : float
+        Positive, finite total count per cell before log1p. Defaults to 10,000.
+        10,000 is a conventional scaling factor in single-cell RNA-seq data
+        normalization.
+        Passed to the dataset; generated variants retain both normalization
+        settings. Ignored when ``normalize=False``.
     **kwargs
         Additional arguments for ConceptDataModule, such as scalers and
         pin_memory. ``max_samples`` must be None; set the number of generated
@@ -60,7 +61,8 @@ class SingleCellDataModule(ConceptDataModule):
     Examples
     --------
     >>> dm = SingleCellDataModule(
-    ...     generation_config={"n_cells": 1000, "n_genes": 100}, batch_size=64
+    ...     generation_config={"n_cells": 1000, "n_genes": 100}, batch_size=64,
+    ...     target_sum=20_000,
     ... )
     >>> dm.setup()
     >>> train_loader = dm.train_dataloader()
@@ -81,6 +83,7 @@ class SingleCellDataModule(ConceptDataModule):
         generation_config: dict | None = None,
         exog_noise=None,
         normalize: bool = True,
+        target_sum: float = 10_000,
         **kwargs,
     ):
         if kwargs.pop("max_samples", None) is not None:
@@ -96,6 +99,7 @@ class SingleCellDataModule(ConceptDataModule):
             generation_config=generation_config,
             exog_noise=exog_noise,
             normalize=normalize,
+            target_sum=target_sum,
         )
         super().__init__(
             dataset=dataset,

@@ -9,13 +9,12 @@ import pytest
 import torch
 from scipy.stats import poisson
 
+from torch_concepts.data import SingleCellDataset, SingleCellDataModule
 from torch_concepts.data.base.datamodule import ConceptDataModule
-from torch_concepts.data.datamodules.single_cell import SingleCellDataModule
 from torch_concepts.data.splitters import FixedIndicesSplitter, RandomSplitter
 import torch_concepts.data.datasets.single_cell as single_cell
 from torch_concepts.data.datasets.single_cell import (
     model,
-    SingleCellDataset,
     _resolve_generation_config,
 )
 
@@ -332,7 +331,8 @@ def test_datamodule_rejects_max_samples_before_generation(tmp_path, small_config
                              max_samples=max_samples)
 
 
-def test_datamodule_normalizes_like_sccbgm_and_keeps_saved_counts(tmp_path, small_config):
+@pytest.mark.parametrize("target_sum", [None, 1_000, 1_000_000, 1234.5])
+def test_datamodule_normalization_target_and_saved_counts(tmp_path, small_config, target_sum):
     source = SingleCellDataset(root=tmp_path, generation_config=small_config)
     counts = source.input_data.clone()
     counts[0] = torch.tensor([1, 3, 0, 0, 0, 0])
@@ -341,36 +341,52 @@ def test_datamodule_normalizes_like_sccbgm_and_keeps_saved_counts(tmp_path, smal
     torch.save(counts, source.processed_paths[0])
     saved_files = {path: Path(path).read_bytes() for path in source.processed_paths}
 
-    module = SingleCellDataModule(root=source.root, batch_size=3)
+    kwargs = {} if target_sum is None else {"target_sum": target_sum}
+    expected_total = 10_000 if target_sum is None else target_sum
+    module = SingleCellDataModule(root=source.root, batch_size=3, **kwargs)
+    assert module.dataset.target_sum == expected_total
+    assert module.dataset.root == source.root
     expression = module.dataset.input_data
-    expected = torch.tensor([np.log1p(2500), np.log1p(7500), 0, 0, 0, 0], dtype=torch.float32)
+    expected = torch.tensor([np.log1p(expected_total / 4), np.log1p(3 * expected_total / 4),
+                             0, 0, 0, 0], dtype=torch.float32)
     torch.testing.assert_close(expression[0], expected)
     torch.testing.assert_close(expression[1], expression[0], rtol=0, atol=0)
     assert torch.count_nonzero(expression[2]) == 0
     assert expression.dtype == torch.float32
     assert expression.isfinite().all()
     totals = expression.expm1().sum(dim=1)
-    torch.testing.assert_close(totals[counts.sum(dim=1) > 0], torch.full((9,), 1e4))
+    torch.testing.assert_close(totals[counts.sum(dim=1) > 0],
+                               torch.full((9,), expected_total, dtype=expression.dtype))
     torch.testing.assert_close(module.dataset.load_raw()[0], counts, rtol=0, atol=0)
     torch.testing.assert_close(module.dataset.concepts.tensor, source.concepts.tensor, rtol=0, atol=0)
     assert {path: Path(path).read_bytes() for path in saved_files} == saved_files
 
     module.setup()
     batch = next(iter(module.train_dataloader()))["inputs"]["x"]
-    assert torch.all((batch == 0).all(dim=1) | torch.isclose(batch.expm1().sum(dim=1), torch.tensor(1e4)))
-    restored = SingleCellDataModule(root=source.root)
+    assert torch.all((batch == 0).all(dim=1) | torch.isclose(
+        batch.expm1().sum(dim=1), torch.tensor(expected_total, dtype=batch.dtype)))
+    restored = SingleCellDataModule(root=source.root, **kwargs)
     torch.testing.assert_close(restored.dataset.input_data, expression, rtol=0, atol=0)
-    raw = SingleCellDataModule(root=source.root, normalize=False)
+    raw = SingleCellDataModule(root=source.root, normalize=False, **kwargs)
     torch.testing.assert_close(raw.dataset.input_data, counts, rtol=0, atol=0)
 
 
+@pytest.mark.parametrize("entrypoint", [SingleCellDataset, SingleCellDataModule])
+@pytest.mark.parametrize("target_sum", [0, -1, np.nan, np.inf, -np.inf, True, "10000", None])
+def test_normalization_rejects_invalid_target_sum(tmp_path, entrypoint, target_sum):
+    with pytest.raises(ValueError, match="target_sum must be a positive finite number"):
+        entrypoint(root=tmp_path, target_sum=target_sum)
+
+
+@pytest.mark.parametrize("target_sum", [10_000, 1234.5])
 @pytest.mark.parametrize("normalize", [False, True])
 @pytest.mark.parametrize("kind", ["intervened", "generated"])
 @pytest.mark.parametrize("entrypoint", ["dataset", "datamodule"])
 def test_normalization_is_preserved_in_generated_variants(
-    tmp_path, small_config, normalize, kind, entrypoint,
+    tmp_path, small_config, normalize, kind, entrypoint, target_sum,
 ):
-    kwargs = {"root": tmp_path, "generation_config": small_config, "normalize": normalize}
+    kwargs = {"root": tmp_path, "generation_config": small_config,
+              "normalize": normalize, "target_sum": target_sum}
     source = (SingleCellDataset(**kwargs) if entrypoint == "dataset"
               else SingleCellDataModule(**kwargs).dataset)
     source._subset_rows([7, 2, 9])
@@ -382,16 +398,18 @@ def test_normalization_is_preserved_in_generated_variants(
     if normalize:
         nonempty = counts.sum(dim=1) > 0
         totals = variant.input_data.expm1().sum(dim=1)
-        torch.testing.assert_close(totals[nonempty], torch.full_like(totals[nonempty], 1e4))
+        torch.testing.assert_close(totals[nonempty], torch.full_like(totals[nonempty], target_sum))
     else:
         torch.testing.assert_close(variant.input_data, counts, rtol=0, atol=0)
     assert source.normalize == variant.normalize == normalize
+    assert source.target_sum == variant.target_sum == target_sum
     torch.testing.assert_close(variant.load()[0], variant.input_data, rtol=0, atol=0)
-    restored = SingleCellDataset(root=variant.root, normalize=normalize)
+    restored = SingleCellDataset(root=variant.root, normalize=normalize, target_sum=target_sum)
     torch.testing.assert_close(_generation_tensors(restored),
                                _generation_tensors(variant), rtol=0, atol=0)
     unchanged = variant.generate_interventions({})
     assert unchanged.normalize == normalize
+    assert unchanged.target_sum == target_sum
     torch.testing.assert_close(unchanged.input_data, variant.input_data, rtol=0, atol=0)
     torch.testing.assert_close(_generation_tensors(source), original, rtol=0, atol=0)
     assert {path: Path(path).read_bytes() for path in saved_files} == saved_files
@@ -486,24 +504,35 @@ def test_generation_state_reconstructs_counts_and_is_reproducible(
     torch.testing.assert_close(_reconstruct_counts(_state(restored), _concept_frame(restored)), restored.input_data, rtol=0, atol=0)
 
 
-def test_datamodule_subsamples_generation_state_in_dataset_order(tmp_path, small_config):
-    complete = SingleCellDataset(root=tmp_path, generation_config=small_config)
-    selected = SingleCellDataset(root=complete.root, concept_subset=["concept_1"])
+@pytest.mark.parametrize("normalize", [False, True])
+def test_subsampling_keeps_inputs_native_full_concepts_and_background_aligned(tmp_path, small_config, normalize):
+    complete = SingleCellDataset(root=tmp_path, generation_config=small_config, normalize=normalize)
+    selected = SingleCellDataset(root=complete.root, concept_subset=["concept_1"], normalize=normalize)
     module = ConceptDataModule(dataset=selected, max_samples=5, seed=12)
     dataset = module.dataset
     indices = torch.randperm(10, generator=torch.Generator().manual_seed(12))[:5]
+    torch.testing.assert_close(dataset.input_data, complete.input_data[indices], rtol=0, atol=0)
+    torch.testing.assert_close(dataset.native_concepts.tensor, complete.native_concepts["concept_1"].tensor[indices], rtol=0, atol=0)
+    torch.testing.assert_close(dataset._full_concepts, complete._full_concepts[indices], rtol=0, atol=0)
     torch.testing.assert_close(_state(dataset)["cell_background"]["cell_indices"], indices)
     for name, values in _state(complete)["cell_background"].items():
         torch.testing.assert_close(_state(dataset)["cell_background"][name], values[indices])
-    torch.testing.assert_close(_reconstruct_counts(_state(dataset), _concept_frame(dataset)), dataset.input_data, rtol=0, atol=0)
+    torch.testing.assert_close(_reconstruct_counts(_state(dataset), _concept_frame(dataset)),
+                               complete.load_raw()[0][indices], rtol=0, atol=0)
     # Background and identifiers follow the current in-memory selection.
     saved = deepcopy(_state(dataset))
     assert len(saved["cell_background"]["cell_indices"]) == 5
     assert _state(dataset)["cell_background"]["noise"].shape[0] == 5
 
     dataset._subset_rows([3, 1])
-    torch.testing.assert_close(_reconstruct_counts(_state(dataset), _concept_frame(dataset)), dataset.input_data, rtol=0, atol=0)
-    torch.testing.assert_close(_state(dataset)["cell_background"]["cell_indices"], indices[[3, 1]])
+    indices = indices[[3, 1]]
+    torch.testing.assert_close(dataset.input_data, complete.input_data[indices], rtol=0, atol=0)
+    torch.testing.assert_close(dataset.native_concepts.tensor, complete.native_concepts["concept_1"].tensor[indices], rtol=0, atol=0)
+    torch.testing.assert_close(dataset._full_concepts, complete._full_concepts[indices], rtol=0, atol=0)
+    for name, values in _state(complete)["cell_background"].items():
+        torch.testing.assert_close(_state(dataset)["cell_background"][name], values[indices])
+    torch.testing.assert_close(_reconstruct_counts(_state(dataset), _concept_frame(dataset)),
+                               complete.load_raw()[0][indices], rtol=0, atol=0)
     replayed, _, _ = _generation_tensors(dataset.generate_interventions(concepts=_concept_frame(dataset)))
     torch.testing.assert_close(replayed, dataset.input_data, rtol=0, atol=0)
 

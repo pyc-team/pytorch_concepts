@@ -29,9 +29,6 @@ Optional annotation experiments are selected with ANNOTATION_MODIFICATION:
 - drop: remove n_mod concept columns from supervision;
 - add: append n_mod independent Bernoulli concepts with probability p_active;
 - duplicate: append n_replica copies of each of n_mod selected concepts.
-As in scCBGM main.py, concept_0 is protected. Gene expression, the original
-labels and the paired counterfactual targets stay fixed. Modified annotations
-are selected with the existing set_generated_concepts(use_as_gt=True) API.
 
 This experiment is adapted from the original implementation accompanying the paper scCBGM: Single-Cell Editing via Concept Bottlenecks (Andersson et al., ICML 2026).
 """
@@ -59,7 +56,7 @@ from torch_concepts.nn import (
 
 
 def counterfactual_indices(dataset, concept, cell_type, seed=42):
-    """scCBGM split for setting one binary concept to 1 in the chosen cell type."""
+    """Train/test split for counterfactual evaluation targeting a specific concept in a cell type."""
     cell_mask = dataset.cell_types.numpy() == cell_type
     active = dataset.native_concepts[concept].tensor.numpy().ravel() == 1
     controls = np.flatnonzero(cell_mask & ~active)
@@ -72,16 +69,10 @@ def counterfactual_indices(dataset, concept, cell_type, seed=42):
 
 
 def modify_annotations(
-    concepts, mode="identity", n_mod=1, *, target_concept="concept_0",
+    concepts, mode="identity", n_mod=1, *, target_concept,
     p_noise=0.5, p_active=0.5, n_replica=1, seed=42,
 ):
-    """scCBGM annotation ablations, keeping the intervention target unchanged.
-
-    n_mod is a count, a fraction of the non-target concepts, or "all" for noise.
-    Fractions use the original round/clamp rule. Missing annotations mean whole
-    columns removed, rather than missing entries in individual cells.
-    Duplicate columns have unique names, including when n_replica > 1.
-    """
+    """Modify concept annotations according to the specified mode."""
     if mode not in {"identity", "noise", "drop", "add", "duplicate"}:
         raise ValueError("mode must be identity, noise, drop, add or duplicate.")
     if mode == "identity":
@@ -148,6 +139,8 @@ def modify_annotations(
 
 seed_everything(42)
 EPOCHS = 20
+target_concept = "concept_0"
+cell_type = 2
 # Change only this dictionary to choose the annotation experiment:
 ANNOTATION_MODIFICATION = {"mode": "identity"}
 # {"mode": "noise", "n_mod": "all", "p_noise": 0.5}
@@ -164,22 +157,24 @@ dm = SingleCellDataModule(
     batch_size=32,
 )
 
-# 2. Generate the counterfactual dataset by setting concept_0 to 1
-#    in cells of type 2.
+# 2. Set the target concept to 1 in cells of the selected type.
 intervened = dm.dataset.generate_interventions(
-    {"concept_0": 1}, cell_type=2,
+    {target_concept: 1}, cell_type=cell_type,
 )
 
-# 3. Compute the split from ORIGINAL concepts: exclude type 2/concept-on cells,
-#    reserve half of type 2/concept-off cells for test, and train on the rest.
+# 3. Determine train/test splits for counterfactual evaluation.
 train_idxs, test_idxs = counterfactual_indices(
-    dm.dataset, concept="concept_0", cell_type=2, seed=42,
+    dm.dataset, concept=target_concept, cell_type=cell_type, seed=42,
 )
 dm.splitter = FixedIndicesSplitter(train_idxs=train_idxs, val_idxs=[], test_idxs=test_idxs)
 
-# Modify the selected observed annotations in the original dataset according to the specified mode. Since only the original dataset is used for training, there is no need to modify the annotations in the intervened dataset.
+# Modify the selected observed annotations in the original dataset according to the specified mode. 
+# Since only the original dataset is used for training, there is no need to modify the annotations in the intervened dataset.
 if ANNOTATION_MODIFICATION["mode"] != "identity":
-    observed = modify_annotations(dm.dataset.native_concepts, **ANNOTATION_MODIFICATION)
+    observed = modify_annotations(
+        dm.dataset.native_concepts, target_concept=target_concept,
+        **ANNOTATION_MODIFICATION,
+    )
     dm.dataset.set_generated_concepts({"observed": observed}, use_as_gt=True)
 
 # 4. Initialize the data loaders using the original dataset.
@@ -261,15 +256,14 @@ query = ["input", "unknown", *dm.concept_names]
 with torch.no_grad():
     reconstruction = model(query=query, evidence={"z": latent})
 
-    # Action + prediction: force only concept_0 on; the other predicted concepts
+    # Action + prediction: force only the target on; the other predicted concepts
     # and the unknown context still come from the SAME latent representation.
-    # The concept head emits logits, so convert the desired probability to a logit.
     on_logit = torch.logit(torch.tensor(1.0), eps=1e-6)
-    with intervention(model, DoIntervention(on_logit), UniformPolicy(), ["concept_0"]):
+    with intervention(model, DoIntervention(on_logit), UniformPolicy(), [target_concept]):
         counterfactual_prediction = model(query=query, evidence={"z": latent})
 
-# 9. Compare model predictions. Calculate the MSE between the original reconstruction and the original test data, 
-# and between the counterfactual prediction and the counterfactual test data.
+# 9. All three MSEs compare against counterfactual_test: the original cell,
+# the reconstruction without intervention, and the prediction after intervention.
 original_prediction = reconstruction.value["input"].tensor
 predicted_counterfactual = counterfactual_prediction.value["input"].tensor
 mse = nn.functional.mse_loss
