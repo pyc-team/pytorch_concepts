@@ -86,7 +86,7 @@ concepts_before = original.concepts.tensor.numpy()
 concept_index = int(np.argmax(np.var(concepts_before, axis=0)))
 concept_name = original.concept_names[concept_index]
 changed_cells = concepts_before[:, concept_index] == 0
-edited = original.generate_intervened_dataset({concept_name: 1})
+edited = original.generate_interventions({concept_name: 1})
 counts_after = edited.load_raw()[0].numpy()
 concepts_after = edited.concepts.tensor.numpy()
 print(f"Generated {counts_before.shape[0]} cells and {counts_before.shape[1]} genes")

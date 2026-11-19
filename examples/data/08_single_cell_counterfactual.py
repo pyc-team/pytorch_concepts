@@ -20,14 +20,19 @@ Specifically, all cells of type 2 with concept_0 = 1 are excluded from the datas
 Half of the type 2 cells with concept_0 = 0 are assigned to the test set, while the remaining eligible cells are used for training. 
 No validation set is created.
 
+The split is computed explicitly below and passed to the datamodule through
+a FixedIndicesSplitter. The dataset only generates the counterfactual cells.
+
 This experiment is adapted from the original implementation accompanying the paper scCBGM: Single-Cell Editing via Concept Bottlenecks (Andersson et al., ICML 2026).
 """
 
+import numpy as np
 import torch
 from torch import nn
 
 from torch_concepts import seed_everything
 from torch_concepts.data import SingleCellDataModule
+from torch_concepts.data.splitters import FixedIndicesSplitter
 from torch_concepts.env import DATA_ROOT
 from torch_concepts.nn import (
     CompositeLoss,
@@ -41,6 +46,18 @@ from torch_concepts.nn import (
     UniformPolicy,
     intervention,
 )
+
+
+def counterfactual_indices(dataset, concept, cell_type, seed=42):
+    """scCBGM split for setting one binary concept to 1 in the chosen cell type."""
+    cell_mask = dataset.cell_background["celltype"].numpy() == cell_type
+    active = dataset.concepts[concept].tensor.numpy().ravel() == 1
+    controls = np.flatnonzero(cell_mask & ~active)
+    test_idxs = np.random.default_rng(seed).permutation(controls)[:len(controls) // 2]
+    train_mask = ~(cell_mask & active)
+    train_mask[test_idxs] = False
+    return np.flatnonzero(train_mask).tolist(), test_idxs.tolist()
+
 
 seed_everything(42)
 EPOCHS = 20
@@ -56,18 +73,16 @@ dm = SingleCellDataModule(
 
 # 2. Generate the counterfactual dataset by setting concept_0 to 1
 #    in cells of type 2.
-#    The generated splitter prevents data leakage by excluding
-#    cells of type 2 with concept_0 already set to 1 from training
-#    and restricting the test set to cells of type 2 with concept_0
-#    originally set to 0 as in the original experiment.
 intervened = dm.dataset.generate_interventions(
-    {"concept_0": 1}, generate_split=True, cell_type=2, split_seed=42,
+    {"concept_0": 1}, cell_type=2,
 )
 
-# 3. Apply the same split to the original dataset to preserve
-#    correspondence between original and counterfactual cells.
-if intervened.splitter is not None:
-    dm.splitter = intervened.splitter
+# 3. Compute the split from ORIGINAL concepts: exclude type 2/concept-on cells,
+#    reserve half of type 2/concept-off cells for test, and train on the rest.
+train_idxs, test_idxs = counterfactual_indices(
+    dm.dataset, concept="concept_0", cell_type=2, seed=42,
+)
+dm.splitter = FixedIndicesSplitter(train_idxs=train_idxs, val_idxs=[], test_idxs=test_idxs)
 
 # 4. Initialize the data loaders using the original dataset.
 #    Training batches contain original (non-intervened) gene expression.
