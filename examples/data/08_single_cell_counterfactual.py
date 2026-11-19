@@ -21,7 +21,17 @@ Half of the type 2 cells with concept_0 = 0 are assigned to the test set, while 
 No validation set is created.
 
 The split is computed explicitly below and passed to the datamodule through
-a FixedIndicesSplitter. The dataset only generates the counterfactual cells.
+a FixedIndicesSplitter. The intervened dataset contains the same cells in the same order.
+We use the test indices to select the paired counterfactual targets.
+
+Optional annotation experiments are selected with ANNOTATION_MODIFICATION:
+- noise: flip binary labels with probability p_noise in n_mod concepts;
+- drop: remove n_mod concept columns from supervision;
+- add: append n_mod independent Bernoulli concepts with probability p_active;
+- duplicate: append n_replica copies of each of n_mod selected concepts.
+As in scCBGM main.py, concept_0 is protected. Gene expression, the original
+labels and the paired counterfactual targets stay fixed. Modified annotations
+are selected with the existing set_generated_concepts(use_as_gt=True) API.
 
 This experiment is adapted from the original implementation accompanying the paper scCBGM: Single-Cell Editing via Concept Bottlenecks (Andersson et al., ICML 2026).
 """
@@ -30,7 +40,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from torch_concepts import seed_everything
+from torch_concepts import AnnotatedTensor, Annotations, seed_everything
 from torch_concepts.data import SingleCellDataModule
 from torch_concepts.data.splitters import FixedIndicesSplitter
 from torch_concepts.env import DATA_ROOT
@@ -53,14 +63,97 @@ def counterfactual_indices(dataset, concept, cell_type, seed=42):
     cell_mask = dataset.cell_background["celltype"].numpy() == cell_type
     active = dataset.concepts[concept].tensor.numpy().ravel() == 1
     controls = np.flatnonzero(cell_mask & ~active)
+    if len(controls) < 2:
+        raise ValueError("At least two eligible control cells are required.")
     test_idxs = np.random.default_rng(seed).permutation(controls)[:len(controls) // 2]
     train_mask = ~(cell_mask & active)
     train_mask[test_idxs] = False
     return np.flatnonzero(train_mask).tolist(), test_idxs.tolist()
 
 
+def modify_annotations(
+    concepts, mode="identity", n_mod=1, *, target_concept="concept_0",
+    p_noise=0.5, p_active=0.5, n_replica=1, seed=42,
+):
+    """scCBGM annotation ablations, keeping the intervention target unchanged.
+
+    n_mod is a count, a fraction of the non-target concepts, or "all" for noise.
+    Fractions use the original round/clamp rule. Missing annotations mean whole
+    columns removed, rather than missing entries in individual cells.
+    Duplicate columns have unique names, including when n_replica > 1.
+    """
+    if mode not in {"identity", "noise", "drop", "add", "duplicate"}:
+        raise ValueError("mode must be identity, noise, drop, add or duplicate.")
+    if mode == "identity":
+        return concepts
+    target = concepts[[target_concept]]
+    labels = [name for name in concepts.annotations.labels if name != target_concept]
+    observed = concepts[concepts.annotations.subset(labels)]
+    n_concepts = len(labels)
+    if isinstance(n_mod, str):
+        if n_mod != "all" or mode != "noise":
+            raise ValueError('n_mod="all" is supported only for noise.')
+        n_mod = n_concepts
+    elif 0 < n_mod < 1:
+        n_mod = min(max(int(np.round(n_concepts * n_mod)), 1), n_concepts - 1)
+    if n_mod < 0 or int(n_mod) != n_mod or (mode != "add" and n_mod > n_concepts):
+        raise ValueError("Invalid number of non-target concepts to modify.")
+    n_mod = int(n_mod)
+    if n_mod == 0:
+        return observed.union_with(target)
+    rng = np.random.default_rng(seed)
+    if mode != "add":
+        selected = rng.choice(n_concepts, size=n_mod, replace=False).tolist()
+    if mode == "drop":
+        keep = [name for i, name in enumerate(labels) if i not in selected]
+        observed = observed[observed.annotations.subset(keep)]
+    elif mode == "noise":
+        observed = observed.clone()
+        values = observed.tensor[:, selected]
+        mask = torch.as_tensor(
+            rng.binomial(1, p_noise, size=values.shape),
+            dtype=torch.bool, device=values.device,
+        )
+        observed.tensor[:, selected] = torch.where(mask, 1 - values, values)
+    elif mode == "add":
+        probabilities = np.atleast_1d(p_active)
+        if len(probabilities) == 1:
+            probabilities = np.repeat(probabilities, n_mod)
+        elif len(probabilities) != n_mod:
+            probabilities = rng.choice(probabilities, size=n_mod, replace=True)
+        values = np.column_stack([
+            rng.binomial(1, p, size=len(concepts)) for p in probabilities
+        ])
+        annotations = Annotations(
+            labels=[f"added_{i}" for i in range(n_mod)],
+            cardinalities=[1] * n_mod, types=["binary"] * n_mod,
+        )
+        added = AnnotatedTensor(
+            torch.as_tensor(values, dtype=concepts.dtype, device=concepts.device),
+            annotations, axis=concepts.axis,
+        )
+        observed = observed.union_with(added)
+    elif mode == "duplicate":
+        if n_replica < 1 or int(n_replica) != n_replica:
+            raise ValueError("n_replica must be a positive integer.")
+        for i in selected:
+            original = observed[[labels[i]]]
+            for replica in range(int(n_replica)):
+                annotations = original.annotations.rename({labels[i]: f"duplicate_{i}_{replica}"})
+                observed = observed.union_with(
+                    AnnotatedTensor(original.tensor, annotations, axis=concepts.axis)
+                )
+    return observed.union_with(target)
+
+
 seed_everything(42)
 EPOCHS = 20
+# Change only this dictionary to choose the annotation experiment:
+ANNOTATION_MODIFICATION = {"mode": "identity"}
+# {"mode": "noise", "n_mod": "all", "p_noise": 0.5}
+# {"mode": "drop", "n_mod": 1}
+# {"mode": "add", "n_mod": 1, "p_active": 0.5}
+# {"mode": "duplicate", "n_mod": 1, "n_replica": 1}
 
 
 # 1. Create the original dataset.
@@ -83,6 +176,11 @@ train_idxs, test_idxs = counterfactual_indices(
     dm.dataset, concept="concept_0", cell_type=2, seed=42,
 )
 dm.splitter = FixedIndicesSplitter(train_idxs=train_idxs, val_idxs=[], test_idxs=test_idxs)
+
+# Modify the selected observed annotations in the original dataset according to the specified mode. Since only the original dataset is used for training, there is no need to modify the annotations in the intervened dataset.
+if ANNOTATION_MODIFICATION["mode"] != "identity":
+    observed = modify_annotations(dm.dataset.native_concepts, **ANNOTATION_MODIFICATION)
+    dm.dataset.set_generated_concepts({"observed": observed}, use_as_gt=True)
 
 # 4. Initialize the data loaders using the original dataset.
 #    Training batches contain original (non-intervened) gene expression.
@@ -136,7 +234,7 @@ loss_fn = CompositeLoss(
 )
 optimizer = torch.optim.Adam(model.parameters(), lr=5e-4)
 
-# 7. Train only on the original training cells and their original concept labels.
+# 7. Train on the original training cells with the selected observed annotations.
 model.train()
 for epoch in range(EPOCHS):
     total_loss, seen = 0.0, 0
@@ -174,6 +272,7 @@ with torch.no_grad():
 # and between the counterfactual prediction and the counterfactual test data.
 original_prediction = reconstruction.value["input"].tensor
 predicted_counterfactual = counterfactual_prediction.value["input"].tensor
-print(f"Original reconstruction MSE: {nn.functional.mse_loss(original_prediction, original_test):.4f}")
-print(f"Counterfactual MSE with model intervention: "
-      f"{nn.functional.mse_loss(predicted_counterfactual, counterfactual_test):.4f}")
+mse = nn.functional.mse_loss
+print("CF MSE, copy original cell:", mse(original_test, counterfactual_test).item())
+print("CF MSE, model without intervention:", mse(original_prediction, counterfactual_test).item())
+print("CF MSE, model with intervention:", mse(predicted_counterfactual, counterfactual_test).item())
