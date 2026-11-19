@@ -427,6 +427,11 @@ class SingleCellDataset(ConceptDataset):
         return deepcopy(self._cell_background)
 
     @property
+    def cell_types(self) -> torch.Tensor:
+        """Return a copy of the cell-type IDs in the current row order."""
+        return self._cell_background["celltype"].clone()
+
+    @property
     def raw_filenames(self) -> list[str]:
         """List of raw filenames that need to be present in the raw directory
         for the dataset to be considered present."""
@@ -517,7 +522,8 @@ class SingleCellDataset(ConceptDataset):
             )
             self._save_dataset(paths, inputs, concepts, config, parameters, background,
                                seed)
-        return type(self)(root=root, normalize=self.normalize, concept_subset=self.concept_names,
+        return type(self)(root=root, normalize=self.normalize,
+                          concept_subset=list(self.native_concepts.annotations.labels),
                           label_descriptions=deepcopy(self.label_descriptions))
 
     def generate_interventions(self, concepts, *, cell_type=None):
@@ -585,7 +591,8 @@ class SingleCellDataset(ConceptDataset):
             inputs, concepts, background = model(parameters, concepts, cell_background=background)
             self._save_dataset(paths, inputs, concepts, config, parameters, background,
                                self.seed)
-        return type(self)(root=root, normalize=self.normalize, concept_subset=self.concept_names,
+        return type(self)(root=root, normalize=self.normalize,
+                          concept_subset=list(self.native_concepts.annotations.labels),
                           label_descriptions=deepcopy(self.label_descriptions))
 
     def _subset_rows(self, indices) -> None:

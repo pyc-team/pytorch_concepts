@@ -60,8 +60,8 @@ from torch_concepts.nn import (
 
 def counterfactual_indices(dataset, concept, cell_type, seed=42):
     """scCBGM split for setting one binary concept to 1 in the chosen cell type."""
-    cell_mask = dataset.cell_background["celltype"].numpy() == cell_type
-    active = dataset.concepts[concept].tensor.numpy().ravel() == 1
+    cell_mask = dataset.cell_types.numpy() == cell_type
+    active = dataset.native_concepts[concept].tensor.numpy().ravel() == 1
     controls = np.flatnonzero(cell_mask & ~active)
     if len(controls) < 2:
         raise ValueError("At least two eligible control cells are required.")
