@@ -26,6 +26,12 @@ supervision to a dataset.
 
    ConceptDataModule
 
+``ConceptDataset.native_annotations`` exposes the declared native schema,
+including categorical state names, independently of selected generated ground
+truth. ``dataset.annotations`` describes the currently selected supervision;
+``native_annotations`` is ``None`` for datasets without native labels. Native
+values still use one column of class indices per categorical concept.
+
 .. currentmodule:: torch_concepts.data
 
 Datasets

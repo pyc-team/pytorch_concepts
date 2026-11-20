@@ -25,6 +25,41 @@ from torch_concepts.tensor import AnnotatedTensor
 from .modules.low.semantic import CMRSemantic
 
 
+def cosine_cubed_similarity(input: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    """Compare sample-by-concept activation patterns columnwise.
+
+    Center each column, cube its entries, then compute cosine similarity.
+    This is the LF-CBM alignment measure, rather than the cube of a cosine.
+    Constant columns have similarity zero. Computation uses at least float32
+    precision and preserves gradients for both inputs. This is useful when
+    learning projections from reference annotations, including LF-CBM.
+
+    Args:
+        input: Projected activations of shape ``(samples, concepts)``.
+        target: Reference similarities with the same shape.
+
+    Returns:
+        One similarity per concept, of shape ``(concepts,)``.
+    """
+    if input.ndim != 2 or input.shape != target.shape or min(input.shape) < 1:
+        raise ValueError("Expected nonempty sample-by-concept tensors with matching shapes.")
+    if not input.is_floating_point() or not target.is_floating_point():
+        raise ValueError("Cosine-cubed alignment requires floating-point tensors.")
+    if input.device != target.device:
+        raise ValueError("Input and target must be on the same device.")
+    dtype = torch.promote_types(torch.promote_types(input.dtype, target.dtype), torch.float32)
+
+    def unit_cube(values):
+        centered = values.to(dtype) - values.to(dtype).mean(0, keepdim=True)
+        # Scaling before cubing leaves the cosine unchanged and avoids overflow.
+        scale = centered.abs().amax(0, keepdim=True)
+        cubed = (centered / torch.where(scale == 0, 1., scale)).pow(3)
+        norm = cubed.norm(dim=0, keepdim=True)
+        return cubed / torch.where(norm == 0, 1., norm)
+
+    return (unit_cube(input) * unit_cube(target)).sum(0)
+
+
 def _default_concept_names(n_concepts: int) -> Dict[int, List[str]]:
     """
     Generate default concept names for a given shape.

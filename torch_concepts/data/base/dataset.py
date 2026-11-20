@@ -414,6 +414,11 @@ class ConceptDataset(Dataset):
         return self.concepts.annotations.labels
 
     @property
+    def native_annotations(self) -> Optional[Annotations]:
+        """Declared native schema, independent of the selected ground truth."""
+        return self._annotations
+
+    @property
     def annotations(self) -> Optional[Annotations]:
         """The concept schema: a categorical concept keeps its cardinality, so a
         model can size its variables. Native ground truth returns the declared
