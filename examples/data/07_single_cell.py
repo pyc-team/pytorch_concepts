@@ -21,9 +21,6 @@ seed_everything(42)
 
 # %%
 # Data
-# ----
-# Same generation parameters as the original tutorial; other settings keep
-# their defaults, including coefficient sparsity and independent concept logits.
 dm = SingleCellDataModule(
     root=DATA_ROOT / "single_cell_comparison",
     seed=42,
@@ -45,8 +42,6 @@ original = dm.dataset
 
 # %%
 # Intervention
-# ------------
-# Turn on the concept with the largest variance, keeping cell background fixed.
 concepts_before = original.native_concepts.tensor.numpy()
 concept_index = int(np.argmax(np.var(concepts_before, axis=0)))
 concept_name = original.concept_names[concept_index]
@@ -76,7 +71,6 @@ loss_fn = WeightedConceptLoss(
 )
 optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
 
-# Train the backbone and heads together on normalized gene expression.
 for epoch in range(5):
     model.train()
     total_loss = 0.0

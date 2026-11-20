@@ -250,13 +250,13 @@ def test_generator_reuses_supplied_parameters(tmp_path, small_config, monkeypatc
     dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
     parameters = deepcopy(dataset.model_parameters)
     parameters["baseline_expr"] += 1
-    expected = _generation_tensors(dataset.generate_from_dataset(seed=7, model_parameters=parameters))
+    expected = _generation_tensors(dataset.generate_new_cells(seed=7, model_parameters=parameters))
 
     def unexpected_parameters(*args, **kwargs):
         raise AssertionError("The model must use the supplied global parameters.")
 
     monkeypatch.setattr(single_cell, "_compute_model_parameters", unexpected_parameters)
-    actual = _generation_tensors(dataset.generate_from_dataset(seed=7, model_parameters=parameters))
+    actual = _generation_tensors(dataset.generate_new_cells(seed=7, model_parameters=parameters))
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)
 
 
@@ -393,7 +393,7 @@ def test_normalization_is_preserved_in_generated_variants(
     original = _generation_tensors(source)
     saved_files = {path: Path(path).read_bytes() for path in source.processed_paths}
     variant = (source.generate_interventions({"concept_0": 1}) if kind == "intervened"
-               else source.generate_from_dataset(n_cells=5, seed=7))
+               else source.generate_new_cells(n_cells=5, seed=7))
     counts = variant.load_raw()[0]
     if normalize:
         nonempty = counts.sum(dim=1) > 0
@@ -549,7 +549,7 @@ def test_public_generator_intervenes_with_fixed_noise_and_preserves_source(tmp_p
     # A known effect makes the intervened rate exactly twice the baseline rate.
     parameters = dataset.model_parameters
     parameters["concept_effect"][0] = np.log(2)
-    dataset = dataset.generate_from_dataset(model_parameters=parameters)
+    dataset = dataset.generate_new_cells(model_parameters=parameters)
     quantiles = dataset.cell_background["exog_noise"].numpy()
     _, original_concepts, state = _generation_tensors(dataset)
     original_state = deepcopy(state)
@@ -606,13 +606,13 @@ def test_generation_state_can_be_copied_independently(tmp_path, small_config):
 
 @pytest.mark.parametrize("n_cells", [None, 10, 5])
 @pytest.mark.parametrize("parameters_changed", [False, True])
-def test_generate_from_dataset_samples_new_cells(tmp_path, small_config, n_cells, parameters_changed):
+def test_generate_new_cells_samples_new_cells(tmp_path, small_config, n_cells, parameters_changed):
     dataset = SingleCellDataset(root=tmp_path, generation_config=small_config,
                                 concept_subset=["concept_1"], label_descriptions={"concept_1": "Example"})
     original_metadata = deepcopy(_state(dataset))
     parameters = {"baseline_expr": dataset.model_parameters["baseline_expr"] + 1} if parameters_changed else None
     seed = dataset.seed if parameters_changed else 7
-    fresh = dataset.generate_from_dataset(n_cells=n_cells, model_parameters=parameters, seed=seed)
+    fresh = dataset.generate_new_cells(n_cells=n_cells, model_parameters=parameters, seed=seed)
     assert fresh is not dataset
     assert len(fresh) == (10 if n_cells is None else n_cells)
     assert fresh.concept_names == dataset.concept_names
@@ -642,7 +642,7 @@ def test_parameter_overrides_reject_changed_dimensions(tmp_path, small_config, n
 
     monkeypatch.setattr(single_cell, "model", unexpected_model)
     with pytest.raises(ValueError, match="shape"):
-        dataset.generate_from_dataset(model_parameters={name: incompatible}, **({"n_cells": 5} if fresh else {}))
+        dataset.generate_new_cells(model_parameters={name: incompatible}, **({"n_cells": 5} if fresh else {}))
     torch.testing.assert_close(dataset.model_parameters[name], parameters[name], rtol=0, atol=0)
 
 
@@ -651,10 +651,10 @@ def test_parameter_overrides_reject_changed_dimensions(tmp_path, small_config, n
 def test_parameter_overrides_reject_unknown_names_and_nonfinite_values(tmp_path, small_config, parameters):
     dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
     with pytest.raises(ValueError, match="parameter|Parameter"):
-        dataset.generate_from_dataset(model_parameters=parameters)
+        dataset.generate_new_cells(model_parameters=parameters)
 
 
-@pytest.mark.parametrize("entrypoint", ["model", "generate_from_dataset"])
+@pytest.mark.parametrize("entrypoint", ["model", "generate_new_cells"])
 @pytest.mark.parametrize("name, value", [
     ("p_batch", [-0.1, 1.1]),
     ("p_batch", [0.2, 0.2]),
@@ -679,12 +679,12 @@ def test_model_parameters_reject_invalid_distributions(tmp_path, small_config, e
             parameters[name] = torch.tensor(value, dtype=torch.float64)
             model(parameters, n_cells=len(dataset))
         else:
-            dataset.generate_from_dataset(model_parameters={name: value})
+            dataset.generate_new_cells(model_parameters={name: value})
     torch.testing.assert_close(_state(dataset), original, rtol=0, atol=0)
     assert len(list(tmp_path.iterdir())) == 1
 
 
-@pytest.mark.parametrize("entrypoint", ["model", "generate_from_dataset"])
+@pytest.mark.parametrize("entrypoint", ["model", "generate_new_cells"])
 @pytest.mark.parametrize("covariance", [torch.zeros(3, 3), torch.ones(3, 3), torch.eye(3)])
 def test_model_parameters_accept_valid_boundary_distributions(tmp_path, small_config, entrypoint, covariance):
     dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
@@ -700,7 +700,7 @@ def test_model_parameters_accept_valid_boundary_distributions(tmp_path, small_co
     if entrypoint == "model":
         inputs, _, background = model(parameters, n_cells=len(dataset))
     else:
-        generated = dataset.generate_from_dataset(model_parameters=overrides)
+        generated = dataset.generate_new_cells(model_parameters=overrides)
         torch.testing.assert_close(generated.model_parameters, parameters, rtol=0, atol=0)
         inputs, background = generated.input_data, generated.cell_background
     assert inputs.isfinite().all()
@@ -712,7 +712,7 @@ def test_model_parameters_accept_valid_boundary_distributions(tmp_path, small_co
 
 def test_interventions_keep_sampled_context(tmp_path, small_config):
     dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
-    fresh = dataset.generate_from_dataset(
+    fresh = dataset.generate_new_cells(
         n_cells=5, seed=19,
         model_parameters={"p_tissue": [1., 0.], "p_celltype": [[1., 0., 0.], [0., 1., 0.]]},
     )
@@ -898,7 +898,7 @@ def test_dataset_overrides_only_evaluate_final_model(tmp_path, small_config, mon
         edited = dataset.generate_interventions({"concept_0": 1})
         assert calls[0] is dataset._cell_background
     else:
-        edited = dataset.generate_from_dataset(model_parameters={"baseline_expr": dataset.model_parameters["baseline_expr"] + 1})
+        edited = dataset.generate_new_cells(model_parameters={"baseline_expr": dataset.model_parameters["baseline_expr"] + 1})
         assert calls[0] is None
     assert len(calls) == 1
     torch.testing.assert_close(edited.input_data, _reconstruct_counts(_state(edited), edited._full_concepts), rtol=0, atol=0)
@@ -952,7 +952,7 @@ def test_partial_dataframe_interventions_reject_invalid_cells(tmp_path, small_co
 def test_copy_of_intervened_dataset_preserves_existing_changes(tmp_path, small_config):
     original = SingleCellDataset(root=tmp_path, generation_config=small_config)
     baseline = original.model_parameters["baseline_expr"] + 1
-    edited = original.generate_from_dataset(
+    edited = original.generate_new_cells(
         model_parameters={"baseline_expr": baseline},
     ).generate_interventions({"concept_0": 1})
     copied = edited.generate_interventions(concepts=edited._full_concepts)
@@ -1002,8 +1002,8 @@ def test_dataframe_intervention_on_selected_cells_preserves_identifiers(tmp_path
 
 def test_generate_new_cells_reuses_parameters(tmp_path, small_config):
     dataset = SingleCellDataset(root=tmp_path, seed=7, generation_config=small_config)
-    fresh = dataset.generate_from_dataset(n_cells=5, seed=19)
-    repeated = dataset.generate_from_dataset(n_cells=5, seed=19)
+    fresh = dataset.generate_new_cells(n_cells=5, seed=19)
+    repeated = dataset.generate_new_cells(n_cells=5, seed=19)
     assert fresh.input_data.shape == (5, 6)
     assert fresh.cell_background["noise"].shape == (5, 6)
     assert fresh.seed == 19
@@ -1012,7 +1012,7 @@ def test_generate_new_cells_reuses_parameters(tmp_path, small_config):
     for name, value in dataset.model_parameters.items():
         torch.testing.assert_close(fresh.model_parameters[name], value, rtol=0, atol=0)
     torch.testing.assert_close(fresh.input_data, repeated.input_data, rtol=0, atol=0)
-    stronger = dataset.generate_from_dataset(model_parameters={"baseline_expr": dataset.model_parameters["baseline_expr"] + 1})
+    stronger = dataset.generate_new_cells(model_parameters={"baseline_expr": dataset.model_parameters["baseline_expr"] + 1})
     counts, _, background = model(dataset.model_parameters, n_cells=len(dataset),
                                    rng=np.random.default_rng(dataset.seed))
     assert torch.all(stronger.input_data >= counts)
@@ -1022,7 +1022,7 @@ def test_generate_new_cells_reuses_parameters(tmp_path, small_config):
 
 def test_new_cells_apply_modified_sampling_parameters_then_interventions(tmp_path, small_config):
     dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
-    fresh = dataset.generate_from_dataset(n_cells=5, seed=19,
+    fresh = dataset.generate_new_cells(n_cells=5, seed=19,
         model_parameters={"p_tissue": [0, 1], "p_batch": [0, 1], "std_dev_libsize": [0, 0]})
     edited = fresh.generate_interventions({"concept_0": 1})
     inputs, concepts, data = _generation_tensors(edited)
@@ -1167,7 +1167,7 @@ def test_variants_save_separate_files_beside_source(tmp_path, small_config, monk
         return save(value, path, *args, **kwargs)
 
     monkeypatch.setattr(torch, "save", save_variant)
-    dataset = (source.generate_from_dataset(seed=7) if kind == "generated"
+    dataset = (source.generate_new_cells(seed=7) if kind == "generated"
                else source.generate_interventions({"concept_0": 0}))
     assert Path(dataset.root).parent == Path(source.root).parent
     assert set(dataset.processed_paths).isdisjoint(source.processed_paths)
@@ -1180,7 +1180,7 @@ def test_variants_save_separate_files_beside_source(tmp_path, small_config, monk
 def test_generating_from_subset_samples_new_cell_identifiers(tmp_path, small_config):
     source = SingleCellDataset(root=tmp_path, generation_config=small_config)
     source._subset_rows([7, 2, 9])
-    fresh = source.generate_from_dataset(seed=7)
+    fresh = source.generate_new_cells(seed=7)
     assert len(fresh) == 3
     torch.testing.assert_close(_state(fresh)["cell_background"]["cell_indices"], torch.arange(3))
     assert not torch.equal(fresh.cell_background["noise"], source.cell_background["noise"])
@@ -1196,8 +1196,8 @@ def test_repeated_generation_reuses_cache_without_evaluating_model(tmp_path, sma
         return model(*args, **kwargs)
 
     monkeypatch.setattr(single_cell, "model", evaluate)
-    first = source.generate_from_dataset(model_parameters=parameters, seed=7)
-    second = source.generate_from_dataset(model_parameters=parameters, seed=7)
+    first = source.generate_new_cells(model_parameters=parameters, seed=7)
+    second = source.generate_new_cells(model_parameters=parameters, seed=7)
     assert len(calls) == 1
     assert first.processed_paths == second.processed_paths
     torch.testing.assert_close(first.input_data, second.input_data, rtol=0, atol=0)
@@ -1208,7 +1208,7 @@ def test_repeated_generation_reuses_cache_without_evaluating_model(tmp_path, sma
     {}, {"n_cells": None}, {"model_parameters": None}, {"seed": None},
     {"n_cells": None, "model_parameters": None, "seed": None},
 ])
-def test_generate_from_dataset_rejects_only_all_none_arguments(tmp_path, small_config, monkeypatch, arguments):
+def test_generate_new_cells_rejects_only_all_none_arguments(tmp_path, small_config, monkeypatch, arguments):
     dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
 
     def unexpected_model(*args, **kwargs):
@@ -1216,7 +1216,7 @@ def test_generate_from_dataset_rejects_only_all_none_arguments(tmp_path, small_c
 
     monkeypatch.setattr(single_cell, "model", unexpected_model)
     with pytest.raises(ValueError, match="at least one"):
-        dataset.generate_from_dataset(**arguments)
+        dataset.generate_new_cells(**arguments)
 
 
 @pytest.mark.parametrize("arguments", [
@@ -1224,14 +1224,14 @@ def test_generate_from_dataset_rejects_only_all_none_arguments(tmp_path, small_c
     {"n_cells": 10, "seed": 42}, {"same_parameters": True},
     {"same_parameters": True, "n_cells": 10, "seed": 42},
 ])
-def test_generate_from_dataset_accepts_unchanged_arguments(tmp_path, small_config, arguments):
+def test_generate_new_cells_accepts_unchanged_arguments(tmp_path, small_config, arguments):
     dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
     original = deepcopy(_state(dataset))
     arguments = arguments.copy()
     if arguments.pop("same_parameters", False):
         arguments["model_parameters"] = dataset.model_parameters
 
-    generated = dataset.generate_from_dataset(**arguments)
+    generated = dataset.generate_new_cells(**arguments)
     assert generated is not dataset
     assert len(generated) == len(dataset)
     assert generated.seed == dataset.seed
@@ -1240,11 +1240,11 @@ def test_generate_from_dataset_accepts_unchanged_arguments(tmp_path, small_confi
     torch.testing.assert_close(_state(dataset), original, rtol=0, atol=0)
 
 
-def test_generate_from_dataset_accepts_mixed_equal_and_changed_parameters(tmp_path, small_config):
+def test_generate_new_cells_accepts_mixed_equal_and_changed_parameters(tmp_path, small_config):
     dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
     parameters = deepcopy(dataset.model_parameters)
     parameters["baseline_expr"][0] += 0.01
-    fresh = dataset.generate_from_dataset(model_parameters=parameters, n_cells=len(dataset), seed=dataset.seed)
+    fresh = dataset.generate_new_cells(model_parameters=parameters, n_cells=len(dataset), seed=dataset.seed)
     torch.testing.assert_close(fresh.model_parameters, parameters, rtol=0, atol=0)
     assert len(fresh) == len(dataset)
 
@@ -1267,7 +1267,7 @@ def test_root_normalization_keeps_saved_data_and_variants_consistent(
     base = (user_dir if user_relative else work_dir) / "data" / "single_cell"
 
     source = SingleCellDataset(root=root, generation_config=small_config)
-    datasets = [source, source.generate_from_dataset(n_cells=5, seed=7),
+    datasets = [source, source.generate_new_cells(n_cells=5, seed=7),
                 source.generate_interventions({"concept_0": 1})]
     for dataset in datasets:
         assert Path(dataset.root).parent == base
@@ -1291,7 +1291,7 @@ def test_root_normalization_keeps_saved_data_and_variants_consistent(
     for dataset in datasets:
         torch.testing.assert_close(dataset.load_raw()[:2],
                                    (dataset.input_data, dataset._full_concepts), rtol=0, atol=0)
-    assert source.generate_from_dataset(n_cells=5, seed=7).root == datasets[1].root
+    assert source.generate_new_cells(n_cells=5, seed=7).root == datasets[1].root
     assert source.generate_interventions({"concept_0": 1}).root == datasets[2].root
     assert not (work_dir / "~").exists()
     assert not (other_dir / "data").exists()
@@ -1437,7 +1437,7 @@ def test_generation_uses_explicit_parameter_overrides(tmp_path, small_config):
     metadata = _state(dataset)
     parameters = dataset.model_parameters
     parameters["baseline_expr"] += 1
-    generated = dataset.generate_from_dataset(seed=7, model_parameters=parameters)
+    generated = dataset.generate_new_cells(seed=7, model_parameters=parameters)
     assert generated.generation_config["std_dev_noise"] == 0
     assert torch.count_nonzero(generated.cell_background["noise"]) == 0
     torch.testing.assert_close(generated.model_parameters, parameters, rtol=0, atol=0)
@@ -1449,8 +1449,8 @@ def test_generation_uses_explicit_parameter_overrides(tmp_path, small_config):
 def test_model_parameters_separate_cache_and_equivalent_requests_share_it(tmp_path, small_config, monkeypatch):
     source = SingleCellDataset(root=tmp_path, generation_config=small_config)
     baseline = source.model_parameters["baseline_expr"] + 1
-    first = source.generate_from_dataset(model_parameters={"baseline_expr": baseline})
-    second = source.generate_from_dataset(model_parameters={"baseline_expr": baseline + 1})
+    first = source.generate_new_cells(model_parameters={"baseline_expr": baseline})
+    second = source.generate_new_cells(model_parameters={"baseline_expr": baseline + 1})
     assert set(first.processed_paths).isdisjoint(second.processed_paths)
     torch.testing.assert_close(first.model_parameters["baseline_expr"], baseline, rtol=0, atol=0)
     assert torch.all(second.input_data >= first.input_data)
@@ -1460,7 +1460,7 @@ def test_model_parameters_separate_cache_and_equivalent_requests_share_it(tmp_pa
 
     monkeypatch.setattr(single_cell, "model", unexpected_model)
     parameters = {**source.model_parameters, "baseline_expr": baseline}
-    restored = source.generate_from_dataset(model_parameters=dict(reversed(list(parameters.items()))))
+    restored = source.generate_new_cells(model_parameters=dict(reversed(list(parameters.items()))))
     assert restored.processed_paths == first.processed_paths
     torch.testing.assert_close(restored.input_data, first.input_data, rtol=0, atol=0)
 
@@ -1470,7 +1470,7 @@ def test_intervention_values_and_background_separate_cache(tmp_path, small_confi
     first = source.generate_interventions({"concept_0": 0})
     second = source.generate_interventions({"concept_0": 1})
     assert set(first.processed_paths).isdisjoint(second.processed_paths)
-    new_cells = source.generate_from_dataset(seed=7)
+    new_cells = source.generate_new_cells(seed=7)
     third = new_cells.generate_interventions({"concept_0": 0})
     assert set(first.processed_paths).isdisjoint(third.processed_paths)
     torch.testing.assert_close(third.cell_background, new_cells.cell_background, rtol=0, atol=0)
@@ -1492,7 +1492,7 @@ def test_incomplete_variant_can_be_regenerated_from_source(tmp_path, small_confi
 
     def generate():
         if kind == "generated":
-            return source.generate_from_dataset(seed=7)
+            return source.generate_new_cells(seed=7)
         return source.generate_interventions({"concept_0": 0})
 
     variant = generate()
@@ -1516,7 +1516,7 @@ def test_saved_variant_loads_by_directory_without_generation(tmp_path, small_con
     source = SingleCellDataset(root=tmp_path, generation_config=small_config)
     source._subset_rows([7, 2, 9])
     if kind == "generated":
-        variant = source.generate_from_dataset(n_cells=5, seed=7)
+        variant = source.generate_new_cells(n_cells=5, seed=7)
     else:
         variant = source.generate_interventions({"concept_0": 1})
     target = tmp_path / "copied_dataset"
@@ -1574,7 +1574,7 @@ def test_rebuild_is_independent_of_exposed_parameters(tmp_path, small_config, ki
     source = SingleCellDataset(root=tmp_path, generation_config=small_config)
     parameters = source.model_parameters
     if kind == "generated":
-        variant = source.generate_from_dataset(seed=7)
+        variant = source.generate_new_cells(seed=7)
     elif kind == "intervened":
         variant = source.generate_interventions({"concept_0": 1})
     else:
@@ -1599,7 +1599,7 @@ def test_embedding_cache_is_separate_per_variant(tmp_path, small_config, monkeyp
 
     source = SingleCellDataset(root=tmp_path, generation_config=small_config)
     parameters = {"baseline_expr": source.model_parameters["baseline_expr"] + 1}
-    variant = source.generate_from_dataset(seed=7, model_parameters=parameters)
+    variant = source.generate_new_cells(seed=7, model_parameters=parameters)
     assert not torch.equal(source.input_data, variant.input_data)
     backbone = Identity()
     for dataset in (source, variant):
@@ -1612,6 +1612,6 @@ def test_embedding_cache_is_separate_per_variant(tmp_path, small_config, monkeyp
         raise AssertionError("Reuse the variant's saved embeddings.")
 
     monkeypatch.setattr(backbone, "forward", unexpected_forward)
-    restored = source.generate_from_dataset(seed=7, model_parameters=parameters)
+    restored = source.generate_new_cells(seed=7, model_parameters=parameters)
     restored.precompute_embeddings(backbone)
     torch.testing.assert_close(restored.input_data, variant.input_data, rtol=0, atol=0)

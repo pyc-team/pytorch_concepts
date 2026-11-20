@@ -1,4 +1,7 @@
-"Synthetic dataset and corresponding interventions introduced in scCBGM (https://arxiv.org/abs/2606.07760)"
+"""Synthetic data and interventions from scCBGM: Interpretable Single-Cell Counterfactual Editing.
+
+Paper: https://arxiv.org/abs/2606.07760.
+"""
 
 import hashlib
 import json
@@ -191,7 +194,6 @@ def _compute_model_parameters(config, rng=None) -> dict:
     baseline_expr = rng.uniform(r, s, size=n_genes)
 
     if config["zero_inflate"]:
-        # As in scCBGM, sparsity masks concept coefficients, not observed counts.
         probability = 1 - rng.beta(config["beta_a"], config["beta_b"], size=n_original_concepts)
         mask = np.vstack([rng.binomial(1, probability[i], size=n_genes) for i in range(n_original_concepts)])
         concept_effect = concept_effect * mask
@@ -222,21 +224,14 @@ def model(
     std_dev_noise=0.01,
     exog_noise=None,
 ) -> tuple[torch.Tensor, torch.Tensor, dict]:
-    """Generate synthetic single-cell gene expression data using a
-    hierarchical overdispersed Poisson model.
+    """A generative model for synthetic single-cell gene expression data.
+    
+    The generated data are organized into gene expression counts (inputs), 
+    binary concept activations (concepts), and additional cell-specific information (cell_background). 
+    This separation enables concept interventions to regenerate gene expression profiles 
+    while preserving other cell-specific characteristics.
 
-    Gene expression is determined by gene-specific baseline expression,
-    cell-specific library size, batch, tissue, cell-type and concept effects,
-    and residual noise.
-
-    The generated data are separated into gene expression counts (inputs),
-    binary concept activations (concepts), and additional cell-specific
-    information (cell_background). This separation allows concept interventions
-    to regenerate gene expression while preserving the other cell characteristics.
-    A supplied cell_background includes the count-sampling quantiles and cannot
-    be combined with exog_noise; doing so raises ValueError.
-
-    See paper: https://arxiv.org/abs/2606.07760 for the scCBGM generative model.
+    See dataset documentation for details on the generative model.
 
     Returns
     -------
@@ -324,20 +319,20 @@ def model(
 class SingleCellDataset(ConceptDataset):
     """Dataset class for synthetic single-cell gene expression dataset from scCBGM.
 
-    This class generates a synthetic single-cell dataset, where each cell is represented by gene expression counts across multiple genes 
-    and a set of binary concept annotations.
+    This class generates a synthetic single-cell gene expression dataset, where each sample represents a cell characterized by gene expression counts across multiple genes.
     Gene expression counts are simulated using a hierarchical overdispersed Poisson model. 
     For each cell, gene expression depends on gene-specific baseline expression, library size, batch, tissue, cell type, 
     and additional biological factors called *concepts*, together with residual noise.
-    Concepts represent interpretable biological factors, such as the activation of gene programs or signaling pathways. 
+    Concepts represent interpretable biological factors, such as biological pathways. 
     Each concept can be active (1) or inactive (0) in a cell, with an activation probability depending on the cell type, 
     and influences gene expression through concept-specific coefficients.
 
-    :meth:`generate_from_dataset` generates a new synthetic dataset using the same model parameters and cell background as the current dataset.
+    :meth:`generate_new_cells` samples new cells using dataset's global
+    model parameters, with optional overrides. Concepts and cell background
+    are sampled again.
 
-    :meth:`generate_interventions` creates a new synthetic dataset with modified
-    concept values, keeping the same cell background and generator parameters.
-    New cells can also be generated using the same model parameters.
+    :meth:`generate_interventions` creates a new synthetic dataset with modified concept values, 
+    keeping the same cell background and generator parameters.
 
     For more details, see Andersson et al. (2026), *scCBGM: Interpretable Single-Cell
     Counterfactual Editing*, for details: https://arxiv.org/abs/2606.07760.
@@ -370,7 +365,7 @@ class SingleCellDataset(ConceptDataset):
     Example::
 
         dataset = SingleCellDataset(generation_config={"n_cells": 1000})
-        new_cells = dataset.generate_from_dataset(n_cells=500, seed=7)
+        new_cells = dataset.generate_new_cells(n_cells=500, seed=7)
         edited = dataset.generate_interventions({"concept_0": 1})
         restored = SingleCellDataset(root=dataset.root)
     """
@@ -425,22 +420,18 @@ class SingleCellDataset(ConceptDataset):
 
     @property
     def generation_config(self) -> dict:
-        """Return an independent copy of the generation settings."""
         return deepcopy(self._generation_config)
 
     @property
     def model_parameters(self) -> dict:
-        """Return independent parameters; apply changes via generate_from_dataset."""
         return deepcopy(self._model_parameters)
 
     @property
     def cell_background(self) -> dict:
-        """Return an independent copy of the fixed cell background."""
         return deepcopy(self._cell_background)
 
     @property
     def cell_types(self) -> torch.Tensor:
-        """Return a copy of the cell-type IDs in the current row order."""
         return self._cell_background["celltype"].clone()
 
     @property
@@ -464,7 +455,6 @@ class SingleCellDataset(ConceptDataset):
         pass
 
     def build(self):
-        """Generate and save an initial dataset from its settings and seed."""
         if any(os.path.exists(path) for path in self.processed_paths):
             if all(os.path.isfile(path) for path in self.processed_paths):
                 return
@@ -480,7 +470,6 @@ class SingleCellDataset(ConceptDataset):
                            self.seed)
 
     def _save_dataset(self, paths, inputs, concepts, config, parameters, background, seed):
-        """Write the supplied files; initial generation and variants share the format."""
         root = os.path.dirname(paths[0])
         os.makedirs(root, exist_ok=True)
         n_original_concepts = config["n_concepts"]
@@ -499,14 +488,20 @@ class SingleCellDataset(ConceptDataset):
                     "model_parameters": parameters, "cell_background": background},
                    paths[4])
 
-    def generate_from_dataset(self, *, n_cells=None, model_parameters=None, seed=None):
+    def generate_new_cells(self, *, n_cells=None, model_parameters=None, seed=None):
         """Sample new cells with copied global parameters and optional overrides.
 
-        Note: model_parameters accepts a partial dictionary, e.g.
-        {"baseline_expr": new_baseline}. Every omitted parameter retains
-        its value from this dataset. Probabilities must be in [0, 1]; categorical
-        distributions must sum to 1 along the last dimension. The covariance
-        must be symmetric positive semidefinite and std_dev_libsize nonnegative.
+        Args:
+            n_cells: Number of cells to generate. Defaults to the current
+                number of cells in this dataset.
+            model_parameters: Optional partial dictionary of global parameter
+                overrides, e.g. {"baseline_expr": new_baseline}. Omitted
+                parameters retain their values from this dataset. Supplied
+                values must be finite and keep their original shapes.
+            seed: Random seed for sampling. Defaults to this dataset's seed.
+
+        Returns:
+           A new dataset containing cells generated using the original dataset's global model parameters, with optional overrides.
         """
         if n_cells is None and model_parameters is None and seed is None:
             raise ValueError("Provide at least one of n_cells, model_parameters or seed.")
@@ -546,20 +541,12 @@ class SingleCellDataset(ConceptDataset):
         Note: This is different from usual concept interventions in the library,
         which instead change the concepts predicted by a model during inference.
 
-        Accepts named overrides, a DataFrame with any subset of cell and concept names,
-        or a matrix in binary concept order. Concepts must be 0 or 1.
-        Celltype, tissue and batch remain fixed in cell_background.
-        Note: {"concept_0": 1} changes only concept_0. A partial DataFrame
-        changes only its named cells and columns; all omitted values are retained.
-        Parameters, untouched concepts and every background tensor stay fixed.
-
         Args:
             concepts: Concept overrides as described above.
             cell_type: Restrict changes to this cell type (zero-based ID).
-                None changes all cell types, as before.
+                None changes all cell types.
 
-        The result keeps all rows aligned with this dataset. Choose train/test
-        indices separately and use the same positions for paired counterfactual targets.
+        The result keeps all rows aligned with the original dataset.
         """
         config = {**self.generation_config, "n_cells": len(self)}
         if cell_type is not None and (
@@ -608,7 +595,6 @@ class SingleCellDataset(ConceptDataset):
                           label_descriptions=deepcopy(self.label_descriptions))
 
     def _subset_rows(self, indices) -> None:
-        """Also subset full concepts and background, including cell identifiers."""
         row_indices = indices.tolist() if hasattr(indices, "tolist") else list(indices)
         super()._subset_rows(row_indices)
         self._full_concepts = self._full_concepts[row_indices]

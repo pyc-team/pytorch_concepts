@@ -24,13 +24,15 @@ The split is computed explicitly below and passed to the datamodule through
 a FixedIndicesSplitter. The intervened dataset contains the same cells in the same order.
 We use the test indices to select the paired counterfactual targets.
 
-Optional annotation experiments are selected with ANNOTATION_MODIFICATION:
+Optional modifications to concept annotations are applied according to the specified modality in ANNOTATION_MODIFICATION:
 - noise: flip binary labels with probability p_noise in n_mod concepts;
 - drop: remove n_mod concept columns from supervision;
 - add: append n_mod independent Bernoulli concepts with probability p_active;
 - duplicate: append n_replica copies of each of n_mod selected concepts.
 
-This experiment is adapted from the original implementation accompanying the paper scCBGM: Single-Cell Editing via Concept Bottlenecks (Andersson et al., ICML 2026).
+This experiment is adapted from the original implementation accompanying
+*scCBGM: Interpretable Single-Cell Counterfactual Editing*
+(Andersson et al., ICML 2026): https://arxiv.org/abs/2606.07760.
 """
 
 import numpy as np
@@ -169,7 +171,6 @@ train_idxs, test_idxs = counterfactual_indices(
 dm.splitter = FixedIndicesSplitter(train_idxs=train_idxs, val_idxs=[], test_idxs=test_idxs)
 
 # Modify the selected observed annotations in the original dataset according to the specified mode. 
-# Since only the original dataset is used for training, there is no need to modify the annotations in the intervened dataset.
 if ANNOTATION_MODIFICATION["mode"] != "identity":
     observed = modify_annotations(
         dm.dataset.native_concepts, target_concept=target_concept,
@@ -215,7 +216,7 @@ model = ConceptBottleneckVAE(
     embedding_size=embedding_size,
     concepts_to_decoder=True,
     inference_kwargs={"p_int": 0.0},
-    train_inference_kwargs={"p_int": 0.0},  # decode from predicted concepts during training
+    train_inference_kwargs={"p_int": 0.0},  
 )
 loss_fn = CompositeLoss(
     terms=[
@@ -244,8 +245,6 @@ for epoch in range(EPOCHS):
         seen += len(inputs)
     print(f"Epoch {epoch + 1}: loss = {total_loss / seen:.4f}")
 
-# 8. Abduction: infer one latent per original test cell, then keep it fixed.
-# The original CB_VAE.intervene also decodes from the posterior mean.
 model.eval()
 with torch.no_grad():
     posterior = model(query=list(model.pgm.variables), input=original_test)
@@ -262,7 +261,7 @@ with torch.no_grad():
     with intervention(model, DoIntervention(on_logit), UniformPolicy(), [target_concept]):
         counterfactual_prediction = model(query=query, evidence={"z": latent})
 
-# 9. All three MSEs compare against counterfactual_test: the original cell,
+# 8. All three MSEs compare against counterfactual_test: the original cell,
 # the reconstruction without intervention, and the prediction after intervention.
 original_prediction = reconstruction.value["input"].tensor
 predicted_counterfactual = counterfactual_prediction.value["input"].tensor

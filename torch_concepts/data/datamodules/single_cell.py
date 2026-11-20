@@ -10,8 +10,8 @@ class SingleCellDataModule(ConceptDataModule):
     Generates gene counts with binary concept labels and prepares train,
     validation and test dataloaders.
     See :class:`SingleCellDataset` for the dataset description and concept editing
-    and the scCBGM paper for the generative model:
-    https://arxiv.org/abs/2606.07760.
+    and *scCBGM: Interpretable Single-Cell Counterfactual Editing* for more
+    details: https://arxiv.org/abs/2606.07760.
 
     Parameters
     ----------
