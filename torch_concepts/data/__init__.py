@@ -34,6 +34,7 @@ from .datasets.dsprites_regression import DSpritesRegressionDataset
 from .datasets.awa2 import AWA2Dataset
 from .datasets.cub import CUBDataset
 from .datasets.ham10000 import HAM10000Dataset
+from .datasets.cbis_ddsm import CBISDDSMDataset
 from .datasets.pneumothorax import PneumothoraxDataset
 
 # Re-export datamodules for convenient access
@@ -48,6 +49,7 @@ from .datamodules.dsprites_regression import DSpritesRegressionDataModule
 from .datamodules.awa2 import AWA2DataModule
 from .datamodules.cub import CUBDataModule
 from .datamodules.ham10000 import HAM10000DataModule
+from .datamodules.cbis_ddsm import CBISDDSMDataModule
 from .datamodules.pneumothorax import PneumothoraxDataModule
 
 __all__ = [
@@ -78,6 +80,7 @@ __all__ = [
     "AWA2Dataset",
     "CUBDataset",
     "HAM10000Dataset",
+    "CBISDDSMDataset",
     "PneumothoraxDataset",
 
     # DataModules
@@ -92,5 +95,6 @@ __all__ = [
     "AWA2DataModule",
     "CUBDataModule",
     "HAM10000DataModule",
+    "CBISDDSMDataModule",
     "PneumothoraxDataModule",
 ]
