@@ -58,13 +58,14 @@ class WearDataset(DynamicConceptDataset):
       concept records it.
     - ``alarm`` (binary): 1 when the mean health is below ``ALARM_THRESHOLD = -0.45``.
 
-    As in N-CMAPSS [1]_, the operating conditions drift over time and set both
-    the baseline of every reading and how strongly it responds to the health,
-    so reading the health from the sensors is a nonlinear task.
+    The operating conditions drift over time and set both the baseline of
+    every reading and how strongly it responds to the health, so reading the
+    health from the sensors is a nonlinear task. The design follows N-CMAPSS
+    [1]_.
 
     A sample is a window of ``window`` steps of one machine, one every
-    ``stride`` steps, as in
-    :class:`~torch_concepts.data.base.DynamicConceptDataset`; by default the
+    ``stride`` steps (see
+    :class:`~torch_concepts.data.base.DynamicConceptDataset`); by default the
     whole series. With ``n_windows = (n_steps - window) // stride + 1``:
 
     - ``input_data`` is ``(n_gen * n_windows, window, 2 + n_sensors)``: the two

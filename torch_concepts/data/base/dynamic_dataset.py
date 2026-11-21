@@ -23,7 +23,7 @@ class DynamicConceptDataset(ConceptDataset):
     at the end are dropped. The windows are then flattened with the series
     into the sample axis: each sample is one window of one series,
     ``(window, F)`` and ``(window, C)``, so there are ``n_windows * N``
-    samples. With ``flatten_series=False``, each sample is instead one window
+    samples. With ``flatten_series=False``, each sample is one window
     of all the series, ``(window, N, F)`` and ``(window, N, C)``. The model
     picks which steps of a sample it observes and which it predicts.
 
@@ -36,7 +36,7 @@ class DynamicConceptDataset(ConceptDataset):
     Args:
         input_data: Input series, ``(T, N, F)``, or ``(T, F)`` for one series.
         concepts: Optional concept series, ``(T, N, C)`` or ``(T, C)``.
-        annotations: Concept metadata, as in :class:`ConceptDataset`.
+        annotations: Concept metadata (see :class:`ConceptDataset`).
         window: Steps per sample (default: ``T``).
         stride: Steps from the start of one window to the start of the next
             (default: ``window``, so windows do not overlap).
