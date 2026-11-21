@@ -1,4 +1,4 @@
-"""DynamicInference against the recursion of the model written in plain torch
+"""UnrolledInference against the recursion of the model written in plain torch
 with the same modules, and as an engine: an ``nn.Module`` that holds the DBN,
 with one temperature for the engines of every horizon.
 
@@ -9,7 +9,6 @@ condition on the evidence, and those with a temperature schedule.
 """
 import math
 
-import numpy as np
 import pytest
 import torch
 import torch.distributions as dist
@@ -19,8 +18,8 @@ from torch_concepts.annotations import Annotations
 from torch_concepts.distributions import Delta
 from torch_concepts.nn import (
     AncestralSamplingInference, BaseInference, BeliefPropagation, ConceptVariable,
-    DynamicBayesianNetwork, DynamicInference, EmbeddingVariable, FixedPrior, LearnablePrior,
-    MAPForwardInference, ParametricCPD, PgmpyVariableElimination, RejectionSampling, VariationalInference,
+    DynamicBayesianNetwork, EmbeddingVariable, FixedPrior, LearnablePrior, MAPForwardInference,
+    ParametricCPD, PgmpyVariableElimination, RejectionSampling, UnrolledInference, VariationalInference,
 )
 from torch_concepts.tensor import AnnotatedTensor
 
@@ -102,7 +101,7 @@ def _reference(dbn, x, horizon, c=None, u=None):
 
 def test_free_forecast_matches_the_reference():
     dbn, x = _model(), torch.randn(B, 3)
-    engine = DynamicInference(dbn)
+    engine = UnrolledInference(dbn)
     out = engine.query(["c", "h", "y"], {"x": x}, horizon=H)
     ref = _reference(dbn, x, H)
     assert out.value["c"].shape == (B, H + 1, 2)
@@ -117,7 +116,7 @@ def test_free_forecast_matches_the_reference():
 
 def test_labels_and_groups_are_those_of_the_model():
     dbn, x = _model(), torch.randn(B, 3)
-    out = DynamicInference(dbn).query(["c", "c_a", "y"], {"x": x}, horizon=H)  # c_a reported once
+    out = UnrolledInference(dbn).query(["c", "c_a", "y"], {"x": x}, horizon=H)  # c_a reported once
     assert out.value.annotations.labels == ["c_a", "c_b"]
     assert out.value.annotations.label_groups == {"c": ["c_a", "c_b"]}
     assert out.logits.annotations.labels == ["y"]
@@ -126,7 +125,7 @@ def test_labels_and_groups_are_those_of_the_model():
 
 def test_teacher_forcing():
     dbn, x, targets = _model(), torch.randn(B, 3), torch.randn(B, H + 1, 2)
-    engine = DynamicInference(dbn, p_int=1.0)
+    engine = UnrolledInference(dbn, p_int=1.0)
     out = engine.query({"c": targets, "y": None}, {"x": x}, horizon=H)
     # The reported c are the predictions, each step made from the targets of the step before.
     ref = _reference(dbn, x, H, c={t: targets[:, t] for t in range(H + 1)})
@@ -137,16 +136,16 @@ def test_teacher_forcing():
 
 def test_a_value_at_one_step():
     dbn, x, v = _model(), torch.randn(B, 3), torch.randn(B, 2)
-    engine = DynamicInference(dbn, p_int=1.0)
-    out = engine.query({"c": None, ("c", 2): v}, {"x": x}, horizon=H)
+    engine = UnrolledInference(dbn, p_int=1.0)
+    out = engine.query({"c": None, "c_2": v}, {"x": x}, horizon=H)
     assert torch.allclose(out.value["c"].tensor, _reference(dbn, x, H, c={2: v})["c"])
 
 
 def test_evidence_at_every_step_and_at_one_step():
     dbn, x, v = _model(), torch.randn(B, 3), torch.randn(B, 2)
-    engine = DynamicInference(dbn)
+    engine = UnrolledInference(dbn)
     every = engine.query(["c"], {"x": x, "u": torch.zeros(B, H, 2)}, horizon=H)
-    one = engine.query(["c"], {"x": x, ("u", 2): v}, horizon=H)
+    one = engine.query(["c"], {"x": x, "u_2": v}, horizon=H)
     zeros = {t: torch.zeros(B, 2) for t in range(1, H + 1)}
     assert torch.allclose(every.value["c"].tensor, _reference(dbn, x, H, u=zeros)["c"])
     assert torch.allclose(one.value["c"].tensor, _reference(dbn, x, H, u={2: v})["c"])
@@ -154,7 +153,7 @@ def test_evidence_at_every_step_and_at_one_step():
 
 def test_member_evidence():
     dbn, x, v = _model(), torch.randn(B, 3), torch.randn(B, 1)
-    out = DynamicInference(dbn).query(["c", "y"], {"x": x, ("c_b", 1): v}, horizon=H)
+    out = UnrolledInference(dbn).query(["c", "y"], {"x": x, "c_b_1": v}, horizon=H)
     # Step 1 carries the predicted c_a and the given c_b.
     c_1 = torch.cat([_reference(dbn, x, H)["c"][:, 1, :1], v], -1)
     ref = _reference(dbn, x, H, c={1: c_1})
@@ -165,13 +164,13 @@ def test_member_evidence():
 def test_the_interface_given_at_a_step_without_a_query():
     # Step 1 is fully given and not queried; step 2 reads the given values.
     dbn, x, c_1 = _model(), torch.randn(B, 3), torch.randn(B, 2)
-    evidence = {"x": x, ("c", 1): c_1, ("h", 1): torch.randn(B, 2)}
-    out = DynamicInference(dbn).query([("y", 0), ("y", 2)], evidence, horizon=H)
+    evidence = {"x": x, "c_1": c_1, "h_1": torch.randn(B, 2)}
+    out = UnrolledInference(dbn).query(["y_0", "y_2"], evidence, horizon=H)
     assert torch.allclose(out.logits["y"].tensor, _reference(dbn, x, H, c={1: c_1})["y"][:, [0, 2]])
 
 
 def test_n_samples_sets_the_batch_of_a_query_without_tensors():
-    engine = DynamicInference(_chain())
+    engine = UnrolledInference(_chain())
     assert engine.query(["z"], horizon=2).logits["z"].shape == (1, 3, 1)
     assert engine.query(["z"], horizon=2, n_samples=6).logits["z"].shape == (6, 3, 1)
 
@@ -201,7 +200,7 @@ def test_a_matrix_parameter_keeps_its_two_axes():
                                   parametrization={"loc": nn.Linear(2, 2), "scale_tril": _Tril(2, 2)})],
     )
     window = torch.randn(B, 2)
-    out = DynamicInference(dbn).query(["z"], {"x": window}, horizon=H)
+    out = UnrolledInference(dbn).query(["z"], {"x": window}, horizon=H)
     assert out.params["scale_tril"].shape == (B, H + 1, 2, 2)
     assert torch.allclose(out.params["scale_tril"].tensor[:, 0], tril(window))
 
@@ -214,7 +213,7 @@ def test_the_time_axis_precedes_an_event_of_two_axes():
         transition=[ParametricCPD(h, parents=[h.previous()], parametrization=nn.Softmax(dim=-1))],
     )
     targets = torch.randn(B, H + 1, 2, 3)
-    out = DynamicInference(dbn, p_int=1.0).query({"h": targets}, horizon=H)
+    out = UnrolledInference(dbn, p_int=1.0).query({"h": targets}, horizon=H)
     # h_t is the softmax over the last axis of the target of step t - 1; the output, as from a
     # static engine, flattens the event.
     assert torch.allclose(out.value["h"].tensor[:, 1:], targets[:, :-1].softmax(-1).flatten(-2))
@@ -223,7 +222,7 @@ def test_the_time_axis_precedes_an_event_of_two_axes():
 def test_gradients_match_the_reference():
     dbn, x = _model(), torch.randn(B, 3)
     params = list(dbn.parameters())
-    c = DynamicInference(dbn).query(["c"], {"x": x}, horizon=H).value["c"].tensor
+    c = UnrolledInference(dbn).query(["c"], {"x": x}, horizon=H).value["c"].tensor
     grads = torch.autograd.grad(c.pow(2).mean(), params, materialize_grads=True)
     ref = torch.autograd.grad(_reference(dbn, x, H)["c"].pow(2).mean(), params, materialize_grads=True)
     assert any(g.abs().sum() > 0 for g in grads)
@@ -232,7 +231,7 @@ def test_gradients_match_the_reference():
 
 
 def test_leading_dims():
-    engine = DynamicInference(_model())
+    engine = UnrolledInference(_model())
     x, u = torch.randn(2, 3, 3), torch.randn(2, 3, H, 2)
     out = engine.query(["c"], {"x": x, "u": u}, horizon=H).value["c"]
     flat = engine.query(["c"], {"x": x.reshape(6, 3), "u": u.reshape(6, H, 2)}, horizon=H).value["c"]
@@ -243,7 +242,7 @@ def test_leading_dims():
 def test_an_annotated_tensor_is_read_as_its_tensor():
     dbn, x, targets = _model(), torch.randn(B, 3), torch.randn(B, H + 1, 2)
     annotations = Annotations(labels=["c_a", "c_b"], cardinalities=[1, 1], types=["continuous"] * 2)
-    engine = DynamicInference(dbn, p_int=1.0)
+    engine = UnrolledInference(dbn, p_int=1.0)
     out = engine.query({"c": AnnotatedTensor(targets, annotations, axis=-1)}, {"x": x}, horizon=H)
     assert torch.equal(out.value["c"].tensor, engine.query({"c": targets}, {"x": x}, horizon=H).value["c"].tensor)
 
@@ -252,7 +251,7 @@ def test_an_annotated_tensor_is_read_as_its_tensor():
 
 def test_ancestral_sampling():
     dbn, x = _model(), torch.randn(B, 3)
-    engine = DynamicInference(dbn, AncestralSamplingInference, exact=True)
+    engine = UnrolledInference(dbn, AncestralSamplingInference, exact=True)
     samples = engine.query(["c", "y"], {"x": x}, horizon=H).samples
     assert samples.shape == (B, H + 1, 3)
     assert samples.annotations.labels == ["c_a", "c_b", "y"]
@@ -261,7 +260,7 @@ def test_ancestral_sampling():
 
 def test_map_forward():
     dbn, x = _model(), torch.randn(B, 3)
-    out = DynamicInference(dbn, MAPForwardInference).query(["c", "y"], {"x": x}, horizon=H)
+    out = UnrolledInference(dbn, MAPForwardInference).query(["c", "y"], {"x": x}, horizon=H)
     assert torch.allclose(out.samples["c"].tensor, _reference(dbn, x, H)["c"])
     assert torch.equal(out.samples["y"].tensor, (out.logits["y"].tensor > 0).float())
     # As its query does, the engine builds no graph.
@@ -273,7 +272,7 @@ def test_map_forward():
 ])
 def test_an_engine_conditions_on_a_later_step(engine, kwargs):
     dbn, o = _chain(), torch.ones(3, 1)
-    out = DynamicInference(dbn, engine, **kwargs).query({("z", 1): o}, {("o", 2): o}, horizon=2)
+    out = UnrolledInference(dbn, engine, **kwargs).query({"z_1": o}, {"o_2": o}, horizon=2)
     by_hand = engine(dbn.unroll(2), **kwargs).query({"z_1": o}, evidence={"o_2": o})
     assert out.probs["z"].shape == (3, 1, 1)
     assert torch.allclose(out.probs["z"].tensor[:, 0], by_hand.probs["z_1"].tensor)
@@ -300,27 +299,27 @@ def test_variational_inference_reports_the_guide_per_step():
         return VariationalInference(bn, latents=latents)
 
     observed = torch.randn(B, 3, 1)
-    out = DynamicInference(dbn, engine).query(["z"], {"x": torch.randn(B, 2), "o": observed}, horizon=2)
+    out = UnrolledInference(dbn, engine).query(["z"], {"x": torch.randn(B, 2), "o": observed}, horizon=2)
     assert out.guide_params["loc"]["z"].shape == (B, 3, 1)
     assert torch.allclose(out.guide_params["loc"]["z"].tensor, guide["loc"](observed))
 
 
 def test_rejection_sampling():
     ones = torch.ones(3, 1)
-    engine = DynamicInference(_chain(), RejectionSampling, n_samples=200)
-    p = engine.query({("z", 1): ones}, {("o", 2): ones}, horizon=2).probabilities
+    engine = UnrolledInference(_chain(), RejectionSampling, n_samples=200)
+    p = engine.query({"z_1": ones}, {"o_2": ones}, horizon=2).probabilities
     assert p.shape == (3,)
     assert ((p >= 0) & (p <= 1)).all()
 
 
 # --------------------------------------------------------------- as an engine ----
 
-def test_dynamic_inference_is_an_engine_on_the_dbn():
+def test_unrolled_inference_is_an_engine_on_the_dbn():
     dbn, x = _model(), torch.randn(B, 3)
-    engine = DynamicInference(dbn)
+    engine = UnrolledInference(dbn)
     assert isinstance(engine, BaseInference) and isinstance(engine, nn.Module) and engine.pgm is dbn
     assert [id(p) for p in engine.parameters()] == [id(p) for p in dbn.parameters()]
-    assert repr(engine) == "DynamicInference(engine=DeterministicInference)" and engine.name == "DynamicInference"
+    assert repr(engine) == "UnrolledInference(engine=DeterministicInference)" and engine.name == "UnrolledInference"
     # called as it is queried, with the horizon
     assert torch.equal(engine(["c"], {"x": x}, horizon=2).value["c"].tensor,
                        engine.query(["c"], {"x": x}, horizon=2).value["c"].tensor)
@@ -328,75 +327,75 @@ def test_dynamic_inference_is_an_engine_on_the_dbn():
 
 def test_the_state_dict_holds_the_dbn_and_the_temperature():
     o, schedule = torch.ones(3, 1), dict(annealing="exponential", annealing_rate=0.5, final_temperature=0.05)
-    engine = DynamicInference(_chain(), AncestralSamplingInference, **schedule)
+    engine = UnrolledInference(_chain(), AncestralSamplingInference, **schedule)
     keys = {"_temperature", *(f"pgm.{k}" for k in engine.pgm.state_dict())}
     assert set(engine.state_dict()) == keys
     for horizon in (2, 3):  # the engines of the horizons are not in it
-        engine.query(["z"], {("o", 1): o}, horizon=horizon)
+        engine.query(["z"], {"o_1": o}, horizon=horizon)
     engine.temperature_step()
     assert set(engine.state_dict()) == keys
-    fresh = DynamicInference(_chain(), AncestralSamplingInference, **schedule)
+    fresh = UnrolledInference(_chain(), AncestralSamplingInference, **schedule)
     fresh.load_state_dict(engine.state_dict())
-    fresh.query(["z"], {("o", 1): o}, horizon=2)
+    fresh.query(["z"], {"o_1": o}, horizon=2)
     assert float(fresh._engines[2].temperature) == float(engine.temperature) < 1.0
 
 
 def test_load_state_dict_with_assign_reaches_an_engine_built_before():
     # load_state_dict(assign=True) replaces the buffer of the temperature, as .to() does.
     o = torch.ones(3, 1)
-    engine = DynamicInference(_chain(), AncestralSamplingInference)
-    engine.query(["z"], {("o", 1): o}, horizon=2)
+    engine = UnrolledInference(_chain(), AncestralSamplingInference)
+    engine.query(["z"], {"o_1": o}, horizon=2)
     state = engine.state_dict()
     state["_temperature"] = torch.tensor(0.3)
     engine.load_state_dict(state, assign=True)
-    engine.query(["z"], {("o", 1): o}, horizon=2)
+    engine.query(["z"], {"o_1": o}, horizon=2)
     assert float(engine._engines[2].temperature) == pytest.approx(0.3)
 
 
 def test_to_reaches_an_engine_built_before():
     # .to() replaces the buffer of the temperature, which the next query gives to the engine.
     o = torch.ones(3, 1)
-    engine = DynamicInference(_chain(), AncestralSamplingInference, annealing="exponential", annealing_rate=0.5)
-    engine.query(["z"], {("o", 1): o}, horizon=2)
+    engine = UnrolledInference(_chain(), AncestralSamplingInference, annealing="exponential", annealing_rate=0.5)
+    engine.query(["z"], {"o_1": o}, horizon=2)
     engine.to(torch.float64)
     engine.temperature_step()
-    out = engine.query(["z"], {("o", 1): o.double()}, horizon=2)
+    out = engine.query(["z"], {"o_1": o.double()}, horizon=2)
     assert float(engine._engines[2].temperature) == float(engine.temperature) < 1.0
     assert engine._engines[2].temperature.dtype == out.logits["z"].tensor.dtype == torch.float64
 
 
 def test_clear_cache_drops_the_engines():
-    engine, x = DynamicInference(_model()), torch.randn(B, 3)
+    engine, x = UnrolledInference(_model()), torch.randn(B, 3)
     before = engine.query(["c"], {"x": x}, horizon=2).value["c"].tensor
     engine.clear_cache()
     assert engine._engines == {}
     assert torch.equal(engine.query(["c"], {"x": x}, horizon=2).value["c"].tensor, before)
 
 
-def test_the_engines_read_the_schedule_of_dynamic_inference():
-    # A function that takes the options of DynamicInference reads its schedule.
-    passed = DynamicInference(_chain(), lambda bn, **kw: AncestralSamplingInference(bn, **kw),
+def test_the_engines_read_the_schedule_of_unrolled_inference():
+    # A function that takes the options of UnrolledInference reads its schedule.
+    passed = UnrolledInference(_chain(), lambda bn, **kw: AncestralSamplingInference(bn, **kw),
                               initial_temperature=0.5)
-    passed.query(["z"], {("o", 1): torch.ones(3, 1)}, horizon=2)
+    passed.query(["z"], {"o_1": torch.ones(3, 1)}, horizon=2)
     assert float(passed._engines[2].temperature) == float(passed.temperature) == 0.5
 
 
 @pytest.mark.parametrize("own", [dict(initial_temperature=0.5), dict(annealing="exponential"),
                                  dict(annealing_rate=0.5), dict(final_temperature=0.05)])
 def test_an_engine_with_a_schedule_of_its_own_raises(own):
-    engine = DynamicInference(_chain(), lambda bn: AncestralSamplingInference(bn, **own))
+    engine = UnrolledInference(_chain(), lambda bn: AncestralSamplingInference(bn, **own))
     for _ in range(2):  # at every query: the engine is not kept
-        with pytest.raises(ValueError, match="pass the schedule to DynamicInference"):
-            engine.query(["z"], {("o", 1): torch.ones(3, 1)}, horizon=2)
+        with pytest.raises(ValueError, match="pass the schedule to UnrolledInference"):
+            engine.query(["z"], {"o_1": torch.ones(3, 1)}, horizon=2)
 
 
 def test_the_schedule_steps_every_engine_and_reaches_its_floor():
     o = torch.ones(3, 1)
-    engine = DynamicInference(_chain(), AncestralSamplingInference,
+    engine = UnrolledInference(_chain(), AncestralSamplingInference,
                               annealing="exponential", annealing_rate=0.5, final_temperature=0.05)
-    engine.query(["z"], {("o", 1): o}, horizon=2)
+    engine.query(["z"], {"o_1": o}, horizon=2)
     engine.temperature_step()
-    engine.query(["z"], {("o", 1): o}, horizon=4)  # a second engine, then one more step
+    engine.query(["z"], {"o_1": o}, horizon=4)  # a second engine, then one more step
     engine.temperature_step()
     assert [float(e.temperature) for e in engine._engines.values()] == pytest.approx([math.exp(-1.0)] * 2)
     for _ in range(10):
@@ -409,7 +408,7 @@ def test_the_constructors_draw_no_random_numbers():
     c = _plate("c")
     initial, transition = [_cpd(c)], [_cpd(c, c.previous())]
     state = torch.get_rng_state()
-    DynamicInference(DynamicBayesianNetwork([c], initial, transition))
+    UnrolledInference(DynamicBayesianNetwork([c], initial, transition))
     assert torch.equal(torch.get_rng_state(), state)
 
 
@@ -417,45 +416,41 @@ def test_the_constructors_draw_no_random_numbers():
 
 def test_horizon_must_be_at_least_1():
     with pytest.raises(ValueError, match="horizon"):
-        DynamicInference(_model()).query(["c"], {"x": torch.randn(B, 3)}, horizon=0)
+        UnrolledInference(_model()).query(["c"], {"x": torch.randn(B, 3)}, horizon=0)
 
 
 @pytest.mark.parametrize("query, evidence, match", [
     ([], {}, "empty"),
-    ([("u", 0)], {}, "not at 0"),
+    (["u_0"], {}, "not at 0"),
+    (["c_9"], {}, "exists at steps 0..4, not at 9"),
     (["c"], {"u": torch.zeros(B, H - 1, 2)}, "stacks them before the event"),  # one step short
     (["y"], {"c_a": torch.zeros(B, H + 1)}, "stacks them before the event"),  # c_a needs (B, H + 1, 1)
-    # the names listed are those of the model, not those of the network of steps 0 and 1
-    ([("nope", 2)], {}, r"Unknown name 'nope'; the names are \['c', 'c_a', 'c_b', 'h', 'u'"),
-    (["c"], {("nope", 1): torch.zeros(B, 2)}, "Unknown name 'nope'"),
-    (["c_2"], {}, "Unknown name 'c_2'"),  # c at step 2 is ("c", 2)
+    # the names listed are those of the model
+    (["nope_2"], {}, r"Unknown name 'nope_2'; the names are \['c', 'c_a', 'c_b', 'h', 'u'"),
+    (["c"], {"nope": torch.zeros(B, 2)}, "Unknown name 'nope'"),
+    (["c_x"], {}, "Unknown name 'c_x'"),  # a step is an integer
+    ([("c", 2)], {}, r"Unknown name \('c', 2\)"),  # a key is a string
     # stacked steps that report different parameters
     (["c", "u"], {}, "same parameters"),  # u does not exist at step 0
-    (["c"], {("c", 2): torch.zeros(B, 2)}, "same parameters"),  # c is observed at step 2
+    (["c"], {"c_2": torch.zeros(B, 2)}, "same parameters"),  # c is observed at step 2
     # the checks of the engine, on the names per step
-    (["c"], {("u", 2): torch.zeros(B - 1, 2)}, "mismatched leading .*'u_2': \\(4,\\)"),
-    ([("y", 3)], {("c", 2): torch.zeros(B, 2), ("c_a", 2): torch.ones(B, 1)}, "names both the plate 'c_2'"),
+    (["c"], {"u_2": torch.zeros(B - 1, 2)}, "mismatched leading .*'u_2': \\(4,\\)"),
+    (["y_3"], {"c_2": torch.zeros(B, 2), "c_a_2": torch.ones(B, 1)}, "names both the plate 'c_2'"),
 ])
 def test_invalid_queries_raise(query, evidence, match):
     with pytest.raises(ValueError, match=match):
-        DynamicInference(_model()).query(query, {"x": torch.randn(B, 3), **evidence}, horizon=H)
-
-
-def test_a_step_may_be_any_integer():
-    engine, x = DynamicInference(_model()), torch.randn(B, 3)
-    out = engine.query([("c", np.int64(2))], {"x": x}, horizon=H)
-    assert torch.equal(out.value["c"].tensor, engine.query([("c", 2)], {"x": x}, horizon=H).value["c"].tensor)
+        UnrolledInference(_model()).query(query, {"x": torch.randn(B, 3), **evidence}, horizon=H)
 
 
 def test_a_static_network_raises():
     with pytest.raises(TypeError, match="DynamicBayesianNetwork"):
-        DynamicInference(_model().unroll(1))
+        UnrolledInference(_model().unroll(1))
 
 
 def test_p_int_is_checked_at_construction():
     with pytest.raises(ValueError, match="p_int"):
-        DynamicInference(_model(), p_int=2.0)
-    assert DynamicInference(_model(), p_int=1.0).p_int == 1.0
+        UnrolledInference(_model(), p_int=2.0)
+    assert UnrolledInference(_model(), p_int=1.0).p_int == 1.0
 
 
 def test_steps_that_report_different_parameters_raise():
@@ -467,9 +462,9 @@ def test_steps_that_report_different_parameters_raise():
         transition=[ParametricCPD(z, parents=[z.previous()],
                                   parametrization={"probs": nn.Sequential(nn.Linear(1, 1), nn.Sigmoid())})],
     )
-    engine = DynamicInference(dbn)
+    engine = UnrolledInference(dbn)
     with pytest.raises(ValueError, match="same parameters"):
         engine.query(["z"], horizon=2)
     # Queried separately, as the message says.
-    assert engine.query([("z", 0)], horizon=2).logits["z"].shape == (1, 1, 1)
-    assert engine.query([("z", 1), ("z", 2)], horizon=2).probs["z"].shape == (1, 2, 1)
+    assert engine.query(["z_0"], horizon=2).logits["z"].shape == (1, 1, 1)
+    assert engine.query(["z_1", "z_2"], horizon=2).probs["z"].shape == (1, 2, 1)

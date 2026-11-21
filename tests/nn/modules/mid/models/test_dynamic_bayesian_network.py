@@ -14,8 +14,8 @@ import torch.nn as nn
 from torch_concepts.distributions import Delta
 from torch_concepts.nn import (
     BayesianNetwork, BeliefPropagation, ConceptVariable, DeterministicInference, DoIntervention,
-    DynamicBayesianNetwork, DynamicInference, EmbeddingVariable, FixedPrior, LearnablePrior,
-    ParametricCPD, PgmpyVariableElimination, UniformPolicy, intervention, plot_pgm,
+    DynamicBayesianNetwork, EmbeddingVariable, FixedPrior, LearnablePrior, ParametricCPD,
+    PgmpyVariableElimination, UniformPolicy, UnrolledInference, intervention, plot_pgm,
 )
 
 
@@ -133,14 +133,14 @@ def test_the_dbn_is_the_network_of_steps_0_and_1():
         "x_0", "c_0", "h_0", "y_0", "c_1", "h_1", "y_1", "u_1"]
     assert _parents(dbn) == _parents(first)
     assert [v.name for v in dbn.sorted_variables] == [v.name for v in first.sorted_variables]
-    # Its names are per step; the names as passed are those of steps() and DynamicInference.
+    # Its names are per step; the names as passed are those of steps() and UnrolledInference.
     assert dbn.resolve("c_a_1") is dbn.variables["c_1"] and "c" not in dbn.queryable_names
 
 
 def test_a_static_engine_on_the_dbn_gives_steps_0_and_1():
     dbn, x = _model(), torch.randn(5, 3)
     static = DeterministicInference(dbn).query(["c_0", "c_1"], {"x_0": x})
-    dynamic = DynamicInference(dbn).query(["c"], {"x": x}, horizon=1)
+    dynamic = UnrolledInference(dbn).query(["c"], {"x": x}, horizon=1)
     assert torch.allclose(torch.stack([static.value[f"c_{t}"].tensor for t in (0, 1)], 1),
                           dynamic.value["c"].tensor)
 
@@ -166,7 +166,7 @@ def test_an_engine_that_unpacks_the_plates_runs_on_the_dbn(engine, kwargs):
     # Both rebuild the network with one variable per member of a plate.
     dbn, o = _plated_chain(), torch.ones(3, 1)
     static = engine(dbn, **kwargs).query(["z_a_0"], evidence={"o_1": o})
-    dynamic = DynamicInference(dbn, engine, **kwargs).query([("z_a", 0)], {("o", 1): o}, horizon=1)
+    dynamic = UnrolledInference(dbn, engine, **kwargs).query(["z_a_0"], {"o_1": o}, horizon=1)
     assert torch.allclose(static.probs["z_a_0"].tensor, dynamic.probs["z_a"].tensor[:, 0])
 
 
@@ -184,10 +184,10 @@ def test_the_state_dict_is_that_of_the_first_steps():
 @pytest.mark.parametrize("name, steps", [("c_0", [0]), ("c_1", [1, 2, 3])])
 def test_an_intervention_acts_at_the_steps_of_its_cpd(name, steps):
     # The intervention hooks the module of the CPD that the name has in the network of steps 0
-    # and 1; that of step 1 is the transition, which runs at every later step. DynamicInference
+    # and 1; that of step 1 is the transition, which runs at every later step. UnrolledInference
     # is a target through its pgm.
     dbn, x = _model(), torch.randn(5, 3)
-    engine = DynamicInference(dbn)
+    engine = UnrolledInference(dbn)
     for target in (dbn, engine):
         with intervention(target, DoIntervention(0.0), UniformPolicy(), [name]):
             c = engine.query(["c"], {"x": x}, horizon=3).value["c"].tensor
@@ -197,7 +197,7 @@ def test_an_intervention_acts_at_the_steps_of_its_cpd(name, steps):
 def test_an_intervention_on_a_cpd_in_both_lists_acts_at_every_step():
     dbn, x = _model(), torch.randn(5, 3)
     with intervention(dbn, DoIntervention(0.0), UniformPolicy(), ["y_0"]):
-        y = DynamicInference(dbn).query(["y"], {"x": x}, horizon=3).logits["y"].tensor
+        y = UnrolledInference(dbn).query(["y"], {"x": x}, horizon=3).logits["y"].tensor
     assert (y == 0).all()
 
 
@@ -206,25 +206,6 @@ def test_plot_pgm_draws_the_network_of_the_first_steps(tmp_path):
     path = tmp_path / "dbn.pdf"
     plot_pgm(_model(), path)
     assert path.read_bytes().startswith(b"%PDF")
-
-
-def test_member_names_that_look_like_steps():
-    # The members of b are b_0 and b_1. Per step, b_1 is b at step 1; steps() and the keys of
-    # DynamicInference take the names as passed, where b_1 is a member of b.
-    torch.manual_seed(0)
-    x = EmbeddingVariable("x", distribution=Delta, size=3)
-    b = ConceptVariable("b", members=["b_0", "b_1"], distribution=Delta)
-    dbn = DynamicBayesianNetwork([x, b], initial=[_cpd(x), _cpd(b, x)], transition=[_cpd(b, b.previous())])
-    assert dbn.resolve("b_1") is dbn.variables["b_1"] and dbn.steps("b_1", 3) == range(0, 4)
-    engine, xs = DynamicInference(dbn), torch.randn(5, 3)
-    whole = engine.query(["b"], {"x": xs}, horizon=3).value["b"].tensor
-    member = engine.query({"b_1": torch.zeros(5, 4, 1)}, {"x": xs}, horizon=3).value
-    assert member.annotations.labels == ["b_1"] and torch.allclose(member.tensor, whole[..., 1:])
-    # b_0 given at step 1, which step 2 reads.
-    e, f = (dbn.factors[name].parametrization["value"] for name in ("b_0", "b_1"))
-    b_1 = torch.cat([torch.zeros(5, 1), f(e(xs))[:, 1:]], -1)
-    out = engine.query([("b", 2)], {"x": xs, ("b_0", 1): torch.zeros(5, 1)}, horizon=3)
-    assert torch.allclose(out.value["b"].tensor[:, 0], f(b_1))
 
 
 # ------------------------------------------------------------------ errors ----
@@ -298,6 +279,15 @@ def test_cycle_within_a_step_raises():
 ])
 def test_duplicate_names_raise(variables):
     with pytest.raises(ValueError, match="must be unique"):
+        DynamicBayesianNetwork(variables, initial=[], transition=[])
+
+
+@pytest.mark.parametrize("variables", [
+    [_plate("c"), _plate("c_1")],  # c_1 would also be c at step 1
+    [ConceptVariable("b", members=["b_0", "b_1"], distribution=Delta)],  # b at steps 0 and 1
+])
+def test_a_name_that_is_another_name_at_a_step_raises(variables):
+    with pytest.raises(ValueError, match="that name at step t"):
         DynamicBayesianNetwork(variables, initial=[], transition=[])
 
 

@@ -112,7 +112,7 @@ from .modules.mid.inference.pgmpy.variable_elimination import PgmpyVariableElimi
 # pyro
 from .modules.mid.inference.pyro.variational import VariationalInference
 # any engine on a dynamic Bayesian network
-from .modules.mid.inference.dynamic import DynamicInference
+from .modules.mid.inference.unrolled import UnrolledInference
 
 # Intervention module and context manager
 from .modules.low.base.intervention import InterventionModule, intervention
@@ -251,7 +251,7 @@ __all__ = [
     "PyroBaseInference",
     "PgmpyBaseInference",
     "VariationalInference",
-    "DynamicInference",
+    "UnrolledInference",
 
     # Interventions
     "InterventionModule",

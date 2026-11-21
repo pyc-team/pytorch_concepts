@@ -20,7 +20,7 @@ alarm passes through the concepts. Every equation is a CPD of a dynamic
 Bayesian network; ``08_dynamic_concept_bottleneck_model.py`` introduces the
 classes.
 
-Data: ``WearDataset``, as in ``08_dynamic_concept_bottleneck_model.py``. A worn
+Data: ``WearDataset`` (see ``08_dynamic_concept_bottleneck_model.py``). A worn
 component wears faster, which the mechanism models. Each machine also has a
 load that no concept records, so the hidden state has to estimate it. It reads
 the load from how fast the health drops along the window, so the window has
@@ -38,6 +38,7 @@ from torch.distributions import Bernoulli
 
 from torch_concepts import ConceptVariable, EmbeddingVariable, seed_everything
 from torch_concepts.data import WearDataset
+from torch_concepts.data.splitters import InductiveSplitter
 from torch_concepts.distributions import Delta
 from torch_concepts.env import DATA_ROOT
 from torch_concepts.nn import (
@@ -46,10 +47,10 @@ from torch_concepts.nn import (
     ConceptLoss,
     DeterministicInference,
     DynamicBayesianNetwork,
-    DynamicInference,
     FixedPrior,
     LinearConceptToConcept,
     ParametricCPD,
+    UnrolledInference,
 )
 
 seed_everything(42)
@@ -57,36 +58,32 @@ seed_everything(42)
 # %%
 # Data
 # ----
-# As in ``08_dynamic_concept_bottleneck_model.py``: windows of ``W + H`` steps,
-# split by machine.
-W, H = 8, 12
+# Windows of ``W + H`` steps, split by machine.
+W, H, D = 8, 12, 16  # steps read, steps forecast, channels per step
 dataset = WearDataset(
-    n_gen=1500, n_steps=30, window=W + H, stride=2, root=str(DATA_ROOT / "wear")
+    n_gen=1500,
+    n_steps=30,
+    n_sensors=D - 2,  # besides the two operating conditions
+    window=W + H,
+    stride=2,
+    root=str(DATA_ROOT / "wear"),
 )
-x = dataset.input_data[:, :W]
-c = dataset.concepts[:, W - 1:][["health_A", "health_B"]]
-y = dataset.concepts[:, W - 1:][["alarm"]]
-train, test = dataset.series < 1000, dataset.series >= 1000
+x = dataset.input_data[:, :W]  # (N, W, D)
+c = dataset.concepts[:, W - 1:][["health_A", "health_B"]]  # (N, H + 1, 2)
+y = dataset.concepts[:, W - 1:][["alarm"]]  # (N, H + 1, 1)
+splitter = InductiveSplitter(val_size=0, test_size=500, seed=42)
+splitter.fit(dataset)
+train, test = splitter.train_idxs, splitter.test_idxs
 x_train, x_test = x[train], x[test]
 c_train, c_test = c[train], c[test]
 y_train, y_test = y[train], y[test]
-D = dataset.input_data.shape[-1]
-
-# %%
-# Variables
-# ---------
-# All the variables are deterministic (``Delta``) but the alarm. The mechanism
-# ``f`` and the residual ``r`` have one entry per component, like the health.
-sensors = EmbeddingVariable("sensors", distribution=Delta, shape=(W, D))
-health = ConceptVariable("health", members=["health_A", "health_B"], distribution=Delta)
-hidden = EmbeddingVariable("hidden", distribution=Delta, size=8)
-alarm = ConceptVariable("alarm", distribution=Bernoulli)
-f = ConceptVariable("f", distribution=Delta, size=2)
-r = ConceptVariable("r", distribution=Delta, size=2)
 
 # %%
 # Model
 # -----
+# All the variables are deterministic (``Delta``) but the alarm. The mechanism
+# ``f`` and the residual ``r`` have one entry per component.
+#
 # The mechanism lowers the health at every step by ``a * relu(-c) + b``, so a
 # worn component wears faster. Its rates are fitted once per component, by
 # least squares on the first forecast step of every training window, and then
@@ -98,6 +95,13 @@ r = ConceptVariable("r", distribution=Delta, size=2)
 # health and the hidden state at step ``t - 1``. ``f`` and ``r`` have a CPD
 # only in ``transition``, so they exist from step 1 on, and the health of those
 # steps is their sum. The alarm CPD is the same object in both lists.
+sensors = EmbeddingVariable("sensors", distribution=Delta, shape=(W, D))
+health = ConceptVariable("health", members=["health_A", "health_B"], distribution=Delta)
+hidden = EmbeddingVariable("hidden", distribution=Delta, size=8)
+alarm = ConceptVariable("alarm", distribution=Bernoulli)
+f = ConceptVariable("f", distribution=Delta, size=2)
+r = ConceptVariable("r", distribution=Delta, size=2)
+
 c_now, c_next = c_train[:, 0].T, c_train[:, 1].T
 design = torch.stack([torch.relu(-c_now), torch.ones_like(c_now)], -1)
 a, b = torch.linalg.lstsq(design, (c_now - c_next).unsqueeze(-1)).solution[..., 0].T
@@ -120,7 +124,9 @@ class Encoder(torch.nn.Module):
 wear = CallableConceptToConcept(lambda c: c - a * torch.relu(-c) - b, use_bias=False)
 alarm_head = LinearConceptToConcept(in_concepts=2, out_concepts=1)
 alarm_cpd = ParametricCPD(
-    alarm, parents=[health], parametrization={"logits": alarm_head}
+    alarm,
+    parents=[health],
+    parametrization={"logits": alarm_head},
 )
 model = DynamicBayesianNetwork(
     variables=[sensors, health, hidden, alarm, f, r],
@@ -151,27 +157,35 @@ model = DynamicBayesianNetwork(
         alarm_cpd,
     ],
 )
-engine = DynamicInference(model, DeterministicInference, p_int=1.0)
+engine = UnrolledInference(model, DeterministicInference, p_int=1.0)
 
 # %%
 # Training
 # --------
-# Two queries per batch. The first uses teacher forcing, as in
-# ``08_dynamic_concept_bottleneck_model.py``: the concept encoder fits step 0
-# and the alarm head reads true concepts. With the true health at two
-# consecutive steps, the hidden update can read the wear of each step, and so
-# the load, which a forecast never has. The second query gives the true health
-# at step 0 only, with the key ``("health", 0)``, so the hidden state learns
+# Two queries per batch. The first uses teacher forcing: the concept encoder
+# fits step 0 and the alarm head reads true concepts. With the true health at
+# two consecutive steps, the hidden update can read the wear of each step, and
+# so the load, which a forecast never has. The second query gives the true
+# health at step 0 only, with the key ``health_0``, so the hidden state learns
 # from its own forecasts, as at test time.
 optimizer = torch.optim.Adam(model.parameters(), lr=0.01)
-loss_fn = ConceptLoss(binary=torch.nn.BCEWithLogitsLoss(), continuous=torch.nn.MSELoss())
+loss_fn = ConceptLoss(
+    binary=torch.nn.BCEWithLogitsLoss(),
+    continuous=torch.nn.MSELoss(),
+)
 for epoch in range(50):
     for batch in torch.randperm(len(x_train)).split(100):  # shuffled minibatches
         x, c, y = x_train[batch], c_train[batch], y_train[batch]
         optimizer.zero_grad()
-        teacher = engine.query({"health": c, "alarm": None}, evidence={"sensors": x}, horizon=H)
+        teacher = engine.query(
+            {"health": c, "alarm": None},
+            evidence={"sensors": x},
+            horizon=H,
+        )
         free = engine.query(
-            {"health": None, ("health", 0): c[:, 0]}, evidence={"sensors": x}, horizon=H
+            {"health": None, "health_0": c[:, 0]},
+            evidence={"sensors": x},
+            horizon=H,
         )
         loss = loss_fn(teacher, c) + loss_fn(teacher, y) + loss_fn(free, c)
         loss.backward()
@@ -193,7 +207,7 @@ queries = {  # label: (query, evidence)
         {"sensors": x_test, "r": torch.zeros(len(x_test), H, 2)},
     ),
     "true health given at t = 4": (
-        {"health": None, ("health", 4): c_test[:, 4], "alarm": None},
+        {"health": None, "health_4": c_test[:, 4], "alarm": None},
         {"sensors": x_test},
     ),
 }

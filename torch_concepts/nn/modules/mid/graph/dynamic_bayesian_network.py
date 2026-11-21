@@ -100,21 +100,20 @@ class DynamicBayesianNetwork(BayesianNetwork):
 
     A transition CPD reads the step before through ``previous()``: for a
     variable ``z``, the parent ``z.previous()`` is ``z`` at step ``t - 1``,
-    while a parent without ``previous()`` is at step ``t``, as in a
-    :class:`BayesianNetwork`.
+    while a parent without ``previous()`` is at step ``t``.
 
     :math:`Z_t` can hold any variable, concept or embedding, observed or
     latent, discrete or continuous, and any of them can pass to the next
-    step: only the concepts, as in a concept bottleneck model over time, or
-    also an embedding that holds what the concepts miss, as in
-    ``examples/mid_level/09_dynamic_cbm_with_residual.py``. A variable exists
+    step: only the concepts (a concept bottleneck model over time), or also
+    an embedding that holds what the concepts miss
+    (``examples/mid_level/09_dynamic_cbm_with_residual.py``). A variable exists
     at the steps where it has a CPD: with a CPD in ``initial`` only, at step
     0, such as an input window; in ``transition`` only, from step 1 on; in
     both, at every step.
 
     :meth:`unroll` builds the network of a whole horizon, with a copy of each
     variable per step at which it exists (``z_0``, ``z_1``, ...), which
-    :class:`~torch_concepts.nn.DynamicInference` queries with any inference
+    :class:`~torch_concepts.nn.UnrolledInference` queries with any inference
     engine.
 
     Unrolled over any number of steps, a DBN is a Bayesian network (Murphy,
@@ -123,15 +122,18 @@ class DynamicBayesianNetwork(BayesianNetwork):
     Its :attr:`variables` and :attr:`factors` are named per step (``x_0``,
     ``c_0``, ``c_1``), so a static engine, or
     :func:`~torch_concepts.nn.plot_pgm`, works on it as on any network.
-    :class:`~torch_concepts.nn.DynamicInference` takes the names of the
+    :class:`~torch_concepts.nn.UnrolledInference` takes the names of the
     variables as passed (the *template variables* of Koller and Friedman,
-    2009), at any horizon.
+    2009), for every step, and the names per step, such as ``c_4``, for one
+    step, at any horizon.
 
     Parameters
     ----------
     variables : list of Variable
-        The variables of the model, each once, not once per step (``c``, not
-        ``c_0``, ``c_1``). Names must be unique.
+        The variables of the model, each declared once (``c``); the DBN makes
+        one copy per step (``c_0``, ``c_1``). Names must be unique, and none
+        can be another name followed by ``_`` and an integer, which is that
+        name at a step.
     initial : list of ParametricCPD
         The CPDs of step 0, one per variable that exists at step 0.
     transition : list of ParametricCPD
@@ -143,14 +145,15 @@ class DynamicBayesianNetwork(BayesianNetwork):
         The variables of the network of steps 0 and 1, one copy per step at
         which each exists: ``x_0``, ``c_0``, ``c_1``.
     factors : ModuleDict
-        Their CPDs, keyed like :attr:`variables`, with the modules of the CPDs
+        Their CPDs, keyed by the same names, with the modules of the CPDs
         passed.
 
     Raises
     ------
     ValueError
-        If a variable has no CPD, or a CPD reads a variable at a step where it
-        does not exist, such as ``z.previous()`` at step 0.
+        If a name is repeated or is another name at a step, a variable has no
+        CPD, or a CPD reads a variable at a step where it does not exist, such
+        as ``z.previous()`` at step 0.
 
     Notes
     -----
@@ -160,10 +163,10 @@ class DynamicBayesianNetwork(BayesianNetwork):
 
     To set a variable at one step, give its value at that step as evidence: a
     forward engine reads it as an intervention (see
-    :class:`~torch_concepts.nn.DynamicInference`). ``intervention()`` hooks
-    the module of a CPD instead, so it acts at every step that runs that
-    module, whichever CPD holds it. Its target can be the DBN, or a
-    ``DynamicInference`` on it, with the names of the network of steps 0 and
+    :class:`~torch_concepts.nn.UnrolledInference`). ``intervention()`` hooks
+    the module of a CPD, so it acts at every step that runs that
+    module, whichever CPD holds it. Its target can be the DBN, or an
+    ``UnrolledInference`` on it, with the names of the network of steps 0 and
     1: in the example below, ``c_0`` hooks the CPD of step 0, and ``c_1``
     that of the transition, which runs at every step from 1 on. On a CPD in
     both lists, it acts at every step.
@@ -211,7 +214,7 @@ class DynamicBayesianNetwork(BayesianNetwork):
     ):
         variables, lists = list(variables), (list(initial), list(transition))
         # Every name of the model, of a variable or of a member, and its variable. The base
-        # class indexes the names per step instead (c_0, c_a_1).
+        # class indexes the names per step (c_0, c_a_1).
         templates = {name: v for v in variables for name in [v.name, *v.members]}
 
         # --- Checks ---
@@ -225,6 +228,18 @@ class DynamicBayesianNetwork(BayesianNetwork):
             raise ValueError(
                 f"Names {repeated} are used more than once. Variable and member names "
                 "must be unique."
+            )
+
+        # No name is another name at a step: with c and c_1, the key c_1 of UnrolledInference
+        # would be both a variable and c at step 1.
+        at_a_step = sorted(
+            name for name in templates
+            if name.rpartition("_")[0] in templates and name.rpartition("_")[2].isdecimal()
+        )
+        if at_a_step:
+            raise ValueError(
+                f"Names {at_a_step} are another name followed by _<t>, which is that name at "
+                "step t. Rename them."
             )
 
         # Every CPD is a ParametricCPD of a variable of the model, the same object.
@@ -276,8 +291,8 @@ class DynamicBayesianNetwork(BayesianNetwork):
         """The steps of ``0..horizon`` at which ``name`` exists, as a ``range``:
         step 0 with a CPD in ``initial``, steps ``1..horizon`` with one in ``transition``.
 
-        ``name`` is the name of a variable as passed, or of one of its members, as in the keys
-        of :class:`~torch_concepts.nn.DynamicInference`, not a name per step such as ``c_1``.
+        ``name`` is the name of a variable as passed, or of one of its members (``c``,
+        ``c_a``).
         """
         name = self._templates[name].name  # a member exists where its plate does
         in_initial, in_transition = (any(cpd.name == name for cpd in cpds) for cpds in self._cpds)

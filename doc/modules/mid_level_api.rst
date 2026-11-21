@@ -78,7 +78,7 @@ Inference
    RejectionSampling
    ImportanceSampling
    VariationalInference
-   DynamicInference
+   UnrolledInference
    BaseProposal
    MutilatedNetworkProposal
 
