@@ -528,3 +528,34 @@ class TestFixedIndicesSplitter:
         assert list(dm.splitter.test_idxs) == test_idxs
         # No ``seed`` attribute should be forced onto it by the datamodule.
         assert not hasattr(dm.splitter, "seed")
+
+
+class TestTransductiveSplitter:
+    """Tests for TransductiveSplitter."""
+
+    @pytest.mark.parametrize("flatten_series", [True, False])
+    def test_splits_in_time_and_drops_the_windows_across_a_cut(self, flatten_series):
+        from torch_concepts.data.base import DynamicConceptDataset
+        from torch_concepts.data.splitters import TransductiveSplitter
+
+        # 20 steps of 2 series, windows of 4 steps starting at 0, 2, ..., 16.
+        dataset = DynamicConceptDataset(
+            torch.randn(20, 2, 1), window=4, stride=2, flatten_series=flatten_series
+        )
+        splitter = TransductiveSplitter(val_size=2, test_size=2)
+        splitter.fit(dataset)
+        # Train holds steps 0-9, val 10-13 and test 14-19: the windows at 8 and 12 cross a cut.
+        starts = [dataset.start[splitter.indices[s]].unique().tolist() for s in ("train", "val", "test")]
+        assert starts == [[0, 2, 4, 6], [10], [14, 16]]
+        if flatten_series:  # every series in every split
+            assert all(len(dataset.series[splitter.indices[s]].unique()) == 2 for s in ("train", "val", "test"))
+
+    @pytest.mark.parametrize("val_size, split", [(0, "train"), (1, "train and val")])
+    def test_a_split_shorter_than_a_window_raises(self, val_size, split):
+        from torch_concepts.data.base import DynamicConceptDataset
+        from torch_concepts.data.splitters import TransductiveSplitter
+
+        # Windows of 16 steps start at 0, 2 and 4: the splits before test span 2 or 4 steps.
+        dataset = DynamicConceptDataset(torch.randn(20, 2, 1), window=16, stride=2)
+        with pytest.raises(ValueError, match=f"fits in the {split} split"):
+            TransductiveSplitter(val_size=val_size, test_size=1).fit(dataset)

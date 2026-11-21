@@ -1,22 +1,20 @@
 from typing import List, Optional
 
-import torch
-
 from ..datasets.wear import WearDataset
 
 from ..base.datamodule import ConceptDataModule
 from ..base.splitter import Splitter
-from ..splitters import FixedIndicesSplitter
-from ..utils import resolve_size
+from ..splitters import InductiveSplitter
 
 
 class WearDataModule(ConceptDataModule):
     """DataModule for the Wear dataset, split by machine.
 
-    The windows of one machine overlap, so a random split of the windows
-    would put the same steps of a machine in more than one split. The default
-    split draws the machines instead: ``val_size`` and ``test_size`` count
-    machines, and every window of a machine goes to the split of its machine.
+    The default split is inductive
+    (:class:`~torch_concepts.data.splitters.InductiveSplitter`). It draws the
+    machines at random and gives each split all the windows of its machines, so
+    ``val_size`` and ``test_size`` count machines and the test set holds
+    machines that the model has not seen.
 
     Parameters
     ----------
@@ -99,19 +97,8 @@ class WearDataModule(ConceptDataModule):
             concept_subset=concept_subset,
         )
 
-        if splitter is None:
-            # Draw the test and validation machines, then give each split all the
-            # windows of its machines (`dataset.series` is the machine of each window).
-            n_test, n_val = resolve_size(test_size, n_gen), resolve_size(val_size, n_gen)
-            order = torch.randperm(n_gen, generator=torch.Generator().manual_seed(seed))
-            test, val, train = order[:n_test], order[n_test:n_test + n_val], order[n_test + n_val:]
-
-            def windows(machines):
-                return torch.where(torch.isin(dataset.series, machines))[0].tolist()
-
-            splitter = FixedIndicesSplitter(
-                train_idxs=windows(train), val_idxs=windows(val), test_idxs=windows(test)
-            )
+        if splitter is None:  # by machine; the base class passes it the seed
+            splitter = InductiveSplitter(val_size=val_size, test_size=test_size)
 
         super().__init__(
             dataset=dataset,
