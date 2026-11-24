@@ -127,6 +127,7 @@ dynamics = MLPConceptToConcept(
     hidden_size=32,
     activation="gelu",
 )
+
 model = DynamicBayesianNetwork(
     variables=[sensors, health, alarm],
     initial=[

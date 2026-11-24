@@ -128,6 +128,7 @@ alarm_cpd = ParametricCPD(
     parents=[health],
     parametrization={"logits": alarm_head},
 )
+
 model = DynamicBayesianNetwork(
     variables=[sensors, health, hidden, alarm, f, r],
     initial=[
