@@ -579,6 +579,14 @@ class TestTransductiveSplitter:
         with pytest.raises(ValueError, match="none is left for training"):
             TransductiveSplitter(val_size=4, test_size=5).fit(dataset)
 
+    def test_a_size_that_rounds_to_no_start_raises(self):
+        from torch_concepts.data.base import DynamicConceptDataset
+        from torch_concepts.data.splitters import TransductiveSplitter
+
+        dataset = DynamicConceptDataset(torch.randn(20, 3, 1))  # one sample per series: 1 start
+        with pytest.raises(ValueError, match="val and test split gets none"):
+            TransductiveSplitter().fit(dataset)
+
 
 class TestInductiveSplitter:
     """Tests for InductiveSplitter."""
@@ -602,3 +610,11 @@ class TestInductiveSplitter:
         dataset = DynamicConceptDataset(torch.randn(20, 2, 1), window=4, flatten_series=False)
         with pytest.raises(ValueError, match="flatten_series=True"):
             InductiveSplitter().fit(dataset)
+
+    def test_a_size_that_rounds_to_no_series_raises(self):
+        from torch_concepts.data.base import DynamicConceptDataset
+        from torch_concepts.data.splitters import InductiveSplitter
+
+        dataset = DynamicConceptDataset(torch.randn(20, 3, 1), window=4)  # 0.2 * 3 series -> 0
+        with pytest.raises(ValueError, match="test split holds no series"):
+            InductiveSplitter(val_size=1, test_size=0.2).fit(dataset)

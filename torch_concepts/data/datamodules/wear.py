@@ -4,14 +4,14 @@ from ..datasets.wear import WearDataset
 
 from ..base.datamodule import ConceptDataModule
 from ..base.splitter import Splitter
-from ..splitters import InductiveSplitter
 
 
 class WearDataModule(ConceptDataModule):
     """DataModule for the Wear dataset, split by machine.
 
     The default split is inductive
-    (:class:`~torch_concepts.data.splitters.InductiveSplitter`). It draws the
+    (:class:`~torch_concepts.data.splitters.InductiveSplitter`, the default of
+    :class:`ConceptDataModule` for windows of several series). It draws the
     machines at random and gives each split all the windows of its machines, so
     ``val_size`` and ``test_size`` count machines and the test set holds
     machines that the model has not seen.
@@ -96,9 +96,6 @@ class WearDataModule(ConceptDataModule):
             stride=stride,
             concept_subset=concept_subset,
         )
-
-        if splitter is None:  # by machine; the base class passes it the seed
-            splitter = InductiveSplitter(val_size=val_size, test_size=test_size)
 
         super().__init__(
             dataset=dataset,

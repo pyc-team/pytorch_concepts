@@ -156,7 +156,11 @@ class WearDataset(DynamicConceptDataset):
     @property
     def processed_filenames(self) -> List[str]:
         name = f"wear_N_{self.n_gen}_T_{self.n_steps}_D_{self.n_sensors}"
-        return [f"{name}_seed_{self.seed}.pt"]
+        # The generated data is cached under this name and reloaded when the file exists.
+        # The name records the arguments, but not the generator: after a change to
+        # _wear, ALPHA or ALARM_THRESHOLD, bump the version (v1 -> v2), or the old
+        # cached data is loaded instead of regenerated.
+        return [f"{name}_seed_{self.seed}_v1.pt"]
 
     def download(self):
         pass

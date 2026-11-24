@@ -22,7 +22,10 @@ class TransductiveSplitter(Splitter):
     the steps from its first window to the first window of the next split. A window
     goes to the split that holds all its steps, and a window across a cut goes to
     no split, so no step is in two splits. A split shorter than a window holds
-    none, which raises an error.
+    none, which raises an error: each split before the last needs at least
+    ``window / stride`` window starts. The cut drops the last ``window - stride``
+    steps of train and validation, but not of test, so test holds a little more
+    than its share of the steps.
 
     Args:
         val_size (Union[int, float], optional): Validation set size, in window
@@ -39,6 +42,33 @@ class TransductiveSplitter(Splitter):
         >>> splitter.fit(dataset)  # windows start at steps 0, 1, ..., 16
         >>> [dataset.start[splitter.indices[s]].unique().tolist() for s in ("train", "val", "test")]
         [[0, 1, 2, 3, 4, 5, 6, 7], [11], [15, 16]]
+
+    Breakdown of the splits step by step, for the example above::
+
+        test_windows: asked (2), kept (2)
+        val_windows: asked (4), kept (1)
+        train_windows: rest (11), kept (8)
+
+        step   0  1  2  3  4  5  6  7  8  9  10 11 12 13 14 15 16 17 18 19
+        split  T  T  T  T  T  T  T  T  T  T  T |V  V  V  V |E  E  E  E  E
+
+            0  T  T  T  T                                                   train
+            1     T  T  T  T                                                train
+            2        T  T  T  T                                             train
+            3           T  T  T  T                                          train
+            4              T  T  T  T                                       train
+            5                 T  T  T  T                                    train
+            6                    T  T  T  T                                 train
+            7                       T  T  T  T                              train
+            8                          x  x  x  x                           dropped
+            9                             x  x  x  x                        dropped
+            10                               x  x  x  x                    dropped
+            11                                  V  V  V  V                 val
+            12                                     x  x  x  x              dropped
+            13                                        x  x  x  x           dropped
+            14                                           x  x  x  x        dropped
+            15                                              E  E  E  E     test
+            16                                                 E  E  E  E  test
     """
 
     def __init__(
@@ -63,6 +93,13 @@ class TransductiveSplitter(Splitter):
             raise ValueError(
                 f"val_size and test_size take all the {len(starts)} window starts, "
                 "so none is left for training."
+            )
+        # A split asked for gets a window start: a fraction of few starts rounds to 0.
+        empty = [s for s, size, n in (("val", self.val_size, n_val), ("test", self.test_size, n_test)) if size and not n]
+        if empty:
+            raise ValueError(
+                f"The {' and '.join(empty)} split gets none of the {len(starts)} window "
+                "starts: use shorter windows, longer series or a larger split."
             )
 
         # --- Split ---

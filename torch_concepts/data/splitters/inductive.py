@@ -32,6 +32,21 @@ class InductiveSplitter(RandomSplitter):
         >>> splitter.fit(dataset)  # 5 series of 7 windows each
         >>> splitter.train_len, splitter.val_len, splitter.test_len
         (21, 7, 7)
+        >>> [dataset.series[splitter.indices[s]].unique().tolist() for s in ("train", "val", "test")]
+        [[0, 1, 3], [4], [2]]
+
+    Breakdown of the splits series by series, for the example above::
+
+        test_series: asked (1), kept (1)
+        val_series: asked (1), kept (1)
+        train_series: rest (3), kept (3)
+
+        step      0  1  2  3  4  5  6  7  8  9
+        series 0  T  T  T  T  T  T  T  T  T  T    train, 7 windows
+        series 1  T  T  T  T  T  T  T  T  T  T    train, 7 windows
+        series 2  E  E  E  E  E  E  E  E  E  E    test, 7 windows
+        series 3  T  T  T  T  T  T  T  T  T  T    train, 7 windows
+        series 4  V  V  V  V  V  V  V  V  V  V    val, 7 windows
     """
 
     def fit(self, dataset: ConceptDataset) -> None:
@@ -50,3 +65,12 @@ class InductiveSplitter(RandomSplitter):
             split: torch.where(torch.isin(dataset.series, series[idxs]))[0].tolist()
             for split, idxs in self.indices.items()
         })
+
+        # --- Checks ---
+        # A split asked for got at least one series: a fraction of few series rounds to 0.
+        empty = [s for s in ("val", "test") if getattr(self, f"{s}_size") and not self.indices[s]]
+        if empty:
+            raise ValueError(
+                f"The {' and '.join(empty)} split holds no series: {len(series)} series "
+                "are too few for the sizes asked, so give the sizes as numbers of series."
+            )

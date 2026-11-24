@@ -4,7 +4,10 @@ import torch
 
 from torch_concepts.annotations import Annotations
 from torch_concepts.data.base import ConceptDataModule, DynamicConceptDataset
-from torch_concepts.data.splitters import FixedIndicesSplitter
+from torch_concepts.data.scalers import StandardScaler
+from torch_concepts.data.splitters import (
+    FixedIndicesSplitter, InductiveSplitter, TransductiveSplitter,
+)
 
 ANNOTATIONS = Annotations(labels=["c0", "c1"], cardinalities=[1, 1], types=["continuous"] * 2)
 
@@ -84,3 +87,28 @@ def test_errors():
         DynamicConceptDataset(x, c, ANNOTATIONS, window=31)
     with pytest.raises(RuntimeError, match="samples"):          # concepts of 3 series, inputs of 4
         DynamicConceptDataset(x, c[:, :3], ANNOTATIONS)
+    with pytest.raises(ValueError, match="positive"):
+        DynamicConceptDataset(x, c, ANNOTATIONS, window=0)
+
+
+def test_numpy_and_float64_series_are_converted_before_windowing():
+    x, c = series()
+    dataset = DynamicConceptDataset(x.double().numpy(), c.double().numpy(), ANNOTATIONS, window=10, stride=1)
+    assert dataset.input_data.dtype == torch.float32
+    assert dataset.input_data.untyped_storage().nbytes() == x.numel() * 4  # a view, not one copy per window
+
+
+@pytest.mark.parametrize("flatten_series, default", [(True, InductiveSplitter), (False, TransductiveSplitter)])
+def test_datamodule_defaults_keep_steps_apart_and_scale_per_channel(flatten_series, default):
+    x, c = series(n_steps=60)
+    dataset = DynamicConceptDataset(x, c, ANNOTATIONS, window=10, stride=1, flatten_series=flatten_series)
+    datamodule = ConceptDataModule(dataset, val_size=0.25, test_size=0.25, seed=0, scalers={"input": StandardScaler()})
+    datamodule.setup()
+    assert isinstance(datamodule.splitter, default)
+    assert tuple(dataset.scalers["input"].mean.shape) == (1, 3)  # one statistic per channel
+
+
+def test_datamodule_splits_a_single_series_in_time():
+    x, c = series(n_steps=60)
+    datamodule = ConceptDataModule(DynamicConceptDataset(x[:, 0], c[:, 0], ANNOTATIONS, window=10, stride=1))
+    assert isinstance(datamodule.splitter, TransductiveSplitter)

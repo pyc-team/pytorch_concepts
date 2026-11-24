@@ -10,6 +10,7 @@ import torch
 from torch import Tensor
 
 from ...annotations import Annotations
+from ..utils import parse_tensor
 from .dataset import ConceptDataset
 
 
@@ -35,7 +36,8 @@ class DynamicConceptDataset(ConceptDataset):
             with ``flatten_series=False``.
 
     Args:
-        input_data: Input series, ``(T, N, F)``, or ``(T, F)`` for one series.
+        input_data: Input series, ``(T, N, F)``, or ``(T, F)`` for one series,
+            as a tensor or a numpy array.
         concepts: Optional concept series, ``(T, N, C)`` or ``(T, C)``.
         annotations: Concept metadata (see :class:`ConceptDataset`).
         window: Steps per sample (default: ``T``).
@@ -73,6 +75,12 @@ class DynamicConceptDataset(ConceptDataset):
         flatten_series: bool = True,
         **kwargs,
     ):
+        # Convert first, so the windows stay a view of the series and are not copied.
+        precision = kwargs.get("precision", 32)
+        input_data = parse_tensor(input_data, "input", precision)
+        concepts = parse_tensor(concepts, "concepts", precision) if concepts is not None else None
+        if (window is not None and window < 1) or (stride is not None and stride < 1):
+            raise ValueError(f"window and stride must be positive, got {window} and {stride}.")
         if input_data.dim() == 2:  # one series, (T, F): a series axis of size 1
             input_data = input_data.unsqueeze(1)
             concepts = concepts.unsqueeze(1) if concepts is not None else None
