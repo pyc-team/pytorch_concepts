@@ -72,6 +72,23 @@ Data Modules
    HAM10000DataModule
    WearDataModule
 
+.. currentmodule:: torch_concepts.data.splitters
+
+Splitters
+---------
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   RandomSplitter
+   ColoringSplitter
+   NativeSplitter
+   CustomSplitter
+   FixedIndicesSplitter
+   InductiveSplitter
+   TransductiveSplitter
+
 Environment
 -----------
 
