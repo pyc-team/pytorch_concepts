@@ -592,13 +592,36 @@ class TestAnnotationsExtended:
         assert union.labels == ['a', 'b', 'c', 'd']
 
     def test_union_with_overlap(self):
-        """Test union_with with overlapping labels."""
+        """Overlapping labels raise by default; strict=False merges them, the left's winning."""
         axis1 = Annotations(labels=['a', 'b', 'c'])
         axis2 = Annotations(labels=['b', 'c', 'd'])
 
-        union = axis1.union_with(axis2)
+        with pytest.raises(ValueError, match=r"already present: \['b', 'c'\]"):
+            axis1.union_with(axis2)
+
+        union = axis1.union_with(axis2, strict=False)
 
         assert union.labels == ['a', 'b', 'c', 'd']
+
+    def test_union_with_strict_is_not_bypassed_by_a_cached_merge(self):
+        """A merge cached by a non-strict call must not be handed to a strict one."""
+        axis1 = Annotations(labels=['a', 'b'])
+        axis2 = Annotations(labels=['b', 'c'])
+
+        axis1.union_with(axis2, strict=False)  # caches the merge of this pair
+        with pytest.raises(ValueError, match="already present"):
+            axis1.union_with(axis2)
+        # and a strict merge that succeeded is served, unchanged, to a non-strict call
+        axis3 = Annotations(labels=['d'])
+        merged = axis1.union_with(axis3)
+        assert axis1.union_with(axis3, strict=False) is merged
+
+    def test_union_with_left_wins_on_a_repeated_label(self):
+        left = Annotations(labels=['x', 'y'], cardinalities=[1, 3], types=['binary', 'categorical'])
+        right = Annotations(labels=['y', 'z'], cardinalities=[1, 1], types=['binary', 'binary'])
+        merged = left.union_with(right, strict=False)
+        assert merged.labels == ['x', 'y', 'z']
+        assert merged.cardinalities == [1, 3, 1] and merged.types == ['binary', 'categorical', 'binary']
 
     def test_write_once_labels_attribute(self):
         """Test that labels attribute is write-once."""
@@ -1140,7 +1163,7 @@ class TestAnnotationsExtraCoverage(unittest.TestCase):
     def test_union_with_deduplicates(self):
         a = Annotations(labels=['x', 'y'], cardinalities=[1, 1], types=['binary', 'binary'])
         b = Annotations(labels=['y', 'z'], cardinalities=[1, 1], types=['binary', 'binary'])
-        merged = a.union_with(b)
+        merged = a.union_with(b, strict=False)
         self.assertEqual(merged.labels.count('y'), 1)
 
     # ------------------------------------------------------------------
@@ -1258,10 +1281,60 @@ class TestAnnotatedTensorCoverage(unittest.TestCase):
         from torch_concepts.tensor import AnnotatedTensor as AT
         t1 = AT(torch.rand(4, 3), ann1)
         t2 = AT(torch.rand(4, 3), ann2)
-        merged = t1.union_with(t2)
+        merged = t1.union_with(t2, strict=False)
         # 'd' added; 'b','c' not duplicated
         self.assertIn('d', merged.annotations.labels)
         self.assertEqual(merged.annotations.labels.count('b'), 1)
+
+    def test_union_with_raises_on_a_repeated_label_by_default(self):
+        other = self.AnnotatedTensor(self.torch.rand(4, 2), Annotations(labels=['c', 'd']))
+        with self.assertRaisesRegex(ValueError, r"already present: \['c'\]"):
+            self.t.union_with(other)
+        with self.assertRaises(ValueError):
+            self.t.union_with(other, strict=True)
+
+    def test_union_with_not_strict_skips_a_repeated_label_and_keeps_the_left_values(self):
+        other = self.AnnotatedTensor(self.torch.rand(4, 2), Annotations(labels=['c', 'd']))
+        merged = self.t.union_with(other, strict=False)
+        self.assertEqual(merged.annotations.labels, ['a', 'b', 'c', 'd'])
+        self.assertTrue(self.torch.equal(merged['c'].tensor, self.t['c'].tensor))  # the left's c
+        self.assertTrue(self.torch.equal(merged['d'].tensor, other['d'].tensor))
+
+    def test_union_with_raises_on_a_label_repeated_between_operands(self):
+        first = self.AnnotatedTensor(self.torch.rand(4, 1), Annotations(labels=['d']))
+        second = self.AnnotatedTensor(self.torch.rand(4, 2), Annotations(labels=['e', 'd']))
+        with self.assertRaisesRegex(ValueError, r"already present: \['d'\]"):
+            self.t.union_with(first, second)
+
+    def test_union_with_accepts_new_labels(self):
+        first = self.AnnotatedTensor(self.torch.rand(4, 1), Annotations(labels=['d']))
+        second = self.AnnotatedTensor(self.torch.rand(4, 1), Annotations(labels=['e']))
+        merged = self.t.union_with(first, second)
+        self.assertEqual(merged.annotations.labels, ['a', 'b', 'c', 'd', 'e'])
+        self.assertEqual(tuple(merged.tensor.shape), (4, 5))
+        for name, source in (('a', self.t), ('d', first), ('e', second)):
+            self.assertTrue(self.torch.equal(merged[name].tensor, source[name].tensor))
+
+    def test_union_with_no_operand_copies(self):
+        merged = self.t.union_with()
+        self.assertEqual(merged.annotations.labels, ['a', 'b', 'c'])
+        self.assertTrue(self.torch.equal(merged.tensor, self.t.tensor))
+
+    def test_getitem_empty_list_raises(self):
+        # An empty list used to fall through to tensor indexing: zero rows, all three labels kept.
+        with self.assertRaisesRegex(ValueError, "empty list"):
+            self.t[[]]
+
+    def test_setitem_empty_list_raises(self):
+        before = self.t.tensor.clone()
+        with self.assertRaisesRegex(ValueError, "empty list"):
+            self.t[[]] = 1.0
+        self.assertTrue(self.torch.equal(self.t.tensor, before))
+
+    def test_empty_row_selection_and_positional_lists_still_work(self):
+        self.assertEqual(tuple(self.t[:0].tensor.shape), (0, 3))
+        self.assertEqual(tuple(self.t[[0, 2]].tensor.shape), (2, 3))  # rows, as before
+        self.assertEqual(self.t[['a', 'c']].annotations.labels, ['a', 'c'])
 
     def test_type_accessor_returns_subtensor(self):
         torch = self.torch

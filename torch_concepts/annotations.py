@@ -865,7 +865,28 @@ class Annotations:
         self.__dict__['_concept_space_view'] = result
         return result
 
-    def union_with(self, other: "Annotations") -> "Annotations":
+    def union_with(self, other: "Annotations", strict: bool = True) -> "Annotations":
+        """This annotation's labels followed by ``other``'s.
+
+        A concept name must not appear twice: by default a label of ``other`` that
+        is already present raises, since a repeated name is almost always a bug and
+        would otherwise be dropped silently. Pass ``strict=False`` to merge two
+        sources that deliberately share concepts: a repeated label is then not
+        duplicated, and this annotation's states, type and groups win.
+
+        Raises:
+            ValueError: With ``strict=True``, if a label of ``other`` is already present.
+        """
+        # The overlap test is one C-level isdisjoint over the cached label dict's keys, and
+        # runs before the memo below: a cached merge of overlapping labels (made with
+        # strict=False) must not be handed to a strict caller.
+        if strict and not self.label_to_index.keys().isdisjoint(other.labels):
+            repeated = [l for l in other.labels if l in self.label_to_index]
+            raise ValueError(
+                f"union_with: labels already present: {repeated}. A concept name must not "
+                "appear twice; pass strict=False to merge sources that share concepts "
+                "(this annotation's win)."
+            )
         # Memoised per `other`: an engine reuses one annotation per query, so the
         # merge of successive queries is rebuilt once, not every forward, and the
         # caches downstream (slicing, per-type views) stay warm on the result.
@@ -875,14 +896,13 @@ class Annotations:
         if hit is not None and hit[0] is other:
             return hit[1]
         left = list(self.labels)
-        right_only = [l for l in other.labels if l not in set(left)]
+        right_only = [l for l in other.labels if l not in self.label_to_index]
         labels = left + right_only
+        right_index = other.label_to_index  # label -> position, built once: not a scan per label
 
         def _merge(left_values, right_values):
             """Left values + right-only values (left wins for overlapping labels)."""
-            return list(left_values) + [
-                right_values[other.labels.index(l)] for l in right_only
-            ]
+            return list(left_values) + [right_values[right_index[l]] for l in right_only]
 
         # ``states`` / ``types`` are always populated after construction, so we
         # carry them through directly (cardinalities re-infer from states). This

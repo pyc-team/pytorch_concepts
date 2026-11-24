@@ -82,7 +82,10 @@ Expand each block below for an explanation and an example of how to use it.
        categorical = tensor.categorical()             # sub-tensor of categorical concepts (or None)
 
     Several annotated tensors can be concatenated along the annotated axis with
-    ``union_with``, merging their annotations in the process. ``register_plate_label`` makes one
+    ``union_with``, merging their annotations in the process. A concept name must not appear
+    twice, so a label present in more than one tensor raises; ``strict=False`` merges sources that
+    deliberately share concepts instead, the left tensor's columns winning.
+    ``register_plate_label`` makes one
     label act as an alias for a group of columns, selectable as a single block while each member
     stays individually addressable:
 
