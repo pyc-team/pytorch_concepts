@@ -12,6 +12,13 @@ import torch
 
 from torch_concepts.annotations import Annotations, _as_contiguous_slice
 
+_EMPTY_SELECTION = (
+    "An empty list selects no concepts, and is not a valid label selection: indexed as a tensor "
+    "it would select no rows and leave the labels as they were. Pass at least one label "
+    "(use t[:0] to take no rows)."
+)
+
+
 
 class AnnotatedTensor:
     """
@@ -183,7 +190,10 @@ class AnnotatedTensor:
             ``t[annotations]``      – another annotation's labels, in its order
 
         Any other key is forwarded to the underlying tensor; the annotation is
-        preserved when the result's annotated-axis size equals the original.
+        preserved when the result's annotated-axis size equals the original. An
+        empty list is neither: it raises ``ValueError`` (an empty selection of
+        labels is almost always a bug, and as a tensor index it would silently
+        select no rows).
         """
         if isinstance(key, Annotations):
             # Keyed by its label tuple: no per-call Python scan of the names, so
@@ -195,9 +205,12 @@ class AnnotatedTensor:
         if isinstance(key, str):
             key = (key,)
             is_name_key = True
-        elif isinstance(key, list) and key and all(isinstance(k, str) for k in key):
-            key = tuple(key)
-            is_name_key = True
+        elif isinstance(key, list):
+            if not key:
+                raise ValueError(_EMPTY_SELECTION)
+            if all(isinstance(k, str) for k in key):
+                key = tuple(key)
+                is_name_key = True
         elif isinstance(key, tuple) and key and all(isinstance(k, str) for k in key):
             is_name_key = True
 
@@ -240,9 +253,12 @@ class AnnotatedTensor:
         if isinstance(key, str):
             key = (key,)
             is_name_key = True
-        elif isinstance(key, list) and key and all(isinstance(k, str) for k in key):
-            key = tuple(key)
-            is_name_key = True
+        elif isinstance(key, list):
+            if not key:
+                raise ValueError(_EMPTY_SELECTION)
+            if all(isinstance(k, str) for k in key):
+                key = tuple(key)
+                is_name_key = True
         elif isinstance(key, tuple) and key and all(isinstance(k, str) for k in key):
             is_name_key = True
 
@@ -280,19 +296,26 @@ class AnnotatedTensor:
     # Merging                                                              #
     # ------------------------------------------------------------------ #
 
-    def union_with(self, *others: 'AnnotatedTensor') -> 'AnnotatedTensor':
+    def union_with(self, *others: 'AnnotatedTensor', strict: bool = True) -> 'AnnotatedTensor':
         """
         Concatenate this tensor with one or more ``AnnotatedTensor`` instances
         along the annotated axis, merging their annotations.
 
         All tensors must share the same shape on every **other** axis, and must
-        annotate the same axis. The merged annotation is built by chaining
-        :meth:`~torch_concepts.Annotations.union_with`: labels that already
-        appear on the left are not duplicated; groups are merged with
-        left-wins semantics.
+        annotate the same axis. A concept name must not appear twice: by default
+        a label of *others* that is already present (on the left, or in an
+        earlier operand) raises, since a repeated name is almost always a bug
+        and would otherwise be dropped silently. To merge two sources that
+        deliberately share concepts, pass ``strict=False``: the merged
+        annotation is then built by chaining
+        :meth:`~torch_concepts.Annotations.union_with`, a repeated label is not
+        duplicated (its columns are dropped from the right operand, so the
+        left's values win), and groups are merged with left-wins semantics.
 
         Args:
             *others: One or more :class:`AnnotatedTensor` instances to merge in.
+            strict: If ``True`` (the default), a repeated label raises. If
+                ``False``, it is skipped, the left's columns winning.
 
         Returns:
             A new :class:`AnnotatedTensor` whose underlying tensor is the
@@ -303,7 +326,8 @@ class AnnotatedTensor:
             TypeError:  If any element of *others* is not an
                         :class:`AnnotatedTensor`.
             ValueError: If any tensor annotates a different axis, or its shape
-                        off the annotated axis differs from this tensor's.
+                        off the annotated axis differs from this tensor's, or,
+                        with ``strict=True``, a label is already present.
 
         Example:
             >>> ann_a = Annotations(labels=["cat", "dog"])
@@ -343,9 +367,30 @@ class AnnotatedTensor:
                     f"non-axis-{ax} shape {expected}, got {list(other._data.shape)}."
                 )
 
-        seen = set(self._annotations.labels)
         pieces = [self._data]
         merged_ann = self._annotations
+        if strict:
+            # Every label must be new, so each operand contributes all its columns (no slicing),
+            # and the overlap test is one C-level isdisjoint over the cached label dict's keys: no
+            # set of the left labels is built per call, and nothing is looped over in Python. The
+            # earlier operands are only tracked when there are several.
+            left, taken, several = self._annotations.label_to_index.keys(), set(), len(others) > 1
+            for other in others:
+                labels = other._annotations.labels
+                if not left.isdisjoint(labels) or (taken and not taken.isdisjoint(labels)):
+                    repeated = [l for l in labels if l in left or l in taken]
+                    raise ValueError(
+                        f"union_with: labels already present: {repeated}. A concept name must "
+                        "not appear twice; pass strict=False to merge sources that share "
+                        "concepts (the left's columns win)."
+                    )
+                if several:
+                    taken.update(labels)
+                pieces.append(other._data)
+                merged_ann = merged_ann.union_with(other._annotations, strict=False)  # checked above
+            return AnnotatedTensor(torch.cat(pieces, dim=ax), merged_ann, ax)
+
+        seen = set(self._annotations.labels)
         for other in others:
             new_labels = [l for l in other._annotations.labels if l not in seen]
             seen.update(new_labels)
@@ -354,7 +399,7 @@ class AnnotatedTensor:
                     other._annotations.get_slice(new_labels)
                 )
                 pieces.append(other._data[other._index(indices)])
-            merged_ann = merged_ann.union_with(other._annotations)
+            merged_ann = merged_ann.union_with(other._annotations, strict=False)  # repeats are skipped
 
         return AnnotatedTensor(torch.cat(pieces, dim=ax), merged_ann, ax)
 

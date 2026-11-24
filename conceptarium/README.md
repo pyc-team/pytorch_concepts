@@ -280,7 +280,7 @@ Conceptarium is designed to be extensible and accomodate your own experimental s
 
 ## Implementing Your Own Model
 
-Create your model in <img src="../doc/_static/img/logos/pyc.svg" width="20px" align="center"/> PyC by following the guidelines given in [torch_concepts/examples/contributing/model.md](../examples/contributing/model.md).
+Create your model in <img src="../doc/_static/img/logos/pyc.svg" width="20px" align="center"/> PyC by following the guidelines given in [the PyC docs](https://pytorch-concepts.readthedocs.io/en/latest/guides/contributing_model.html).
 
 This involves the following steps:
 - Create your model (`your_model.py`).
@@ -303,7 +303,7 @@ python run_experiment.py --config-name your_sweep
 
 ## Implementing Your Own Dataset
 
-Create your dataset in Conceptarium by following the guidelines given in [torch_concepts/examples/contributing/dataset.md](../examples/contributing/dataset.md).
+Create your dataset in Conceptarium by following the guidelines given in [the PyC docs](https://pytorch-concepts.readthedocs.io/en/latest/guides/contributing_dataset.html).
 
 This involves the following steps:
 

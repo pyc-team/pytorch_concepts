@@ -37,7 +37,6 @@ import torch.nn as nn
 from .....annotations import Annotations
 from .....distributions import Delta
 from ...low.dense_layers import LinearEmbeddingEncoder
-from ...low.priors import LearnablePrior
 from ...low.sequential import Sequential
 from ..base.graph import DirectedGraphModel
 from ...mid.variable import EmbeddingVariable
@@ -112,30 +111,6 @@ class HomogenGraphModel(DirectedGraphModel, ABC):
             out_features=self.embedding_size,
             n_embeddings=n_embeddings,
         )
-
-    # ------------------------------------------------------------------
-    # Shared helpers
-    # ------------------------------------------------------------------
-    def _input_latent_block(self):
-        """Raw input → latent block shared by both building paths.
-
-        Returns ``(input_var, latent_var, [input_cpd, latent_cpd])``: the raw
-        ``input`` enters the PGM as evidence and the backbone runs *inside* the
-        PGM as the ``latent | input`` CPD.
-        """
-        input_var = EmbeddingVariable("input", distribution=Delta, shape=self.input_size)
-        latent_var = EmbeddingVariable("latent", distribution=Delta, size=self.latent_size)
-        input_cpd = ParametricCPD(
-            input_var,
-            parents=[],
-            parametrization=LearnablePrior(input_var.shape),
-        )
-        latent_cpd = ParametricCPD(
-            latent_var,
-            parents=[input_var],
-            parametrization=self.backbone,
-        )
-        return input_var, latent_var, input_cpd, latent_cpd
 
     # ------------------------------------------------------------------
     # Building path

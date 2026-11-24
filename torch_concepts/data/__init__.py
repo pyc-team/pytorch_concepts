@@ -35,6 +35,8 @@ from .datasets.awa2 import AWA2Dataset
 from .datasets.cub import CUBDataset
 from .datasets.ham10000 import HAM10000Dataset
 from .datasets.wear import WearDataset
+from .datasets.cbis_ddsm import CBISDDSMDataset
+from .datasets.pneumothorax import PneumothoraxDataset
 
 # Re-export datamodules for convenient access
 from .datamodules.bnlearn import BnLearnDataModule
@@ -49,6 +51,8 @@ from .datamodules.awa2 import AWA2DataModule
 from .datamodules.cub import CUBDataModule
 from .datamodules.ham10000 import HAM10000DataModule
 from .datamodules.wear import WearDataModule
+from .datamodules.cbis_ddsm import CBISDDSMDataModule
+from .datamodules.pneumothorax import PneumothoraxDataModule
 
 __all__ = [
     # Submodules
@@ -79,6 +83,8 @@ __all__ = [
     "CUBDataset",
     "HAM10000Dataset",
     "WearDataset",
+    "CBISDDSMDataset",
+    "PneumothoraxDataset",
 
     # DataModules
     "BnLearnDataModule",
@@ -93,4 +99,6 @@ __all__ = [
     "CUBDataModule",
     "HAM10000DataModule",
     "WearDataModule",
+    "CBISDDSMDataModule",
+    "PneumothoraxDataModule",
 ]

@@ -39,7 +39,7 @@ Configuration-Driven Experimentation
 
 Conceptarium uses YAML configuration files to define all experiment parameters. No Python coding required:
 
-- **Models**: Select and configure any |pyc_logo| PyC model (CBM, CEM, CB-VAE, BlackBox, etc.)
+- **Models**: Select and configure any |pyc_logo| PyC model (CBM, CEM, CB-VAE, BlackBoxModel, etc.)
 - **Datasets**: Use built-in datasets (CUB-200, CelebA, ...) or add custom ones
 - **Training**: Configure optimizer, scheduler, and Lightning Trainer settings
 - **Tracking**: Automatic logging to |wandb_logo| W&B for visualization and comparison
@@ -447,7 +447,7 @@ Detailed Guides
         - _self_
 
       model_cls:
-        _target_: torch_concepts.nn.BlackBox
+        _target_: torch_concepts.nn.BlackBoxModel
 
    **Common Model Parameters**
 
@@ -768,7 +768,7 @@ Detailed Guides
    
    **Adding a New Model**
    
-   1. **Implement the model** in |pyc_logo| PyC (see ``examples/contributing/model.md``)
+   1. **Implement the model** in |pyc_logo| PyC (see :doc:`contributing_model`)
    
    2. **Create configuration file** ``conf/model/my_model.yaml``:
    
@@ -796,7 +796,7 @@ Detailed Guides
    
    **Adding a New Dataset**
    
-   1. **Implement the dataset and datamodule** (see ``examples/contributing/dataset.md``)
+   1. **Implement the dataset and datamodule** (see :doc:`contributing_dataset`)
    
    2. **Create configuration file** ``conf/dataset/my_dataset.yaml``:
    
@@ -1013,8 +1013,8 @@ See Also
 --------
 
 - :doc:`using_high_level` - High-level API for programmatic usage
-- `Contributing Guide - Models <https://github.com/pyc-team/pytorch_concepts/tree/master/examples/contributing/model.md>`_ - Implementing custom models
-- `Contributing Guide - Datasets <https://github.com/pyc-team/pytorch_concepts/tree/master/examples/contributing/dataset.md>`_ - Implementing custom datasets
+- :doc:`contributing_model` - Implementing custom models
+- :doc:`contributing_dataset` - Implementing custom datasets
 - `Conceptarium README <https://github.com/pyc-team/pytorch_concepts/tree/master/conceptarium/README.md>`_ - Additional documentation
 - `Hydra Documentation <https://hydra.cc/>`_ - Advanced configuration patterns
 - `PyTorch Lightning <https://lightning.ai/>`_ - Training framework documentation

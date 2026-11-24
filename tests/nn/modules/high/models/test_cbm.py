@@ -63,6 +63,13 @@ class TestCBMInitialization(unittest.TestCase):
         self.assertEqual(model.variable_distributions['categorical'], OneHotCategorical)
         self.assertEqual(model.variable_distributions['binary'], Bernoulli)
 
+    def test_task_predictor_weights_by_name(self):
+        """The task predictor is built on the concepts' annotations, so its weights read by name."""
+        model = ConceptBottleneckModel(input_size=8, annotations=self.ann, task_names=['task1'])
+        layer = model.pgm.factors[model.pgm.resolve('task1').name].parametrization['logits']
+        self.assertEqual(sorted(layer.named_weight.annotations.labels), ['color', 'shape', 'size'])
+        self.assertEqual(layer.named_weight.shape, (1, 6))  # 3 + 2 + 1 states
+
     def test_init_with_variable_distributions_param(self):
         """Test initialization passing per-type variable_distributions override."""
         model = ConceptBottleneckModel(
@@ -511,6 +518,13 @@ class TestGraphCBMConstruction:
             head = model.pgm.factors[name].parametrization['logits']
             assert isinstance(head, LinearConceptToConcept)
             assert head.predictor.in_features == 1
+
+    def test_predictor_weights_by_name(self):
+        """Each predictor is built on its parents' annotations, so its weights read by name."""
+        model = GraphConceptBottleneckModel(input_size=4, annotations=_make_graph_cbm_ann(), graph=_make_dag())
+        for name, parent in (('b', 'a'), ('c', 'b')):
+            head = model.pgm.factors[name].parametrization['logits']
+            assert list(head.named_weight.annotations.labels) == [parent]
             assert head.predictor.out_features == 1
 
     def test_forward_basic(self):

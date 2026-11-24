@@ -81,6 +81,6 @@ class GraphConceptBottleneckModel(HomogenGraphModel):
 
     def build_predictor(self, in_concepts: Annotations, in_embeddings, out_concepts):
         return LinearConceptToConcept(
-            in_concepts=int(sum(in_concepts.cardinalities)), 
+            in_concepts=in_concepts,  # the parents' annotations: weights read by name (named_weight)
             out_concepts=out_concepts
         )

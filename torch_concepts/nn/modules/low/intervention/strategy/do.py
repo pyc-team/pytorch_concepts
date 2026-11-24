@@ -31,10 +31,9 @@ class DoIntervention(ConceptInterventionStrategy):
             v = torch.broadcast_to(v, x.shape)
         except RuntimeError as e:
             raise ValueError(
-                f"constants of shape {tuple(self.constants.shape)} cannot be "
-                f"broadcast to concept tensor shape {tuple(x.shape)} "
-                f"(expects scalar, [F], or any shape broadcastable against "
-                f"[..., F])"
+                f"constants of shape {tuple(self.constants.shape)} cannot be broadcast to the layer "
+                f"output {tuple(x.shape)}: give a scalar, or one value per output of the layer "
+                f"([F], or broadcastable to [..., F]); only the intervened outputs take their value."
             ) from e
 
         return v.to(dtype=x.dtype, device=x.device)

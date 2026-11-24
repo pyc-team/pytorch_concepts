@@ -51,6 +51,8 @@ Datasets
    CUBDataset
    HAM10000Dataset
    WearDataset
+   CBISDDSMDataset
+   PneumothoraxDataset
 
 Data Modules
 ------------
@@ -71,6 +73,8 @@ Data Modules
    CUBDataModule
    HAM10000DataModule
    WearDataModule
+   CBISDDSMDataModule
+   PneumothoraxDataModule
 
 .. currentmodule:: torch_concepts.data.splitters
 

@@ -3,4 +3,4 @@ defaults:
   - _self_
 
 model_cls:
-  _target_: "torch_concepts.nn.BlackBox"
+  _target_: "torch_concepts.nn.BlackBoxModel"

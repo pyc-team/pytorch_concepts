@@ -67,6 +67,15 @@ class TestLinearConceptToConcept(unittest.TestCase):
         output = predictor(concepts=concepts)
         self.assertEqual(output.shape, (2, 5))
 
+    def test_named_weight(self):
+        """Weights read by concept name when in_concepts are annotations; a count gives no names."""
+        from torch_concepts import Annotations
+        annotations = Annotations(labels=["round", "color"], cardinalities=[1, 3])
+        predictor = LinearConceptToConcept(in_concepts=annotations, out_concepts=2)
+        self.assertTrue(torch.equal(predictor.named_weight["color"].tensor, predictor.predictor.weight[:, 1:4]))
+        with self.assertRaises(ValueError):
+            LinearConceptToConcept(in_concepts=4, out_concepts=2).named_weight
+
 
 if __name__ == '__main__':
     unittest.main()

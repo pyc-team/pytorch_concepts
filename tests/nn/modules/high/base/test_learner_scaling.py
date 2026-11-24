@@ -10,7 +10,7 @@ identity.
 
 ``unscale_output`` assumes a queried quantity covers exactly the concepts the
 scaler was fit on (the standard case: ``prepare_query`` asks for every
-concept). ``BlackBoxTaskOnly`` queries a strict subset and explicitly refuses
+concept). ``BlackBoxModel`` queries a strict subset and explicitly refuses
 that combination instead of silently producing wrong values.
 """
 
@@ -21,7 +21,7 @@ from torchmetrics.regression import MeanSquaredError
 
 from torch_concepts.annotations import Annotations
 from torch_concepts.data.scalers import StandardScaler
-from torch_concepts.nn.modules.high.models.blackbox import BlackBoxTaskOnly
+from torch_concepts.nn.modules.high.models.blackbox import BlackBoxModel
 from torch_concepts.nn.modules.high.models.cbm import ConceptBottleneckModel
 from torch_concepts.nn.modules.loss import ConceptLoss
 from torch_concepts.nn.modules.metrics import ConceptMetrics
@@ -292,7 +292,7 @@ class TestScaleInputs:
 
 
 class TestTaskOnlyModel:
-    """BlackBoxTaskOnly queries a strict subset of the fitted concepts, which
+    """BlackBoxModel queries a strict subset of the fitted concepts, which
     `unscale_output`'s full-coverage assumption cannot handle — it must refuse
     rather than silently produce wrong values (see BaseLearner.unscale_output)."""
 
@@ -318,7 +318,7 @@ class TestTaskOnlyModel:
     @staticmethod
     def _model(annotations, **kwargs):
         torch.manual_seed(0)
-        return BlackBoxTaskOnly(
+        return BlackBoxModel(
             input_size=INPUT_SIZE,
             annotations=annotations,
             task_names=['task'],

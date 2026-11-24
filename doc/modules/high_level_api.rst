@@ -42,8 +42,7 @@ Models
    ConditionalVAE
    GraphConceptBottleneckModel
    CausallyReliableConceptBottleneckModel
-   BlackBox
-   BlackBoxTaskOnly
+   BlackBoxModel
 
 Outputs
 -------

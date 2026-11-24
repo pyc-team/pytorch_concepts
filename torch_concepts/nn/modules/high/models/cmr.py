@@ -7,14 +7,12 @@ from torch import nn
 from torch.distributions import Bernoulli, OneHotCategorical
 
 from .....annotations import Annotations
-from .....distributions import Delta
 from ...low.dense_layers import MLP
 from ...low.encoders.linear import LinearEmbeddingToConcept
 from ...low.predictors.rule import (
     RuleConceptEmbeddingToConcept,
     RuleMemory,
 )
-from ...low.priors import LearnablePrior
 from ...mid.distributions import DEFAULT_DIST_KWARGS
 from ...mid.factors.cpd import ParametricCPD
 from ...mid.graph.bayesian_network import BayesianNetwork
@@ -209,22 +207,6 @@ class ConceptMemoryReasoner(BipartiteModel):
         if parent_hook is not None:
             parent_hook()
         self._maybe_reset_rule_selector(self.current_epoch)
-
-    def _input_latent_block(self):
-        """Build the standard raw-input to latent block used by CBM/CEM."""
-        input_var = EmbeddingVariable("input", distribution=Delta, shape=self.input_size)
-        latent_var = EmbeddingVariable("latent", distribution=Delta, size=self.latent_size)
-        input_cpd = ParametricCPD(
-            input_var,
-            parents=[],
-            parametrization=LearnablePrior(input_var.shape),
-        )
-        latent_cpd = ParametricCPD(
-            latent_var,
-            parents=[input_var],
-            parametrization=self.backbone,
-        )
-        return input_var, latent_var, input_cpd, latent_cpd
 
     def _build_model(self) -> BayesianNetwork:
         input_var, latent_var, input_cpd, latent_cpd = (
