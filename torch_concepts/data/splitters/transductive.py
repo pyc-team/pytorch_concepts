@@ -51,7 +51,7 @@ class TransductiveSplitter(Splitter):
         self.test_size = test_size
 
     def fit(self, dataset: ConceptDataset) -> None:
-        start, window = dataset.start, dataset.input_data.shape[1]
+        start, window = dataset.start, dataset.window
         starts = start.unique()  # sorted
         n_test = resolve_size(self.test_size, len(starts))
         n_val = resolve_size(self.val_size, len(starts))
@@ -84,3 +84,11 @@ class TransductiveSplitter(Splitter):
 
         self.set_indices(**splits)
         self._fitted = True
+
+    def __repr__(self) -> str:
+        return (
+            f"{self.__class__.__name__}("
+            f"train_size={self.train_len}, "
+            f"val_size={self.val_len}, "
+            f"test_size={self.test_len})"
+        )

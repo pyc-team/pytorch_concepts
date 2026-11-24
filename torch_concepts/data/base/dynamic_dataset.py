@@ -29,6 +29,7 @@ class DynamicConceptDataset(ConceptDataset):
 
     Attributes:
         n_series (int): Number of series, ``N``.
+        window (int): Steps per sample.
         start (Tensor): First step of each sample, for splits in time.
         series (Tensor): Series of each sample, for splits by series; None
             with ``flatten_series=False``.
@@ -76,7 +77,7 @@ class DynamicConceptDataset(ConceptDataset):
             input_data = input_data.unsqueeze(1)
             concepts = concepts.unsqueeze(1) if concepts is not None else None
         n_steps, self.n_series = input_data.shape[:2]
-        window = window or n_steps
+        self.window = window = window or n_steps
         stride = stride or window
 
         def samples(series: Tensor) -> Tensor:
