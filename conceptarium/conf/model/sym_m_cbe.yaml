@@ -1,0 +1,57 @@
+# =============================================================
+# Symbolic Mixture of Concept Bottleneck Experts (Sym-M-CBE).
+# One fit runs the three stages: MLP experts for `mlp_epochs` epochs, then the
+# experts are distilled into formulas and fine-tuned for the remaining epochs.
+# =============================================================
+defaults:
+  - _commons
+  - _self_
+
+model_cls:
+  _target_: "torch_concepts.nn.SymbolicMixtureOfConceptBottleneckExperts"
+  task_names: ${dataset.default_task_names}
+  n_experts: 2
+  expert_hidden_size: 64
+  expert_hidden_layers: 1   # 0 = linear experts (the paper's choice for classification)
+  selector_hidden_layers: 1
+  # Against selector collapse: weight of a term maximising the entropy of the
+  # batch-average selector distribution E_x[p(m|x)] (= minimising its KL to
+  # the uniform). 0 disables it.
+  selector_entropy_weight: 0.0
+
+  # NOTE: the engine samples the selector: hard one-hot in training,
+  # most probable expert at evaluation.
+  inference:
+    _target_: "torch_concepts.nn.MAPForwardInference"
+    _partial_: true
+  train_inference:
+    _target_: "torch_concepts.nn.AncestralSamplingInference"
+    _partial_: true
+  train_inference_kwargs:   # Gumbel temperature 2 -> 0.05 (the paper uses a cosine decay)
+    initial_temperature: 2.0
+    final_temperature: 0.05
+    annealing: exponential
+    annealing_rate: 3.7e-4  # per optimizer step: ~10k steps to the floor
+
+  # Stages (see the class docstring). trainer.max_epochs must exceed mlp_epochs.
+  mlp_epochs: 100
+  # multiplicative factor for the learning rate 
+  # of the optimizer that fine-tunes the constants of the symbolic expressions.
+  finetune_lr_factor: 1 
+  distill_kwargs:
+    target: expert        # expert (distil the MLPs, paper) | ground_truth
+    max_samples: 10000     # samples per expert given to the regression
+    save_path: symbolic_regression
+    # PySR parameters. 
+    # Below are the settings of the original paper.
+    # - Regression: populations 40, population_size 60,
+    #   niterations 100, ncycles_per_iteration 380, maxsize 40. 
+    # - Classification: populations 40, population_size 60,
+    #   niterations 100, ncycles_per_iteration 380, maxsize 40.
+    # binary_operators ["+", "-", "*"], no unary operators, maxsize 5 * n_concepts.
+    sr_params:
+      niterations: 100
+      maxsize: 40
+      binary_operators: ["+", "-", "*", "/"]
+      unary_operators: ["sin", "cos", "exp", "log", "tan", "tanh", "square", "cube", "sqrt", "inv"]
+      model_selection: best

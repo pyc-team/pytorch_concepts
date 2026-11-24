@@ -38,6 +38,7 @@ Models
    ConceptBottleneckModel
    ConceptEmbeddingModel
    ConceptMemoryReasoner
+   SymbolicMixtureOfConceptBottleneckExperts
    ConceptBottleneckVAE
    ConditionalVAE
    GraphConceptBottleneckModel
