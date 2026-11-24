@@ -52,3 +52,21 @@ def test_symbolic_reports_trained_expressions():
     with torch.no_grad():
         next(layer.parameters()).fill_(5.0)
     assert str(layer.sympy()[0]) == "5.0*c1"
+
+
+def test_symbolic_operators_stay_finite_out_of_their_domain():
+    exprs = ["log(c1 - 2.0)", "1/c1", "sqrt(c1)", "tan(c1)", "exp(50.0*c1)"]
+    layer = SymbolicConceptToConcept(exprs, ["c1"])
+    assert [str(e) for e in layer.sympy()] == [
+        "log(c1 - 2.0)", "1/c1", "sqrt(c1)", "tan(c1)", "exp(50.0*c1)"]
+    x = torch.tensor([[0.0], [-1.0], [torch.pi / 2]], requires_grad=True)
+    out = layer(x)
+    out.sum().backward()
+    assert torch.isfinite(out).all() and torch.isfinite(x.grad).all()
+    assert all(torch.isfinite(p.grad).all() for p in layer.parameters())
+    # inside the domain nothing changes
+    inside = SymbolicConceptToConcept(["log(c1)", "1/c1", "sqrt(c1)", "tan(c1)", "exp(c1)"],
+                                      ["c1"])(torch.tensor([[0.25]]))
+    c = torch.tensor(0.25)
+    expected = torch.stack([c.log(), 1 / c, c.sqrt(), c.tan(), c.exp()])
+    assert torch.allclose(inside[0], expected)

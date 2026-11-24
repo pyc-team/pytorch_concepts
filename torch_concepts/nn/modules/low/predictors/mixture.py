@@ -52,11 +52,49 @@ def _with_trainable_constants(expr: sympy.Expr, in_exponent: bool = False) -> sy
                      evaluate=False)
 
 
+# NOTE: protected operators, as in the paper's code. Fine-tuning moves the
+# constants and the concepts are now predicted, so an argument can leave the
+# domain PySR saw. sympytorch cannot override its own functions, hence new names.
+_EPS = 1e-6
+_pos = sympy.Function("_pos")              # > 0: log and fractional powers
+_nonzero = sympy.Function("_nonzero")      # != 0: negative powers (division)
+_safe_exp = sympy.Function("_safe_exp")
+_safe_tan = sympy.Function("_safe_tan")
+
+
+def _nonzero_torch(x: torch.Tensor) -> torch.Tensor:
+    return torch.where(x < 0, x.clamp(max=-_EPS), x.clamp(min=_EPS))
+
+
+_SAFE_FUNCS = {
+    _pos: lambda x: x.clamp(min=_EPS),
+    _nonzero: _nonzero_torch,
+    _safe_exp: lambda x: torch.exp(x.clamp(max=20.0)),
+    _safe_tan: lambda x: torch.sin(x) / _nonzero_torch(torch.cos(x)),
+}
+
+
+def _protected(expr: sympy.Expr) -> sympy.Expr:
+    expr = expr.replace(sympy.log, lambda a: sympy.log(_pos(a)))
+    expr = expr.replace(sympy.exp, _safe_exp).replace(sympy.tan, _safe_tan)
+    return expr.replace(
+        lambda e: e.is_Pow and (e.exp.is_negative or not e.exp.is_integer),
+        lambda e: sympy.Pow((_nonzero if e.exp.is_integer else _pos)(e.base), e.exp),
+    )
+
+
+def _unprotected(expr: sympy.Expr) -> sympy.Expr:
+    for guard in (_pos, _nonzero):
+        expr = expr.replace(guard, lambda a: a)
+    return expr.replace(_safe_exp, sympy.exp).replace(_safe_tan, sympy.tan)
+
+
 class SymbolicConceptToConcept(torch.nn.Module):
     """Symbolic expressions over named concepts, with trainable constants.
 
     Each expression gives one output column. Numeric constants become
-    trainable parameters, while exponents stay fixed.
+    trainable parameters, while exponents stay fixed. ``log``, ``exp``,
+    ``tan``, divisions and fractional powers are protected (clamped).
 
     Args:
         expressions: One sympy expression (or string) per output.
@@ -75,13 +113,16 @@ class SymbolicConceptToConcept(torch.nn.Module):
         self.in_names = list(in_names)
         # NOTE: one SymPyModule per expression, so outputs never share constants.
         self.expressions = torch.nn.ModuleList(
-            sympytorch.SymPyModule(expressions=[_with_trainable_constants(sympy.sympify(e))])
+            sympytorch.SymPyModule(
+                expressions=[_protected(_with_trainable_constants(sympy.sympify(e)))],
+                extra_funcs=_SAFE_FUNCS,
+            )
             for e in expressions
         )
 
     def sympy(self) -> List[sympy.Expr]:
         """Current expressions, with the trained constants."""
-        return [e.sympy()[0] for e in self.expressions]
+        return [_unprotected(e.sympy()[0]) for e in self.expressions]
 
     def forward(self, concepts: torch.Tensor) -> torch.Tensor:
         symbols = {name: concepts[..., i] for i, name in enumerate(self.in_names)}

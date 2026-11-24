@@ -17,7 +17,7 @@ model_cls:
   # Against selector collapse: weight of a term maximising the entropy of the
   # batch-average selector distribution E_x[p(m|x)] (= minimising its KL to
   # the uniform). 0 disables it.
-  selector_entropy_weight: 0.0
+  selector_entropy_weight: 1e-2
 
   # NOTE: the engine samples the selector: hard one-hot in training,
   # most probable expert at evaluation.
