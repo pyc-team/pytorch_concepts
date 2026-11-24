@@ -89,10 +89,38 @@ def test_set_symbolic_experts_then_train():
     assert all(p.grad is not None for e in experts for p in e.parameters())
 
 
+def test_known_experts_are_symbolic_from_stage_one():
+    model = _model(known_experts={"tasks": [["2*c1 - c2"]]})
+    known, *mlps = model.experts()["tasks"].experts
+    assert isinstance(known, SymbolicConceptToConcept)
+    assert not any(isinstance(e, SymbolicConceptToConcept) for e in mlps)
+    assert not model.is_symbolic  # stage 2 still has MLPs to distill
+    assert sorted(p.item() for p in known.parameters()) == [-1.0, 2.0]
+    model.train()
+    out = model(["tasks"], input=torch.randn(64, 4)).logits["tasks"]
+    out.sum().backward()
+    assert all(p.grad is not None for p in known.parameters())
+
+    frozen = _model(known_experts={"tasks": [["2.0*c1"]]}, finetune_known_experts=False)
+    assert not any(p.requires_grad for p in frozen.experts()["tasks"].experts[0].parameters())
+    assert _model(n_experts=1, known_experts={"tasks": [["2.0*c1"]]}).is_symbolic
+
+
+@pytest.mark.parametrize("known", [
+    {"tasks": [["c1"], ["c2"], ["c1"], ["c2"]]},  # more than n_experts
+    {"tasks": [["c1", "c2"]]},                    # wrong number of outputs
+    {"tasks": [["c1 + c3"]]},                     # unknown symbol
+    {"other": [["c1"]]},                          # unknown task
+])
+def test_invalid_known_experts(known):
+    with pytest.raises(ValueError):
+        _model(known_experts=known)
+
+
 def test_distill_experts_recovers_a_linear_expert(tmp_path):
     pytest.importorskip("symtorch")
-    model = _model(expert_hidden_layers=0)
-    for expert in model.experts()["tasks"].experts:
+    model = _model(expert_hidden_layers=0, known_experts={"tasks": [["3.0*c2"]]})
+    for expert in model.experts()["tasks"].experts[1:]:
         with torch.no_grad():
             expert.weight.copy_(torch.tensor([[2.0, -1.0]]))
             expert.bias.zero_()
@@ -103,9 +131,10 @@ def test_distill_experts_recovers_a_linear_expert(tmp_path):
                    "unary_operators": []},
     )
     assert len(exprs["tasks"]) == 3
+    assert str(exprs["tasks"][0][0]) == "3.0*c2"  # the known expert is not distilled
     model.set_symbolic_experts(exprs)
     c = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
-    for expert, exprs_m in zip(model.experts()["tasks"].experts, exprs["tasks"]):
+    for expert, exprs_m in zip(model.experts()["tasks"].experts[1:], exprs["tasks"][1:]):
         if exprs_m[0].free_symbols:  # an expert that received samples
             assert torch.allclose(expert(c), torch.tensor([[2.0], [-1.0]]), atol=1e-2)
 
@@ -116,7 +145,8 @@ def test_lightning_fit_runs_the_three_stages(tmp_path, monkeypatch):
 
     model = _model(lightning=True, loss=ConceptLoss(binary=nn.BCEWithLogitsLoss()),
                    optim_class=torch.optim.Adam, optim_kwargs={"lr": 0.01},
-                   mlp_epochs=1)
+                   mlp_epochs=1, known_experts={"tasks": [["5.0*c1"]]})
+    known = model.experts()["tasks"].experts[0]
     # Stage 2 without PySR: fixed expressions.
     monkeypatch.setattr(model, "distill_experts",
                         lambda x, c: {"tasks": [["2.0*c1 - c2"], ["0.5*c2"], ["1.0"]]})
@@ -126,7 +156,8 @@ def test_lightning_fit_runs_the_three_stages(tmp_path, monkeypatch):
     batches = torch.utils.data.DataLoader([_batch(16) for _ in range(4)], collate_fn=lambda b: b[0])
     trainer.fit(model, train_dataloaders=batches)
 
-    assert model.is_symbolic
+    assert model.is_symbolic  # all experts, the MLPs included, are expressions
+    assert model.experts()["tasks"].experts[0] is known  # kept, not replaced
     assert model.optim_kwargs["lr"] == pytest.approx(0.05)
     optimized = {id(p) for g in trainer.optimizers[0].param_groups for p in g["params"]}
     constants = [p for e in model.experts()["tasks"].experts for p in e.parameters()]

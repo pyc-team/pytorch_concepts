@@ -71,6 +71,18 @@ class SymbolicMixtureOfConceptBottleneckExperts(BipartiteModel):
             With ``lightning=False``, subtract
             ``selector_entropy_weight * model.selector_marginal_entropy()``
             from the loss yourself.
+        known_experts: Equations the user already knows, as
+            ``{task variable: [[expression of each output] for each known expert]}``
+            (strings or sympy expressions over :attr:`expert_input_names`,
+            e.g. ``{"tasks": [["2.0*c1 + 1.0*c2"]]}``). The keys are those of
+            :meth:`experts`: ``"tasks"`` with plates (default), whose outputs
+            are the columns of all its members in order; the task name with
+            ``plate=False``. They take the first
+            expert slots, are symbolic from stage 1 and are never distilled;
+            the remaining slots are MLP experts. Only explicit numbers are
+            trainable: write ``1.0*c1``, not ``c1``.
+        finetune_known_experts: Whether the constants of ``known_experts``
+            are trained (from stage 1 on). ``False`` keeps them fixed.
         inference: Evaluation engine. Defaults to ``MAPForwardInference``
             (the most probable expert).
         train_inference: Training engine. Defaults to
@@ -113,6 +125,8 @@ class SymbolicMixtureOfConceptBottleneckExperts(BipartiteModel):
         expert_hidden_layers: int = 1,
         selector_hidden_layers: int = 1,
         selector_entropy_weight: float = 0.0,
+        known_experts: Optional[Dict[str, List[List]]] = None,
+        finetune_known_experts: bool = True,
         inference: Optional[BaseInference] = MAPForwardInference,
         inference_kwargs: Optional[dict] = None,
         train_inference: Optional[BaseInference] = AncestralSamplingInference,
@@ -146,6 +160,10 @@ class SymbolicMixtureOfConceptBottleneckExperts(BipartiteModel):
         if selector_entropy_weight < 0:
             raise ValueError("selector_entropy_weight must be non-negative.")
         self.selector_entropy_weight = selector_entropy_weight
+        # Plain lists (Hydra passes DictConfig / ListConfig).
+        self.known_experts = {t: [list(exprs) for exprs in experts]
+                              for t, experts in (known_experts or {}).items()}
+        self.finetune_known_experts = finetune_known_experts
         self.pgm = self._build_model()
         # Keep the selector value the predictors received, for the entropy term.
         for mixture in self.experts().values():
@@ -168,6 +186,18 @@ class SymbolicMixtureOfConceptBottleneckExperts(BipartiteModel):
             return nn.Linear(in_size, out_size)
         return MLP(in_size, self.expert_hidden_size, out_size,
                    n_layers=self.expert_hidden_layers)
+
+    def _known_expert(self, task: str, exprs: List, out_size: int) -> nn.Module:
+        names = self.expert_input_names
+        expert = SymbolicConceptToConcept(exprs, names)
+        if len(exprs) != out_size:
+            raise ValueError(f"A known expert of '{task}' needs {out_size} "
+                             f"expressions, got {len(exprs)}.")
+        unknown = {str(s) for e in expert.sympy() for s in e.free_symbols} - set(names)
+        if unknown:
+            raise ValueError(f"Unknown symbols {sorted(unknown)} in a known expert "
+                             f"of '{task}'; the inputs are {names}.")
+        return expert.requires_grad_(self.finetune_known_experts)
 
     def _build_model(self) -> BayesianNetwork:
         input_var, latent_var, input_cpd, latent_cpd = self._input_latent_block()
@@ -212,11 +242,24 @@ class SymbolicMixtureOfConceptBottleneckExperts(BipartiteModel):
         )
 
         # Predictor
+        unknown = set(self.known_experts) - {t.name for t in self._tasks}
+        if unknown:
+            raise ValueError(f"known_experts for unknown task variables {sorted(unknown)}; "
+                             f"they are {[t.name for t in self._tasks]}.")
         n_in = sum(c.size for c in self._concepts)
         predictors = []
         for t in self._tasks:
             param = "value" if t.distribution is Delta else self.param_for_discrete_var
-            experts = [self._expert(n_in, t.param_sizes[param]) for _ in range(self.n_experts)]
+            out_size = t.param_sizes[param]
+            # NOTE: known equations take the first slots and are symbolic from
+            # stage 1 (constants trained with the rest); MLPs fill the others.
+            known = self.known_experts.get(t.name, [])
+            if len(known) > self.n_experts:
+                raise ValueError(f"{len(known)} known experts for '{t.name}', "
+                                 f"but n_experts={self.n_experts}.")
+            experts = [self._known_expert(t.name, e, out_size) for e in known]
+            experts += [self._expert(n_in, out_size)
+                        for _ in range(self.n_experts - len(known))]
             predictors.append(ParametricCPD(
                 t,
                 parents=[*self._concepts, selector],
@@ -297,6 +340,11 @@ class SymbolicMixtureOfConceptBottleneckExperts(BipartiteModel):
         for t_name, mixture in self.experts().items():
             out[t_name] = []
             for m, expert in enumerate(mixture.experts):
+                if isinstance(expert, SymbolicConceptToConcept):
+                    # Known experts are not distilled; their samples are
+                    # left out of the regression of the others.
+                    out[t_name].append(expert.sympy())
+                    continue
                 idx = (route == m).nonzero().flatten()
                 idx = idx[torch.randperm(len(idx))[:max_samples]]
                 out_dim = expert(concepts[:1]).shape[-1]
@@ -316,13 +364,17 @@ class SymbolicMixtureOfConceptBottleneckExperts(BipartiteModel):
         return out
 
     def set_symbolic_experts(self, expressions: Dict[str, List[List]]) -> None:
-        """Stage 3: replace the experts with the given expressions.
+        """Stage 3: replace the MLP experts with the given expressions.
 
-        The constants of the expressions become trainable parameters.
+        The constants of the expressions become trainable parameters. Experts
+        that are already symbolic (e.g. ``known_experts``) are kept as they
+        are, with their trained constants.
         """
         for t_name, mixture in self.experts().items():
             device = next(self.parameters()).device
             for m, exprs in enumerate(expressions[t_name]):
+                if isinstance(mixture.experts[m], SymbolicConceptToConcept):
+                    continue
                 mixture.experts[m] = SymbolicConceptToConcept(
                     exprs, self.expert_input_names
                 ).to(device)
@@ -347,8 +399,10 @@ class SymbolicMixtureOfConceptBottleneckExperts(BipartiteModel):
 
     @property
     def is_symbolic(self) -> bool:
-        """Whether the experts have been replaced by expressions."""
-        return any(isinstance(e, SymbolicConceptToConcept)
+        """Whether all the experts are expressions (stage 3)."""
+        # NOTE: all, not any: known experts are symbolic from stage 1. With
+        # only known experts there is no stage 2 and mlp_epochs is ignored.
+        return all(isinstance(e, SymbolicConceptToConcept)
                    for mixture in self.experts().values() for e in mixture.experts)
 
     def on_train_epoch_start(self) -> None:

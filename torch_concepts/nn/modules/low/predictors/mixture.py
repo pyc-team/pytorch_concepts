@@ -97,7 +97,9 @@ class SymbolicConceptToConcept(torch.nn.Module):
     ``tan``, divisions and fractional powers are protected (clamped).
 
     Args:
-        expressions: One sympy expression (or string) per output.
+        expressions: One sympy expression (or string) per output. Every
+            number in it is trainable (``2*c1`` too; the ``-1`` of ``c1 - c2``
+            too), except exponents; an implicit coefficient (``c1 + c2``) is not.
         in_names: Symbol name of each input concept column, in order.
 
     Example:
@@ -111,10 +113,14 @@ class SymbolicConceptToConcept(torch.nn.Module):
     def __init__(self, expressions: Sequence, in_names: List[str]):
         super().__init__()
         self.in_names = list(in_names)
+        # NOTE: concept names are always symbols (sympify alone reads E, I, S,
+        # N, gamma, ... as sympy constants and functions).
+        symbols = {name: sympy.Symbol(name) for name in self.in_names}
         # NOTE: one SymPyModule per expression, so outputs never share constants.
         self.expressions = torch.nn.ModuleList(
             sympytorch.SymPyModule(
-                expressions=[_protected(_with_trainable_constants(sympy.sympify(e)))],
+                expressions=[_protected(_with_trainable_constants(
+                    sympy.sympify(e, locals=symbols)))],
                 extra_funcs=_SAFE_FUNCS,
             )
             for e in expressions

@@ -18,6 +18,28 @@ model_cls:
   # batch-average selector distribution E_x[p(m|x)] (= minimising its KL to
   # the uniform). 0 disables it.
   selector_entropy_weight: 1e-2
+  # Equations already known: they take the first expert slots, are trained from
+  # stage 1 and are never distilled; MLPs fill the other slots.
+  # - Keys: task VARIABLES. Tasks with the same type and cardinality share one
+  #   plate variable: "tasks" if all tasks are homogeneous, otherwise
+  #   "tasks_{type}_{cardinality}" (e.g. tasks_binary_1, tasks_categorical_3).
+  # - Values: one list per known expert, with one expression per output of the
+  #   variable, in member order: binary -> 1 logit, categorical with K classes
+  #   -> K logits, continuous -> 1 value.
+  # - Symbols: the concept names (model.expert_input_names); a categorical
+  #   concept has one symbol per state (Raf_0, Raf_1, ...).
+  # - Only explicit numbers are trainable: 1.0*c1, not c1 (the -1 of c1 - c2 is).
+  # - One selector index per sample: expert m is the m-th equation of EVERY task
+  #   variable. A variable can be known while another stays MLP, but inside a
+  #   variable expert m is all known or all MLP (to fix one task of a plate
+  #   alone, use plate: false, where the keys are the task names).
+  # e.g. single task (asia):    {tasks: [["2.0*bronc + 1.0*either"]]}
+  # e.g. y1, y2 binary:         {tasks: [["1.0*c1 + 2.0*c2", "0.5*c1*c2"]]}  # [y1, y2]
+  # e.g. y1, y2 binary, y3 categorical (3 classes):
+  #   {tasks_binary_1: [["1.0*c1 + 2.0*c2", "0.5*c1*c2"]],
+  #    tasks_categorical_3: [["1.0*c1", "1.0*c2", "-1.0*c1"]]}
+  known_experts: null
+  finetune_known_experts: true   # false: the constants of known_experts stay fixed
 
   # NOTE: the engine samples the selector: hard one-hot in training,
   # most probable expert at evaluation.

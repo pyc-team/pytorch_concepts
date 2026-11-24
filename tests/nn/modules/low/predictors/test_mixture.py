@@ -54,6 +54,11 @@ def test_symbolic_reports_trained_expressions():
     assert str(layer.sympy()[0]) == "5.0*c1"
 
 
+def test_symbolic_concept_names_are_symbols_not_sympy_constants():
+    layer = SymbolicConceptToConcept(["2.0*E + S*I"], ["E", "S", "I"])
+    assert torch.allclose(layer(torch.tensor([[1.0, 2.0, 3.0]])), torch.tensor([[8.0]]))
+
+
 def test_symbolic_operators_stay_finite_out_of_their_domain():
     exprs = ["log(c1 - 2.0)", "1/c1", "sqrt(c1)", "tan(c1)", "exp(50.0*c1)"]
     layer = SymbolicConceptToConcept(exprs, ["c1"])
