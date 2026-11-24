@@ -65,7 +65,7 @@ dataset = WearDataset(
     n_steps=30,
     n_sensors=D - 2,  # besides the two operating conditions
     window=W + H,
-    stride=2,
+    stride=1,
     root=str(DATA_ROOT / "wear"),
 )
 x = dataset.input_data[:, :W]  # (N, W, D)

@@ -27,11 +27,11 @@ class InductiveSplitter(RandomSplitter):
         >>> import torch
         >>> from torch_concepts.data.base import DynamicConceptDataset
         >>> from torch_concepts.data.splitters import InductiveSplitter
-        >>> dataset = DynamicConceptDataset(torch.randn(10, 5, 2), window=4, stride=2)
+        >>> dataset = DynamicConceptDataset(torch.randn(10, 5, 2), window=4, stride=1)
         >>> splitter = InductiveSplitter(val_size=1, test_size=1, seed=0)
-        >>> splitter.fit(dataset)  # 5 series of 4 windows each
+        >>> splitter.fit(dataset)  # 5 series of 7 windows each
         >>> splitter.train_len, splitter.val_len, splitter.test_len
-        (12, 4, 4)
+        (21, 7, 7)
     """
 
     def fit(self, dataset: ConceptDataset) -> None:

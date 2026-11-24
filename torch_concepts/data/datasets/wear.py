@@ -116,9 +116,9 @@ class WearDataset(DynamicConceptDataset):
     torch.Size([100, 12, 16])
     >>> dataset.concepts.shape
     torch.Size([100, 12, 3])
-    >>> dataset = WearDataset(n_gen=100, n_steps=12, window=4)  # 3 windows per machine
-    >>> dataset.input_data.shape
-    torch.Size([300, 4, 16])
+    >>> dataset = WearDataset(n_gen=100, n_steps=12, window=4, stride=1)
+    >>> dataset.input_data.shape  # 9 windows per machine
+    torch.Size([900, 4, 16])
     """
 
     def __init__(

@@ -62,7 +62,7 @@ seed_everything(42)
 # Each machine runs for 30 steps, enough for almost all of them to reach the
 # alarm. A sample is a window of ``W + H`` steps of one machine: ``D``
 # channels, the health of its two components and the alarm. A window starts
-# every 2 steps, so the samples cover every stage of wear. The windows of a
+# at every step, so the samples cover every stage of wear. The windows of a
 # machine overlap, so the split is inductive, by machine, and 500 machines are
 # only for testing.
 W, H, D = 8, 12, 16  # steps read, steps forecast, channels per step
@@ -71,7 +71,7 @@ dataset = WearDataset(
     n_steps=30,
     n_sensors=D - 2,  # besides the two operating conditions
     window=W + H,
-    stride=2,
+    stride=1,
     root=str(DATA_ROOT / "wear"),
 )
 x = dataset.input_data[:, :W]  # (N, W, D)

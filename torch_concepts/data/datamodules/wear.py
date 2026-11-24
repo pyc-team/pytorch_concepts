@@ -56,7 +56,7 @@ class WearDataModule(ConceptDataModule):
     --------
     >>> from torch_concepts.data import WearDataModule
     >>>
-    >>> dm = WearDataModule(n_gen=100, n_steps=12, window=4, stride=2, batch_size=32)
+    >>> dm = WearDataModule(n_gen=100, n_steps=12, window=4, stride=1, batch_size=32)
     >>> dm.setup()
     >>> batch = next(iter(dm.train_dataloader()))
     >>> batch["inputs"]["x"].shape

@@ -34,11 +34,11 @@ class TransductiveSplitter(Splitter):
         >>> import torch
         >>> from torch_concepts.data.base import DynamicConceptDataset
         >>> from torch_concepts.data.splitters import TransductiveSplitter
-        >>> dataset = DynamicConceptDataset(torch.randn(20, 2, 1), window=4, stride=2)
-        >>> splitter = TransductiveSplitter(val_size=2, test_size=2)
-        >>> splitter.fit(dataset)  # windows start at steps 0, 2, ..., 16
+        >>> dataset = DynamicConceptDataset(torch.randn(20, 2, 1), window=4, stride=1)
+        >>> splitter = TransductiveSplitter(val_size=4, test_size=2)
+        >>> splitter.fit(dataset)  # windows start at steps 0, 1, ..., 16
         >>> [dataset.start[splitter.indices[s]].unique().tolist() for s in ("train", "val", "test")]
-        [[0, 2, 4, 6], [10], [14, 16]]
+        [[0, 1, 2, 3, 4, 5, 6, 7], [11], [15, 16]]
     """
 
     def __init__(
