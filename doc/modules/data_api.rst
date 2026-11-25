@@ -19,6 +19,7 @@ supervision to a dataset.
    :nosignatures:
 
    ConceptDataset
+   DynamicConceptDataset
 
 .. autosummary::
    :toctree: generated
@@ -49,6 +50,7 @@ Datasets
    AWA2Dataset
    CUBDataset
    HAM10000Dataset
+   WearDataset
    CBISDDSMDataset
    PneumothoraxDataset
 
@@ -70,8 +72,26 @@ Data Modules
    AWA2DataModule
    CUBDataModule
    HAM10000DataModule
+   WearDataModule
    CBISDDSMDataModule
    PneumothoraxDataModule
+
+.. currentmodule:: torch_concepts.data.splitters
+
+Splitters
+---------
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   RandomSplitter
+   ColoringSplitter
+   NativeSplitter
+   CustomSplitter
+   FixedIndicesSplitter
+   InductiveSplitter
+   TransductiveSplitter
 
 Environment
 -----------

@@ -33,7 +33,10 @@ from ..generation.base.pipeline import ConceptGenerationPipeline
 
 logger = logging.getLogger(__name__)
 
-from ..splitters import RandomSplitter, NativeSplitter, FixedIndicesSplitter
+from ..splitters import (
+    RandomSplitter, NativeSplitter, FixedIndicesSplitter, InductiveSplitter, TransductiveSplitter,
+)
+from .dynamic_dataset import DynamicConceptDataset
 
 StageOptions = Literal['fit', 'validate', 'test', 'predict']
 
@@ -82,7 +85,10 @@ class ConceptDataModule(LightningDataModule):
         Custom splitter for train/val/test splits. Must implement a
         ``split(dataset)`` method that sets ``train_idxs``, ``val_idxs``,
         and ``test_idxs`` attributes. If None, uses RandomSplitter with
-        the specified ``val_size`` and ``test_size``. Default is None.
+        the specified ``val_size`` and ``test_size``; for a
+        :class:`DynamicConceptDataset`, InductiveSplitter (by series) or, with
+        ``flatten_series=False`` or a single series, TransductiveSplitter (in
+        time), so that no step is in two splits. Default is None.
     workers : int, optional
         Number of subprocesses for data loading. 0 means data will be
         loaded in the main process. Default is 0.
@@ -210,7 +216,14 @@ class ConceptDataModule(LightningDataModule):
 
         # set splitter
         self.trainset = self.valset = self.testset = None
-        if splitter is None:
+        if splitter is None and isinstance(dataset, DynamicConceptDataset):
+            # Random windows would share steps across splits: split by series, or in time.
+            self.splitter = (
+                InductiveSplitter(val_size=val_size, test_size=test_size, seed=seed)
+                if dataset.series is not None and dataset.n_series > 1
+                else TransductiveSplitter(val_size=val_size, test_size=test_size)
+            )
+        elif splitter is None:
             self.splitter = RandomSplitter(
                 val_size=val_size,
                 test_size=test_size,
@@ -505,6 +518,11 @@ class ConceptDataModule(LightningDataModule):
                     # one statistic per concept, over every step.
                     if train_data.dim() > 2:
                         train_data = train_data.tensor.flatten(0, -2)
+
+                # Windows of time series (n, window, ..., F): one statistic per
+                # channel, over every step and series, as for the concepts.
+                if key == 'input' and isinstance(self.dataset, DynamicConceptDataset):
+                    train_data = train_data.flatten(0, -2)
 
                 # Fit the scaler on the training data and store it in the dataset
                 scaler.fit(train_data)

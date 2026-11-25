@@ -460,7 +460,9 @@ def unpack_plates(pgm: ProbabilisticModel) -> ProbabilisticModel:
     For an engine that has no reason to know what a plate is — belief
     propagation, say — this removes the concept entirely: every variable has one
     member, so every factor scope entry is a single variable. Returns ``pgm``
-    itself when it holds no plate.
+    itself when it holds no plate. The copy of a subclass of
+    ``BayesianNetwork``, such as a ``DynamicBayesianNetwork``, is a plain
+    ``BayesianNetwork``.
 
     A plate's CPD becomes ``k`` CPDs, one per member, sharing the plate's head
     through :class:`_MemberSlice`. That is exact: a plate's members are
@@ -482,6 +484,7 @@ def unpack_plates(pgm: ProbabilisticModel) -> ProbabilisticModel:
     """
     from ..factors.cpd import ParametricCPD
     from ..factors.potential import ParametricPotential
+    from ..graph.bayesian_network import BayesianNetwork
 
     if not any(v.is_plate for v in pgm.variables.values()):
         return pgm
@@ -559,4 +562,6 @@ def unpack_plates(pgm: ProbabilisticModel) -> ProbabilisticModel:
                 trunk=factor.trunk,
             ))
 
-    return type(pgm)(variables=list(by_name.values()), factors=factors)
+    # A subclass, such as DynamicBayesianNetwork, may take other arguments: rebuild the base class.
+    cls = BayesianNetwork if isinstance(pgm, BayesianNetwork) else type(pgm)
+    return cls(variables=list(by_name.values()), factors=factors)

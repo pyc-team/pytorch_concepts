@@ -528,3 +528,93 @@ class TestFixedIndicesSplitter:
         assert list(dm.splitter.test_idxs) == test_idxs
         # No ``seed`` attribute should be forced onto it by the datamodule.
         assert not hasattr(dm.splitter, "seed")
+
+
+class TestTransductiveSplitter:
+    """Tests for TransductiveSplitter."""
+
+    @pytest.mark.parametrize("flatten_series", [True, False])
+    def test_splits_in_time_and_drops_the_windows_across_a_cut(self, flatten_series):
+        from torch_concepts.data.base import DynamicConceptDataset
+        from torch_concepts.data.splitters import TransductiveSplitter
+
+        # 20 steps of 2 series, windows of 4 steps starting at 0, 2, ..., 16.
+        dataset = DynamicConceptDataset(
+            torch.randn(20, 2, 1), window=4, stride=2, flatten_series=flatten_series
+        )
+        splitter = TransductiveSplitter(val_size=2, test_size=2)
+        splitter.fit(dataset)
+        # Train holds steps 0-9, val 10-13 and test 14-19: the windows at 8 and 12 cross a cut.
+        starts = [dataset.start[splitter.indices[s]].unique().tolist() for s in ("train", "val", "test")]
+        assert starts == [[0, 2, 4, 6], [10], [14, 16]]
+        if flatten_series:  # every series in every split
+            assert all(len(dataset.series[splitter.indices[s]].unique()) == 2 for s in ("train", "val", "test"))
+
+    @pytest.mark.parametrize("val_size, split", [(0, "train"), (1, "train and val")])
+    def test_a_split_shorter_than_a_window_raises(self, val_size, split):
+        from torch_concepts.data.base import DynamicConceptDataset
+        from torch_concepts.data.splitters import TransductiveSplitter
+
+        # Windows of 16 steps start at 0, 2 and 4: the splits before test span 2 or 4 steps.
+        dataset = DynamicConceptDataset(torch.randn(20, 2, 1), window=16, stride=2)
+        with pytest.raises(ValueError, match=f"fits in the {split} split"):
+            TransductiveSplitter(val_size=val_size, test_size=1).fit(dataset)
+
+    def test_precomputed_embeddings_keep_the_split(self):
+        from torch_concepts.data.base import DynamicConceptDataset
+        from torch_concepts.data.splitters import TransductiveSplitter
+
+        dataset = DynamicConceptDataset(torch.randn(20, 2, 1), window=4, stride=2)
+        dataset.input_data = torch.randn(len(dataset), 2)  # an embedding of size 2 per window
+        splitter = TransductiveSplitter(val_size=2, test_size=2)
+        splitter.fit(dataset)
+        starts = [dataset.start[splitter.indices[s]].unique().tolist() for s in ("train", "val", "test")]
+        assert starts == [[0, 2, 4, 6], [10], [14, 16]]
+
+    def test_no_window_start_for_training_raises(self):
+        from torch_concepts.data.base import DynamicConceptDataset
+        from torch_concepts.data.splitters import TransductiveSplitter
+
+        dataset = DynamicConceptDataset(torch.randn(20, 2, 1), window=4, stride=2)  # 9 starts
+        with pytest.raises(ValueError, match="none is left for training"):
+            TransductiveSplitter(val_size=4, test_size=5).fit(dataset)
+
+    def test_a_size_that_rounds_to_no_start_raises(self):
+        from torch_concepts.data.base import DynamicConceptDataset
+        from torch_concepts.data.splitters import TransductiveSplitter
+
+        dataset = DynamicConceptDataset(torch.randn(20, 3, 1))  # one sample per series: 1 start
+        with pytest.raises(ValueError, match="val and test split gets none"):
+            TransductiveSplitter().fit(dataset)
+
+
+class TestInductiveSplitter:
+    """Tests for InductiveSplitter."""
+
+    def test_each_series_is_in_one_split_with_all_its_windows(self):
+        from torch_concepts.data.base import DynamicConceptDataset
+        from torch_concepts.data.splitters import InductiveSplitter
+
+        dataset = DynamicConceptDataset(torch.randn(20, 8, 1), window=4, stride=2)
+        dataset._subset_rows(torch.where(dataset.series >= 3)[0])  # series 3 to 7, 9 windows each
+        splitter = InductiveSplitter(val_size=1, test_size=2, seed=0)
+        splitter.fit(dataset)
+        series = [dataset.series[splitter.indices[s]].unique() for s in ("train", "val", "test")]
+        assert torch.cat(series).sort().values.tolist() == [3, 4, 5, 6, 7]
+        assert [splitter.train_len, splitter.val_len, splitter.test_len] == [18, 9, 18]
+
+    def test_all_the_series_in_each_sample_raises(self):
+        from torch_concepts.data.base import DynamicConceptDataset
+        from torch_concepts.data.splitters import InductiveSplitter
+
+        dataset = DynamicConceptDataset(torch.randn(20, 2, 1), window=4, flatten_series=False)
+        with pytest.raises(ValueError, match="flatten_series=True"):
+            InductiveSplitter().fit(dataset)
+
+    def test_a_size_that_rounds_to_no_series_raises(self):
+        from torch_concepts.data.base import DynamicConceptDataset
+        from torch_concepts.data.splitters import InductiveSplitter
+
+        dataset = DynamicConceptDataset(torch.randn(20, 3, 1), window=4)  # 0.2 * 3 series -> 0
+        with pytest.raises(ValueError, match="test split holds no series"):
+            InductiveSplitter(val_size=1, test_size=0.2).fit(dataset)

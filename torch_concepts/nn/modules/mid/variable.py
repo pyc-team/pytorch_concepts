@@ -231,6 +231,8 @@ class Variable(ABC):
         }
         # Set on a member view returned by ``member()``; points back to the plate.
         self._plate: Optional["Variable"] = None
+        # Set on the handle returned by ``previous()``; points back to the variable.
+        self._previous_of: Optional["Variable"] = None
 
     @property
     def is_plate(self) -> bool:
@@ -472,6 +474,41 @@ class Variable(ABC):
         )
         # Set the back-reference to the owning plate.
         view._plate = self
+        return view
+
+    def previous(self) -> "Variable":
+        """A handle to this variable at the time step before.
+
+        In a transition CPD of a :class:`~torch_concepts.nn.DynamicBayesianNetwork`,
+        for this variable ``z``, ``parents=[z.previous()]`` is the arc from ``z``
+        at step ``t - 1`` to the child at step ``t``. The handle has the name,
+        distribution and members of this variable; for a single member, take it
+        from the handle, as in ``z.previous().member("z1")``.
+        """
+        # --- Checks ---
+        # Only a variable or a plate has a step before.
+        # A member takes it from its plate, and a handle cannot go one more step back.
+        if self._plate is not None or self._previous_of is not None:
+            raise ValueError(
+                f"{type(self).__name__}({self.name!r}): previous() takes a variable "
+                "or a plate, not a member or a handle from previous(). For a member "
+                "at the step before, use plate.previous().member(name)."
+            )
+
+        # --- Handle ---
+        # A copy of this variable, with the same name, distribution and members.
+        layout = (
+            {"size": self.member_size, "members": self.members}
+            if self.is_plate else {"shape": self.member_shape}
+        )
+        view = type(self)(
+            self.name,
+            distribution=self.distribution,
+            dist_kwargs=copy.deepcopy(self.dist_kwargs),
+            **layout,
+        )
+        # Set the back-reference to the variable, which the DBN reads at the step before.
+        view._previous_of = self
         return view
 
     @property
