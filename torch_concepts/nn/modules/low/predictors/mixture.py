@@ -52,7 +52,7 @@ def _with_trainable_constants(expr: sympy.Expr, in_exponent: bool = False) -> sy
                      evaluate=False)
 
 
-# NOTE: protected operators, as in the paper's code. Fine-tuning moves the
+# Protected operators. Fine-tuning moves the
 # constants and the concepts are now predicted, so an argument can leave the
 # domain PySR saw. sympytorch cannot override its own functions, hence new names.
 _EPS = 1e-6

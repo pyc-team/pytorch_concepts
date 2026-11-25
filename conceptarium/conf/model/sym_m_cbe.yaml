@@ -18,8 +18,8 @@ model_cls:
   # batch-average selector distribution E_x[p(m|x)] (= minimising its KL to
   # the uniform). 0 disables it.
   selector_entropy_weight: 1e-2
-  # Equations already known: they take the first expert slots, are trained from
-  # stage 1 and are never distilled; MLPs fill the other slots.
+  # Equations already known: they are trained from
+  # stage 1 and are never distilled; MLPs fill the remaining slots.
   # - Keys: task VARIABLES. Tasks with the same type and cardinality share one
   #   plate variable: "tasks" if all tasks are homogeneous, otherwise
   #   "tasks_{type}_{cardinality}" (e.g. tasks_binary_1, tasks_categorical_3).
