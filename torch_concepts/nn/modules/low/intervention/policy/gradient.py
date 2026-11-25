@@ -26,7 +26,7 @@ class GradientPolicy(InterventionPolicy):
             return {"concept_grads": grads.detach()}
 
         intervention_module = InterventionModule(
-            concept_encoder, strategy, GradientPolicy(), [0, 1, 2],
+            concept_encoder, strategy, [0, 1, 2], GradientPolicy(),
             build_context=build_context,
             extra_modules={"task_head": task_head},
             quantile=0.5,

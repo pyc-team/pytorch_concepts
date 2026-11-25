@@ -125,8 +125,8 @@ c_true = torch.logit(c_test, eps=1e-6)
 with torch.no_grad(), intervention(
     model,
     GroundTruthIntervention(c_true),
-    UncertaintyInterventionPolicy(),
     ["C1", "C2"],
+    UncertaintyInterventionPolicy(),
     quantile=0.5,
 ):
     least_sure = engine.query(["xor"], evidence={"input": x_test})
@@ -139,8 +139,8 @@ curve = intervention_curve(
     model=engine,
     layer_name=None,
     intervention_strategy=GroundTruthIntervention(c_true),
-    intervention_policy=UncertaintyInterventionPolicy(),
     concepts_to_intervene_on=["C1", "C2"],
+    intervention_policy=UncertaintyInterventionPolicy(),
     dataloader=[{"inputs": {"x": x_test}, "concepts": {"c": dataset.concepts[800:]}}],
     task="xor",
 )

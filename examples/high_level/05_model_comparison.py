@@ -29,7 +29,6 @@ from torch_concepts.nn import (
     ConceptEmbeddingModel,
     ConceptLoss,
     GroundTruthIntervention,
-    UniformPolicy,
     intervention,
 )
 
@@ -102,7 +101,7 @@ for name, (model_class, extra) in models.items():
         line = f"{name:<10} parity accuracy {parity:.3f}"
         if name != "black box":
             digit = digit_accuracy(model(query=["digit"], input=x_test))
-            with intervention(model, true_digit, UniformPolicy(), ["digit"]):
+            with intervention(model, true_digit, ["digit"]):
                 fixed = parity_accuracy(model(query=["parity"], input=x_test))
             line += f" | digit accuracy {digit:.3f}"
             line += f" | parity with the true digit {fixed:.3f}"

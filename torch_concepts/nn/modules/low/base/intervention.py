@@ -205,12 +205,14 @@ class InterventionModule(nn.Module):
     Args:
         original_module: Layer to intervene on.
         intervention_strategy: Computes the new values of the intervened outputs.
-        intervention_policy: Scores the outputs; the lowest are intervened on first.
         out_concepts_to_intervene_on: Concepts that may be intervened on: names
             (if ``original_module.out_concepts`` is an :class:`Annotations`), one
             ``slice(start, stop)`` of outputs per concept, positions (one output per
             concept), or per-sample positions as a ``[*lead, K]`` nested list or
             LongTensor.
+        intervention_policy: Scores the outputs; the lowest are intervened on first,
+            up to ``quantile`` of them. Defaults to :class:`UniformPolicy`, which with
+            the default ``quantile=1.0`` intervenes on all of them.
         quantile: Fraction of the selected concepts to intervene on. Defaults to
             1.0 (all of them).
         eps: Numerical stability constant used when building the mask.
@@ -221,10 +223,10 @@ class InterventionModule(nn.Module):
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn import InterventionModule, DoIntervention, UniformPolicy
+        >>> from torch_concepts.nn import InterventionModule, DoIntervention
         >>>
         >>> layer = torch.nn.Linear(8, 3)
-        >>> intervened = InterventionModule(layer, DoIntervention(0.0), UniformPolicy(), [1])
+        >>> intervened = InterventionModule(layer, DoIntervention(0.0), [1])
         >>> out = intervened(torch.randn(4, 8))
         >>> out[:, 1].tolist()
         [0.0, 0.0, 0.0, 0.0]
@@ -234,8 +236,8 @@ class InterventionModule(nn.Module):
             self,
             original_module: nn.Module,
             intervention_strategy: InterventionStrategy,
-            intervention_policy: InterventionPolicy,
             out_concepts_to_intervene_on: Union[List[str], List[slice], List[int], List[List[int]], torch.Tensor],
+            intervention_policy: Optional[InterventionPolicy] = None,
             quantile: float = 1.0,
             eps: float = 1e-12,
             build_context: Optional[Callable] = None,
@@ -248,6 +250,9 @@ class InterventionModule(nn.Module):
         if out_concepts_to_intervene_on is None or isinstance(out_concepts_to_intervene_on, str):
             raise ValueError("out_concepts_to_intervene_on is required, as a list: the names (if the "
                              "module has annotated out_concepts) or positions of the outputs to intervene on.")
+        if intervention_policy is None:  # all the outputs named (quantile 1.0 by default)
+            from ..intervention.policy.uniform import UniformPolicy  # it imports this module
+            intervention_policy = UniformPolicy()
         self.original_module = original_module
         self.intervention_strategy = intervention_strategy
         self.intervention_policy = intervention_policy
@@ -507,8 +512,8 @@ def _locate(
 def intervention(
         target: nn.Module,
         intervention_strategy: Optional[InterventionStrategy] = None,
-        intervention_policy: Optional[InterventionPolicy] = None,
         out_concepts_to_intervene_on: Union[List[str], List[slice], List[int], List[List[int]], torch.Tensor] = None,
+        intervention_policy: Optional[InterventionPolicy] = None,
         parameter_to_intervene_on: Optional[str] = None,
         quantile: float = 1.0,
         eps: float = 1e-12,
@@ -533,25 +538,27 @@ def intervention(
     Args:
         target: Layer, probabilistic model, high-level model, or InterventionModule.
         intervention_strategy: Computes the new values of the intervened outputs.
-        intervention_policy: Scores the outputs; the lowest are intervened on first.
         out_concepts_to_intervene_on: Outputs that may be intervened on (see above).
+        intervention_policy: Scores the outputs; the lowest are intervened on first,
+            up to ``quantile`` of them. Defaults to :class:`UniformPolicy`, which with
+            the default ``quantile=1.0`` intervenes on all of them.
         parameter_to_intervene_on: Head of the variable's factor to intervene on
             (e.g. ``"loc"``), needed only when the factor has more than one.
         quantile, eps, build_context, extra_modules: As in :class:`InterventionModule`.
 
     Example:
         >>> import torch
-        >>> from torch_concepts.nn import intervention, DoIntervention, UniformPolicy
+        >>> from torch_concepts.nn import intervention, DoIntervention
         >>>
         >>> layer = torch.nn.Linear(8, 3)
-        >>> with intervention(layer, DoIntervention(0.0), UniformPolicy(), [1]):
+        >>> with intervention(layer, DoIntervention(0.0), [1]):
         ...     out = layer(torch.randn(4, 8))
         >>> out[:, 1].tolist()
         [0.0, 0.0, 0.0, 0.0]
 
         On a probabilistic or high-level model, name the concept instead::
 
-            with intervention(model, DoIntervention(1.0), UniformPolicy(), ["c1"]):
+            with intervention(model, DoIntervention(1.0), ["c1"]):
                 out = model(query=["c1", "y"], input=x)
     """
     if isinstance(target, InterventionModule):
@@ -568,8 +575,8 @@ def intervention(
         intervention_module = InterventionModule(
             layer,
             intervention_strategy,
-            intervention_policy,
             out_concepts_to_intervene_on,
+            intervention_policy,
             quantile,
             eps,
             build_context=build_context,

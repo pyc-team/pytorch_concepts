@@ -23,7 +23,6 @@ from torch_concepts.nn import (
     ParametricCPD,
     intervention,
     DoIntervention,
-    UniformPolicy,
 )
 
 
@@ -191,7 +190,7 @@ class TestInteractions:
         )
 
         with intervention(
-            cpd.parametrization["probs"], DoIntervention(constants=0.0), UniformPolicy(), [0, 1, 2],
+            cpd.parametrization["probs"], DoIntervention(constants=0.0), [0, 1, 2],
         ):
             out = cpd(parent_values={"x": torch.randn(4, 4)})["probs"]
         assert torch.allclose(out, torch.zeros(4, 3), atol=1e-5)

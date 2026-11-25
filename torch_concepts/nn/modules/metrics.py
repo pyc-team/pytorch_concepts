@@ -8,7 +8,6 @@ from copy import deepcopy
 
 from ...annotations import Annotations
 from .low.base.intervention import InterventionPolicy, InterventionStrategy, intervention
-from .low.intervention.policy.uniform import UniformPolicy
 from .low.intervention.strategy.do import DoIntervention
 from .outputs import (CONTINUOUS_QUANTITIES, DISCRETE_QUANTITIES, InferenceOutput,
                       resolve_quantity, supervised_subset)
@@ -530,7 +529,6 @@ def compute_cace(
             with intervention(
                 target=target,
                 intervention_strategy=strategy,
-                intervention_policy=UniformPolicy(),
                 out_concepts_to_intervene_on=concepts_to_intervene_on,
             ):
                 y_pred, y = _predict_task(model, batch, task, evidence)
@@ -554,8 +552,8 @@ def intervention_curve(
     model: nn.Module,
     layer_name: Optional[str],
     intervention_strategy: Union[InterventionStrategy, Callable[[dict], InterventionStrategy]],
-    intervention_policy: InterventionPolicy,
     concepts_to_intervene_on: Union[List[str], List[slice], List[int]],
+    intervention_policy: InterventionPolicy,
     dataloader: Iterable[dict],
     task: str,
     evidence: List[str] = [],  # needed for higher levels of the API
@@ -587,10 +585,11 @@ def intervention_curve(
             :class:`InterventionStrategy`, or a callable building one from the
             batch, e.g. a :class:`GroundTruthIntervention` with the batch's true
             concepts.
-        intervention_policy: Scores the concepts; the lowest are intervened on first.
         concepts_to_intervene_on: One name, slice or position per concept (see
             :func:`intervention`); a concept named or given as a slice is
             corrected whole, e.g. every state of a categorical one.
+        intervention_policy: Scores the concepts; the lowest are intervened on first.
+            Required: the curve adds the concepts in the order it gives.
         dataloader: Batches in the library's format,
             ``{"inputs": {"x": x}, "concepts": {"c": c}}``, with ``c`` an
             :class:`AnnotatedTensor` holding the true values by name (the index
@@ -610,8 +609,8 @@ def intervention_curve(
         ...     model=cbm,
         ...     layer_name="concept_encoder",
         ...     intervention_strategy=lambda batch: GroundTruthIntervention(true_logits(batch)),
-        ...     intervention_policy=UncertaintyInterventionPolicy(),
         ...     concepts_to_intervene_on=["c0", "c1", "c2"],
+        ...     intervention_policy=UncertaintyInterventionPolicy(),
         ...     dataloader=test_loader,
         ...     task="y",
         ... )

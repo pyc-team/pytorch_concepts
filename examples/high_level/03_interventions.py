@@ -91,9 +91,9 @@ def true_logits(name, n_classes):
 true_digit = GroundTruthIntervention(true_logits("digit", 10))
 true_color = GroundTruthIntervention(true_logits("color", 2))
 with torch.no_grad():
-    with intervention(model, true_digit, UniformPolicy(), ["digit"]):
+    with intervention(model, true_digit, ["digit"]):
         report("true digit", model(query=query, input=x_test))
-    with intervention(model, true_color, UniformPolicy(), ["color"]):
+    with intervention(model, true_color, ["color"]):
         report("true color", model(query=query, input=x_test))
 
 # ``intervention_curve`` gives the parity accuracy after correcting 0, then 1
@@ -103,8 +103,8 @@ curve = intervention_curve(
     model=model,
     layer_name=None,
     intervention_strategy=true_digit,
-    intervention_policy=UniformPolicy(),
     concepts_to_intervene_on=["digit"],
+    intervention_policy=UniformPolicy(),
     dataloader=[{"inputs": {"x": x_test}, "concepts": {"c": c_test}}],
     task="parity",
 )
@@ -116,7 +116,7 @@ print("intervention curve on digit: parity accuracy", " -> ".join(f"{accuracy:.3
 three = torch.full((10,), -10.0)
 three[3] = 10.0
 with torch.no_grad():
-    with intervention(model, DoIntervention(three), UniformPolicy(), ["digit"]):
+    with intervention(model, DoIntervention(three), ["digit"]):
         out = model(query=query, input=x_test)
 odd = (out.logits["parity"] < 0).float().mean()
 print(f"do(digit = 3): {odd:.0%} of the images predicted odd")

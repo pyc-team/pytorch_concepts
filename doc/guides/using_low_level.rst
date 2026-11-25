@@ -213,17 +213,17 @@ Expand each block below for an explanation and an example of how to use it.
         *weights and connections* — e.g. ``PositiveWeightsIntervention`` (force positive
         weights, making the layer monotonic).
 
-    - A **policy** decides *which* concepts are targeted — e.g. ``UniformPolicy`` (all),
-      ``UncertaintyInterventionPolicy`` (least certain), ``GradientPolicy`` (most influential).
+    - An optional **policy** decides *which* concepts are targeted — e.g. ``UniformPolicy``
+      (all, the default), ``UncertaintyInterventionPolicy`` (least certain), ``GradientPolicy``
+      (most influential).
 
     .. code-block:: python
 
-       from torch_concepts.nn import InterventionModule, DoIntervention, UniformPolicy
+       from torch_concepts.nn import InterventionModule, DoIntervention
 
        intervened = InterventionModule(
            original_module=encoder,
            intervention_strategy=DoIntervention(constants=1.0),
-           intervention_policy=UniformPolicy(),
            out_concepts_to_intervene_on=[0, 2],   # target concepts 0 and 2
        )
        concepts = intervened(embeddings=x)   # same interface as encoder

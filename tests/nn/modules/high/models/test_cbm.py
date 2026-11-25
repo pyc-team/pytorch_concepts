@@ -875,7 +875,7 @@ class TestGroundTruthByName(unittest.TestCase):
 
 class TestCBMIntervention(unittest.TestCase):
     def test_intervention_on_a_concept_reaches_the_task(self):
-        from torch_concepts.nn import intervention, DoIntervention, UniformPolicy
+        from torch_concepts.nn import intervention, DoIntervention
         ann = Annotations(labels=['c1', 'c2', 'c3', 'y'], cardinalities=[1, 1, 1, 1])
         model = ConceptBottleneckModel(input_size=8, annotations=ann, task_names=['y'])
         query = ['c1', 'c2', 'c3', 'y']
@@ -883,7 +883,7 @@ class TestCBMIntervention(unittest.TestCase):
             with self.subTest(lead=lead):
                 x = torch.randn(*lead, 8)
                 base = model(query=query, input=x)
-                with intervention(model, DoIntervention(10.0), UniformPolicy(), ['c2']):
+                with intervention(model, DoIntervention(10.0), ['c2']):
                     out = model(query=query, input=x)
                 self.assertEqual(out.logits['c2'].shape[:len(lead)], lead)
                 self.assertTrue(torch.equal(out.logits['c2'], torch.full_like(out.logits['c2'], 10.0)))
