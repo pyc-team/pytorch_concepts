@@ -143,9 +143,9 @@ loss = loss_fn(out, target)
 <td colspan="2" valign="top">
 
 ```python
-from torch_concepts.nn import DoIntervention, UniformPolicy, intervention
+from torch_concepts.nn import DoIntervention, intervention
 
-with intervention(layer, DoIntervention(1.0), UniformPolicy(), ["red"]):
+with intervention(layer, DoIntervention(1.0), ["red"]):
     out = layer(emb)  # "red" is set to 1.0
 ```
 

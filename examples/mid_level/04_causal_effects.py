@@ -37,7 +37,6 @@ from torch_concepts.nn import (
     FixedPrior,
     ParametricCPD,
     RejectionSampling,
-    UniformPolicy,
     intervention,
 )
 
@@ -107,7 +106,7 @@ report("P(cancer | smoking = 1 vs 0)", seen)
 # -----
 done = []
 for value in (1.0, 0.0):
-    with intervention(scm, DoIntervention(value), UniformPolicy(), ["smoking"]):
+    with intervention(scm, DoIntervention(value), ["smoking"]):
         out = rejection.query({"cancer": one}, evidence={})
     done.append(out.probabilities.item())
 report("P(cancer | do(smoking = 1 vs 0))", done)

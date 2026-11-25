@@ -368,7 +368,6 @@ from torch_concepts.nn.modules.mid.graph.bayesian_network import BayesianNetwork
 from torch_concepts.nn.modules.low.priors import FixedPrior
 from torch_concepts.distributions import Delta
 from torch_concepts.nn.modules.low.intervention.strategy.ground_truth import GroundTruthIntervention
-from torch_concepts.nn.modules.low.intervention.policy.uniform import UniformPolicy
 from torch_concepts.nn.modules.low.intervention.strategy.do import DoIntervention
 
 
@@ -398,7 +397,7 @@ class TestMidIntervention:
         pgm = _make_test_pgm()
         layer = pgm.factors["c"].parametrization["probs"]
         x_in = torch.randn(2, 4)
-        with intervention(pgm, GroundTruthIntervention(torch.ones(2, 2)), UniformPolicy(), ["c"]):
+        with intervention(pgm, GroundTruthIntervention(torch.ones(2, 2)), ["c"]):
             assert pgm.factors["c"].parametrization["probs"] is layer
             assert torch.equal(layer(x_in), torch.ones(2, 2))
         assert (layer(x_in) < 1).all()
@@ -408,7 +407,7 @@ class TestMidIntervention:
         x_in = torch.randn(3, 4)
         engine = DeterministicInference(pgm)
         base = engine.query(["g"], evidence={"x": x_in}).probs["g"]
-        with intervention(pgm, DoIntervention(0.5), UniformPolicy(), ["m1"]):
+        with intervention(pgm, DoIntervention(0.5), ["m1"]):
             out = engine.query(["g"], evidence={"x": x_in}).probs["g"]
         assert torch.allclose(out[:, 1], torch.full((3,), 0.5))
         assert torch.allclose(out[:, 0], base[:, 0])
@@ -419,7 +418,7 @@ class TestMidIntervention:
         x_in = torch.randn(*lead, 4)
         engine = DeterministicInference(pgm)
         base = engine.query(["g"], evidence={"x": x_in}).probs["g"]
-        with intervention(pgm, DoIntervention(0.5), UniformPolicy(), ["m1"]):
+        with intervention(pgm, DoIntervention(0.5), ["m1"]):
             out = engine.query(["g"], evidence={"x": x_in}).probs["g"]
         assert out.shape == base.shape == (*lead, 2)
         assert torch.allclose(out[..., 1], torch.full(lead, 0.5))
@@ -428,7 +427,7 @@ class TestMidIntervention:
     def test_variable_name_selects_all_its_members(self):
         pgm = _make_plate_pgm()
         layer = pgm.factors["g"].parametrization["probs"]
-        with intervention(pgm, DoIntervention(0.5), UniformPolicy(), ["g"]):
+        with intervention(pgm, DoIntervention(0.5), ["g"]):
             out = layer(torch.randn(3, 4))
         assert torch.allclose(out, torch.full((3, 2), 0.5))
 
@@ -443,7 +442,7 @@ class TestMidIntervention:
             ParametricCPD(variable=g, parametrization={"logits": layer}, parents=[x]),
         ])
         x_in = torch.randn(3, 4)
-        with intervention(pgm, DoIntervention(7.0), UniformPolicy(), names, quantile=0.5):
+        with intervention(pgm, DoIntervention(7.0), names, quantile=0.5):
             out = layer(x_in)
         assert torch.equal(out[:, :6], torch.full((3, 6), 7.0))  # 1 + floor(0.5 * 2) = 2 members, every state
         assert torch.equal(out[:, 6:], layer(x_in)[:, 6:])
@@ -451,26 +450,26 @@ class TestMidIntervention:
     def test_parameter_selects_the_head(self):
         pgm = _make_plate_pgm()
         with pytest.raises(ValueError, match="parameter_to_intervene_on"):
-            with intervention(pgm, DoIntervention(0.0), UniformPolicy(), ["h"]):
+            with intervention(pgm, DoIntervention(0.0), ["h"]):
                 pass
         loc = pgm.factors["h"].parametrization["loc"]
-        with intervention(pgm, DoIntervention(0.0), UniformPolicy(), ["h"], parameter_to_intervene_on="loc"):
+        with intervention(pgm, DoIntervention(0.0), ["h"], parameter_to_intervene_on="loc"):
             out = loc(torch.randn(3, 4))
         assert torch.equal(out, torch.zeros(3, 2))
 
     def test_names_of_different_layers_raise(self):
         with pytest.raises(ValueError, match="different layers"):
-            with intervention(_make_plate_pgm(), DoIntervention(0.0), UniformPolicy(), ["m0", "h"]):
+            with intervention(_make_plate_pgm(), DoIntervention(0.0), ["m0", "h"]):
                 pass
 
     def test_positions_raise(self):
         with pytest.raises(TypeError, match="pass the layer itself"):
-            with intervention(_make_plate_pgm(), DoIntervention(0.0), UniformPolicy(), [0]):
+            with intervention(_make_plate_pgm(), DoIntervention(0.0), [0]):
                 pass
 
     def test_unknown_name_raises(self):
         with pytest.raises(KeyError, match="nope"):
-            with intervention(_make_plate_pgm(), DoIntervention(0.0), UniformPolicy(), ["nope"]):
+            with intervention(_make_plate_pgm(), DoIntervention(0.0), ["nope"]):
                 pass
 
     def test_concept_parents(self):
@@ -486,6 +485,6 @@ class TestMidIntervention:
             ParametricCPD(variable=y, parametrization={"logits": LinearConceptToConcept(2, 1)}, parents=[c]),
         ])
         engine = DeterministicInference(pgm)
-        with intervention(pgm, DoIntervention(0.0), UniformPolicy(), ["y"]):
+        with intervention(pgm, DoIntervention(0.0), ["y"]):
             out = engine.query(["y"], evidence={"x": torch.randn(3, 4)}).logits["y"]
         assert torch.equal(out, torch.zeros(3, 1))

@@ -1480,8 +1480,8 @@ class TestInterventionCurve(unittest.TestCase):
             layer_name="concept_encoder",
             intervention_strategy=lambda batch: GroundTruthIntervention(
                 torch.logit(batch["concepts"]["c"][["c0", "c1", "c2"]].tensor, eps=1e-6)),
-            intervention_policy=UniformPolicy(),
             concepts_to_intervene_on=list(concepts),
+            intervention_policy=UniformPolicy(),
             dataloader=[self._batch(x[:5], values, annotations), self._batch(x[5:], values, annotations)],
             task=task,
         )
@@ -1508,8 +1508,8 @@ class TestInterventionCurve(unittest.TestCase):
             model=Model(),
             layer_name="concept_encoder",
             intervention_strategy=DoIntervention(5.0),
-            intervention_policy=UniformPolicy(),
             concepts_to_intervene_on=["a", "b", "c"],
+            intervention_policy=UniformPolicy(),
             dataloader=[self._batch(torch.randn(8, 2), [0], Annotations(labels=["v"], types=["continuous"]))],
             task="v",
         )
@@ -1555,8 +1555,8 @@ class TestInterventionCurve(unittest.TestCase):
             model=DeterministicInference(model),
             layer_name=None,
             intervention_strategy=DoIntervention(5.0),  # the same for every batch
-            intervention_policy=UniformPolicy(),  # a, then b, then c
             concepts_to_intervene_on=["a", "b", "c"],
+            intervention_policy=UniformPolicy(),  # a, then b, then c
             dataloader=[self._batch(torch.randn(8, 2), [1, 1, 1], Annotations(labels=["a", "b", "c"]))],
             task="b",
         )

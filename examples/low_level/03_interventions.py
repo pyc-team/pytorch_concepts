@@ -13,9 +13,9 @@ duration of a ``with`` block:
 
 - a *strategy* gives the new values (``GroundTruthIntervention``,
   ``DoIntervention``, ...);
-- a *policy* ranks the outputs, so that only the first ``quantile`` of them is
-  replaced (``UniformPolicy``: no preference; ``UncertaintyInterventionPolicy``:
-  least confident first).
+- an optional *policy* ranks the outputs, so that only the first ``quantile``
+  of them is replaced (``UncertaintyInterventionPolicy``: least confident
+  first). Without one, every output named is replaced.
 
 The model is the CBM of ``02_concept_bottleneck_model.py`` with a non-linear
 task head (``MLPConceptToConcept``), so that it can solve XOR.
@@ -33,7 +33,6 @@ from torch_concepts.nn import (
     LinearEmbeddingToConcept,
     MLPConceptToConcept,
     UncertaintyInterventionPolicy,
-    UniformPolicy,
     intervention,
     intervention_curve,
 )
@@ -109,7 +108,6 @@ c_true = torch.logit(c_test, eps=1e-6)
 with torch.no_grad(), intervention(
     model.concept_encoder,
     GroundTruthIntervention(c_true),
-    UniformPolicy(),
     ["C1", "C2"],
 ):
     c_logits, y_logits = model(x_test)
@@ -120,8 +118,8 @@ report("correct both concepts:", c_logits, y_logits)
 with torch.no_grad(), intervention(
     model.concept_encoder,
     GroundTruthIntervention(c_true),
-    UncertaintyInterventionPolicy(),
     ["C1", "C2"],
+    UncertaintyInterventionPolicy(),
     quantile=0.5,
 ):
     c_logits, y_logits = model(x_test)
@@ -133,8 +131,8 @@ curve = intervention_curve(
     model=model,
     layer_name="concept_encoder",
     intervention_strategy=GroundTruthIntervention(c_true),
-    intervention_policy=UncertaintyInterventionPolicy(),
     concepts_to_intervene_on=["C1", "C2"],
+    intervention_policy=UncertaintyInterventionPolicy(),
     dataloader=[{"inputs": {"x": x_test}, "concepts": {"c": dataset.concepts[800:]}}],
     task="xor",
 )
@@ -151,7 +149,6 @@ with torch.no_grad():
     with intervention(
         model.concept_encoder,
         DoIntervention(torch.logit(torch.Tensor([1]), eps=1e-6)),
-        UniformPolicy(),
         ["C1"],
     ):
         _, y_logits_do = model(x_test)

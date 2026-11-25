@@ -30,7 +30,6 @@ from torch_concepts.nn import (
     ConceptLoss,
     ConceptMetrics,
     DoIntervention,
-    UniformPolicy,
     intervention,
 )
 
@@ -81,7 +80,7 @@ x_test = datamodule.dataset.input_data[datamodule.testset.indices]
 model.eval()
 with torch.no_grad():
     out = model(query=names, input=x_test)
-    with intervention(model, DoIntervention(10.0), UniformPolicy(), ["smoke"]):
+    with intervention(model, DoIntervention(10.0), ["smoke"]):
         out_do = model(query=names, input=x_test)
 changed = [
     n

@@ -40,7 +40,6 @@ from torch_concepts.nn import (
     GroundTruthIntervention,
     IndependentInference,
     MAPForwardInference,
-    UniformPolicy,
     intervention,
 )
 
@@ -110,7 +109,7 @@ for name, mode in modes.items():
     model.eval()
     with torch.no_grad():
         out = model(query=["parity"], input=x_test)
-        with intervention(model, true_digit, UniformPolicy(), ["digit"]):
+        with intervention(model, true_digit, ["digit"]):
             out_true_digit = model(query=["parity"], input=x_test)
     before, after = parity_accuracy(out), parity_accuracy(out_true_digit)
     print(f"{name:<12} parity accuracy {before:.3f} | with the true digit {after:.3f}")

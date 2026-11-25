@@ -44,7 +44,6 @@ concept. MNIST (~60 MB) is downloaded on first use.
        ConceptBottleneckModel,
        ConceptLoss,
        GroundTruthIntervention,
-       UniformPolicy,
        intervention,
    )
 
@@ -129,7 +128,7 @@ logits, so the true class becomes a large logit.
    one_hot = torch.nn.functional.one_hot(c_test["digit"].flatten().long(), 10)
    true_digit = GroundTruthIntervention(torch.logit(one_hot.float(), eps=1e-6))
 
-   with torch.no_grad(), intervention(model, true_digit, UniformPolicy(), ["digit"]):
+   with torch.no_grad(), intervention(model, true_digit, ["digit"]):
        out = model(query=["parity"], input=x_test)
    predicted_parity = (out.logits["parity"] > 0).float()
    parity_accuracy = (predicted_parity == c_test["parity"]).float().mean()

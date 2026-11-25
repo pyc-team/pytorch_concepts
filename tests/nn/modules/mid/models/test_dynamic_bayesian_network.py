@@ -15,7 +15,7 @@ from torch_concepts.distributions import Delta
 from torch_concepts.nn import (
     BayesianNetwork, BeliefPropagation, ConceptVariable, DeterministicInference, DoIntervention,
     DynamicBayesianNetwork, EmbeddingVariable, FixedPrior, LearnablePrior, ParametricCPD,
-    PgmpyVariableElimination, UniformPolicy, UnrolledInference, intervention, plot_pgm,
+    PgmpyVariableElimination, UnrolledInference, intervention, plot_pgm,
 )
 
 
@@ -183,20 +183,20 @@ def test_the_state_dict_is_that_of_the_first_steps():
 
 @pytest.mark.parametrize("name, steps", [("c_0", [0]), ("c_1", [1, 2, 3])])
 def test_an_intervention_acts_at_the_steps_of_its_cpd(name, steps):
-    # The intervention hooks the module of the CPD that the name has in the network of steps 0
-    # and 1; that of step 1 is the transition, which runs at every later step. UnrolledInference
+    # The intervention acts on the module of the CPD that the name has in the network of steps
+    # 0 and 1; that of step 1 is the transition, which runs at every later step. UnrolledInference
     # is a target through its pgm.
     dbn, x = _model(), torch.randn(5, 3)
     engine = UnrolledInference(dbn)
     for target in (dbn, engine):
-        with intervention(target, DoIntervention(0.0), UniformPolicy(), [name]):
+        with intervention(target, DoIntervention(0.0), [name]):
             c = engine.query(["c"], {"x": x}, horizon=3).value["c"].tensor
         assert [t for t in range(4) if (c[:, t] == 0).all()] == steps
 
 
 def test_an_intervention_on_a_cpd_in_both_lists_acts_at_every_step():
     dbn, x = _model(), torch.randn(5, 3)
-    with intervention(dbn, DoIntervention(0.0), UniformPolicy(), ["y_0"]):
+    with intervention(dbn, DoIntervention(0.0), ["y_0"]):
         y = UnrolledInference(dbn).query(["y"], {"x": x}, horizon=3).logits["y"].tensor
     assert (y == 0).all()
 
