@@ -93,7 +93,7 @@ class DynamicBayesianNetwork(BayesianNetwork):
 
         p(Z_0, \\dots, Z_T) = p(Z_0) \\prod_{t=1}^{T} p(Z_t \\mid Z_{t-1}),
 
-    where each factor is a product of CPDs, one per variable of the step: the
+    where each factor is a product of CPDs, one per variable of the step. The
     DBN takes those of :math:`p(Z_0)` as ``initial``, and those of
     :math:`p(Z_t \\mid Z_{t-1})` as ``transition``. Every later step uses the
     same transition CPDs, and so the same parameters.
@@ -102,26 +102,21 @@ class DynamicBayesianNetwork(BayesianNetwork):
     variable ``z``, the parent ``z.previous()`` is ``z`` at step ``t - 1``,
     while a parent without ``previous()`` is at step ``t``.
 
-    :math:`Z_t` can hold any variable, concept or embedding, observed or
-    latent, discrete or continuous, and any of them can pass to the next
-    step: only the concepts (a concept bottleneck model over time), or also
-    an embedding that holds what the concepts miss
-    (``examples/mid_level/09_dynamic_cbm_with_residual.py``). A variable exists
-    at the steps where it has a CPD: with a CPD in ``initial`` only, at step
-    0, such as an input window; in ``transition`` only, from step 1 on; in
-    both, at every step.
+    :math:`Z_t` can hold concepts and embeddings, and a transition CPD can read
+    any of them from the step before. A variable exists at the steps where it
+    has a CPD: with a CPD in ``initial`` only, at step 0, such as an input
+    window; in ``transition`` only, from step 1 on; in both, at every step.
 
     :meth:`unroll` builds the network of a whole horizon, with a copy of each
     variable per step at which it exists (``z_0``, ``z_1``, ...), which
-    :class:`~torch_concepts.nn.UnrolledInference` queries with any inference
+    :class:`~torch_concepts.nn.UnrolledInference` queries with a static inference
     engine.
 
     Unrolled over any number of steps, a DBN is a Bayesian network (Murphy,
     2002), so the DBN is a :class:`BayesianNetwork`: the network of steps 0
     and 1, ``unroll(1)``, the shortest unrolling that uses both lists of CPDs.
     Its :attr:`variables` and :attr:`factors` are named per step (``x_0``,
-    ``c_0``, ``c_1``), so a static engine, or
-    :func:`~torch_concepts.nn.plot_pgm`, works on it as on any network.
+    ``c_0``, ``c_1``), and a static engine can query it directly.
     :class:`~torch_concepts.nn.UnrolledInference` takes the names of the
     variables as passed (the *template variables* of Koller and Friedman,
     2009), for every step, and the names per step, such as ``c_4``, for one
@@ -161,15 +156,14 @@ class DynamicBayesianNetwork(BayesianNetwork):
     ``z_0`` or ``z_3`` for ``z``, so an ``aggregate`` function should read
     its parents by position, e.g. with ``parents.values()``.
 
-    To set a variable at one step, give its value at that step as evidence: a
-    forward engine reads it as an intervention (see
-    :class:`~torch_concepts.nn.UnrolledInference`). ``intervention()`` hooks
-    the module of a CPD, so it acts at every step that runs that
-    module, whichever CPD holds it. Its target can be the DBN, or an
-    ``UnrolledInference`` on it, with the names of the network of steps 0 and
-    1: in the example below, ``c_0`` hooks the CPD of step 0, and ``c_1``
-    that of the transition, which runs at every step from 1 on. On a CPD in
-    both lists, it acts at every step.
+    To set a variable at one step, give its value at that step as evidence,
+    which a forward engine reads as an intervention (see
+    :class:`~torch_concepts.nn.UnrolledInference`). ``intervention()`` acts on
+    the module of a CPD, at every step that runs that module. Its target can
+    be the DBN, or an ``UnrolledInference`` on it, with the names of the
+    network of steps 0 and 1. In the example below, ``c_0`` selects the CPD of
+    step 0, and ``c_1`` that of the transition, which runs at every step from
+    1 on. An intervention on a CPD in both lists acts at every step.
 
     References
     ----------
@@ -221,7 +215,7 @@ class DynamicBayesianNetwork(BayesianNetwork):
         # On the model as passed. The base class then checks the network of steps 0 and 1
         # (one CPD per variable and step, no cycle), whose copies per step hide these.
 
-        # Names are unique, of variables and members alike: each addresses one variable.
+        # Variable and member names are unique, since each addresses one variable.
         names = Counter(name for v in variables for name in dict.fromkeys([v.name, *v.members]))
         repeated = sorted(name for name, count in names.items() if count > 1)
         if repeated:
@@ -304,10 +298,9 @@ class DynamicBayesianNetwork(BayesianNetwork):
 
         Variable ``c`` at step ``t`` is ``c_t``, and its member ``c1`` is
         ``c1_t``. The CPDs of every step hold the modules of this DBN, so the
-        unrolled network computes with the same parameters and trains them. As
-        with :func:`~torch_concepts.nn.modules.mid.inference.utils.unpack_plates`,
-        do not register the result as a submodule: ``state_dict()`` would list
-        every module once per step.
+        unrolled network computes with the same parameters and trains them. Do
+        not register the result as a submodule, since ``state_dict()`` would
+        list every module once per step.
         """
         # --- Checks ---
         # Step 0 and at least one step of the transition.

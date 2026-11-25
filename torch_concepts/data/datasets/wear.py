@@ -53,9 +53,9 @@ class WearDataset(DynamicConceptDataset):
 
     - ``health_A`` and ``health_B`` (continuous): the health of the two
       components, from -0.4 to 0 at the first step (0 is new). At every step
-      it drops by ``alpha * relu(-health)`` plus a load of the machine: a worn
-      component wears faster, and the load shows in the sensors, but no
-      concept records it.
+      it drops by ``alpha * relu(-health)``, so a worn component wears faster,
+      plus a load of the machine. The load affects the sensors and is not one
+      of the concepts.
     - ``alarm`` (binary): 1 when the mean health is below ``ALARM_THRESHOLD = -0.45``.
 
     The operating conditions drift over time and set both the baseline of

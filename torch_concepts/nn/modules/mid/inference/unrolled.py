@@ -1,6 +1,6 @@
 """
-UnrolledInference: any inference engine on a :class:`DynamicBayesianNetwork`,
-through its unrolled network.
+UnrolledInference: a static inference engine on a
+:class:`DynamicBayesianNetwork`, through its unrolled network.
 """
 
 from __future__ import annotations
@@ -25,9 +25,9 @@ def _flat(per_step: List[Dict]) -> Dict[str, Optional[torch.Tensor]]:
 
 
 class UnrolledInference(BaseInference):
-    """Any inference engine on a :class:`~torch_concepts.nn.DynamicBayesianNetwork`.
+    """A static inference engine on a :class:`~torch_concepts.nn.DynamicBayesianNetwork`.
 
-    Each query names a horizon: ``UnrolledInference`` unrolls the DBN over
+    Each query takes a ``horizon``. ``UnrolledInference`` unrolls the DBN over
     steps ``0..horizon``
     (:meth:`~torch_concepts.nn.DynamicBayesianNetwork.unroll`), with one copy
     of each variable per step at which it exists, and runs a static engine on
@@ -45,11 +45,11 @@ class UnrolledInference(BaseInference):
     with the target ``z4`` at step 4. All queried names must be queried at the
     same steps.
 
-    The output is an :class:`~torch_concepts.nn.InferenceOutput`, as from a
-    static engine, with the queried steps on the last leading axis:
-    ``out.value["z"]`` has shape ``(batch, steps, width)`` and the labels of
-    ``z``. ``out.probabilities`` has no step axis: it is the joint
-    probability of the query over all its steps, ``(batch,)``.
+    The output is an :class:`~torch_concepts.nn.InferenceOutput` with the
+    queried steps on the last leading axis, so ``out.value["z"]`` has shape
+    ``(batch, steps, width)`` and the labels of ``z``.
+    ``out.probabilities`` is the joint probability of the query over all its
+    steps, ``(batch,)``.
 
     A forward engine reads the evidence as an intervention, which acts on its
     step and on the later ones. An engine that conditions on the evidence,
@@ -68,13 +68,13 @@ class UnrolledInference(BaseInference):
         receives the same ``engine_kwargs`` as a class, so write it as
         ``lambda bn, **kw: ImportanceSampling(bn, proposal=Q(bn), **kw)``,
         with ``Q`` a proposal class such as
-        :class:`~torch_concepts.nn.MutilatedNetworkProposal`. ``bn`` is a new
-        network at each horizon, so build inside the function what refers to
-        its variables, such as a proposal or the guide CPDs of
-        ``VariationalInference``, but the learnable modules they hold once,
-        outside it. Those modules are not in the ``parameters()``,
-        ``state_dict()``, ``.to()`` or ``eval()`` of ``UnrolledInference``:
-        train them together with ``pgm.parameters()``.
+        :class:`~torch_concepts.nn.MutilatedNetworkProposal`.
+        ``bn`` is a new network at each horizon, so build inside the function
+        what refers to its variables, such as a proposal or the guide CPDs of
+        ``VariationalInference``. Build the learnable modules they hold once,
+        outside the function, and train them together with
+        ``pgm.parameters()``, since they are not in the ``parameters()``,
+        ``state_dict()``, ``.to()`` or ``eval()`` of ``UnrolledInference``.
     **engine_kwargs
         Passed to ``engine``, e.g. ``p_int=1.0`` or ``n_samples=1000``.
         ``p_int`` and the options of the temperature schedule, such as
@@ -85,7 +85,7 @@ class UnrolledInference(BaseInference):
 
     Notes
     -----
-    ``UnrolledInference`` is an ``nn.Module`` that holds the DBN as ``pgm``:
+    ``UnrolledInference`` is an ``nn.Module`` that holds the DBN as ``pgm``. Its
     ``parameters()`` are those of the DBN, and ``state_dict()`` holds the DBN
     and the temperature reached in training. The engines of the horizons read
     the temperature of ``UnrolledInference``, so set the schedule, and call

@@ -486,8 +486,8 @@ class Variable(ABC):
         from the handle, as in ``z.previous().member("z1")``.
         """
         # --- Checks ---
-        # Only a variable or a plate has a step before: a member takes it from
-        # its plate, and a handle cannot go one more step back.
+        # Only a variable or a plate has a step before.
+        # A member takes it from its plate, and a handle cannot go one more step back.
         if self._plate is not None or self._previous_of is not None:
             raise ValueError(
                 f"{type(self).__name__}({self.name!r}): previous() takes a variable "

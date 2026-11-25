@@ -26,7 +26,7 @@ class DynamicConceptDataset(ConceptDataset):
     ``(window, F)`` and ``(window, C)``, so there are ``n_windows * N``
     samples. With ``flatten_series=False``, each sample is one window
     of all the series, ``(window, N, F)`` and ``(window, N, C)``. The model
-    picks which steps of a sample it observes and which it predicts.
+    chooses which steps of a sample it observes and which it predicts.
 
     Attributes:
         n_series (int): Number of series, ``N``.

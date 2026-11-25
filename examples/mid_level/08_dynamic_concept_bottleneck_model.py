@@ -180,11 +180,11 @@ for epoch in range(25):
 # Evaluation
 # ----------
 # The forecast from the sensors alone, on the test windows. The error grows
-# with the horizon: the transition reads only the health of the step before,
-# and each machine has a load that no concept records. The second row is an
-# intervention on the health, with the true health given at ``t = 4`` by the
-# key ``health_4``, from which the forecast and the alarm go on (the row still
-# reports the prediction at ``t = 4``).
+# with the horizon, since the transition reads only the health of the step
+# before and the load of each machine is not one of the concepts. The second
+# row is an intervention on the health, with the true health given at ``t = 4``
+# by the key ``health_4``, from which the forecast and the alarm go on (the
+# row still reports the prediction at ``t = 4``).
 queries = {  # label: query
     "sensors only": {"health": None, "alarm": None},
     "true health at t = 4": {"health": None, "health_4": c_test[:, 4], "alarm": None},
