@@ -82,6 +82,8 @@ Predictors
    MixConceptEmbeddings
    RuleConceptEmbeddingToConcept
    RuleMemory
+   MixtureOfExpertsConceptToConcept
+   SymbolicConceptToConcept
 
 Dense Layers
 ------------

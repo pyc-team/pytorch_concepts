@@ -56,6 +56,10 @@ docs = [
     "myst-nb",
     "sphinx-hoverxref",
 ]
+# NOTE: torch-symbolic (SymTorch, for Sym-M-CBE) needs Python >= 3.11.
+symbolic = [
+    "torch-symbolic",
+]
 conceptarium = [
     "hydra-core",
     "hydra-list-sweeper",

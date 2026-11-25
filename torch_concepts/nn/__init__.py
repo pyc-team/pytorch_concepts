@@ -45,6 +45,10 @@ from .modules.low.predictors.rule import (
     RuleMemory,
 )
 from .modules.low.predictors.selective import SelectiveLinearConceptToConcept
+from .modules.low.predictors.mixture import (
+    MixtureOfExpertsConceptToConcept,
+    SymbolicConceptToConcept,
+)
 from .modules.low.predictors.mix import MixConceptEmbeddingToConcept, \
     MixConceptEmbeddings
 
@@ -78,6 +82,7 @@ from .modules.high.models.cvae import ConditionalVAE
 from .modules.high.models.graph_cbm import GraphConceptBottleneckModel
 from .modules.high.models.c2bm import CausallyReliableConceptBottleneckModel
 from .modules.high.models.cmr import CMRTaskLoss, ConceptMemoryReasoner
+from .modules.high.models.sym_m_cbe import SymbolicMixtureOfConceptBottleneckExperts
 
 # Models (mid-level)
 from .modules.mid.factors.factor import ParametricFactor
@@ -170,6 +175,8 @@ __all__ = [
     "MixConceptEmbeddings",
     "RuleMemory",
     "RuleConceptEmbeddingToConcept",
+    "MixtureOfExpertsConceptToConcept",
+    "SymbolicConceptToConcept",
 
     # Dense layers
     "Dense",
@@ -215,6 +222,7 @@ __all__ = [
     "ConceptBottleneckVAE",
     "ConditionalVAE",
     "ConceptMemoryReasoner",
+    "SymbolicMixtureOfConceptBottleneckExperts",
     "GraphConceptBottleneckModel",
     "CausallyReliableConceptBottleneckModel",
     # Models (mid-level)

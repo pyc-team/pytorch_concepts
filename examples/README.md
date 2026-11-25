@@ -43,6 +43,7 @@ Jupyter. Datasets are downloaded or generated on first use into `DATA_ROOT`, def
 | [05_learning_a_bayesian_network](mid_level/05_learning_a_bayesian_network.py) | Learning the CPDs of a known graph (ASIA) from data |
 | [06_inference_engines](mid_level/06_inference_engines.py) | Forward, sampling, message-passing and exact engines on one diagnosis query |
 | [07_markov_network](mid_level/07_markov_network.py) | An undirected model where observing one concept informs another |
+| [08_symbolic_mixture_of_cb_experts](mid_level/08_symbolic_mixture_of_cb_experts.py) | A mixture of experts distilled into formulas, trained in three stages (needs `torch-symbolic`) |
 
 ## High level
 
