@@ -317,22 +317,21 @@ def model(
 
 
 class SingleCellDataset(ConceptDataset):
-    """Dataset class for synthetic single-cell gene expression dataset from scCBGM.
+    """Synthetic single-cell gene expression dataset from scCBGM.
 
-    This class generates a synthetic single-cell gene expression dataset, where each sample represents a cell characterized by gene expression counts across multiple genes.
-    Gene expression counts are simulated using a hierarchical overdispersed Poisson model. 
-    For each cell, gene expression depends on gene-specific baseline expression, library size, batch, tissue, cell type, 
-    and additional biological factors called *concepts*, together with residual noise.
-    Concepts represent interpretable biological factors, such as biological pathways. 
-    Each concept can be active (1) or inactive (0) in a cell, with an activation probability depending on the cell type, 
-    and influences gene expression through concept-specific coefficients.
+    Each sample represents one simulated cell. Its input x is a vector of gene
+    expression counts, one count per gene. For example, x[5] = 12 means that
+    the expression count for gene 5 in this cell is 12.
 
-    :meth:`generate_new_cells` samples new cells using dataset's global
-    model parameters, with optional overrides. Concepts and cell background
-    are sampled again.
+    Each count depends on the gene’s baseline expression, the cell’s type,
+    tissue, batch, and library size, as well as noise and binary concepts.
+    These concepts represent simulated biological factors, such as pathway
+    activity. Each cell is annotated with a vector c that records which
+    concepts are active (1) or inactive (0) in that cell.
 
-    :meth:`generate_interventions` creates a new synthetic dataset with modified concept values, 
-    keeping the same cell background and generator parameters.
+    The dataset supports sampling new cells and editing existing ones. An
+    intervention changes selected values in c and regenerates x for the same
+    cell while keeping its background and noise fixed.
 
     For more details, see Andersson et al. (2026), *scCBGM: Interpretable Single-Cell
     Counterfactual Editing*, for details: https://arxiv.org/abs/2606.07760.
