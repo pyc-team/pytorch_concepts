@@ -150,8 +150,8 @@ def _validate_model_parameters(parameters):
         raise ValueError("Parameter 'std_dev_libsize' must be nonnegative.")
 
 
-def _compute_model_parameters(config, rng=None) -> dict:
-    """Compute the parameters and coefficients of the model used to generate single-cell gene expression data (see "model"). """
+def _compute_simulator_parameters(config, rng=None) -> dict:
+    """Sample the global parameters and coefficients used by :func:`cell_simulator`."""
     rng = np.random.default_rng(42) if rng is None else rng
     n_genes = config["n_genes"]
     n_batches = config["n_batch"]
@@ -214,7 +214,7 @@ def _compute_model_parameters(config, rng=None) -> dict:
     return {name: torch.as_tensor(value, dtype=torch.float64) for name, value in model_parameters.items()}
 
 
-def model(
+def cell_simulator(
     model_parameters: dict,
     concepts=None,
     *,
@@ -224,14 +224,37 @@ def model(
     std_dev_noise=0.01,
     exog_noise=None,
 ) -> tuple[torch.Tensor, torch.Tensor, dict]:
-    """A generative model for synthetic single-cell gene expression data.
-    
-    The generated data are organized into gene expression counts (inputs), 
-    binary concept activations (concepts), and additional cell-specific information (cell_background). 
-    This separation enables concept interventions to regenerate gene expression profiles 
+    """Simulate synthetic single-cell gene expression counts.
+
+    The generated data are organized into gene expression counts (inputs),
+    binary concept activations (concepts), and additional cell-specific information (cell_background).
+    This separation enables concept interventions to regenerate gene expression profiles
     while preserving other cell-specific characteristics.
 
-    See dataset documentation for details on the generative model.
+    See :class:`SingleCellDataset` for the dataset description.
+
+    Parameters
+    ----------
+    model_parameters : dict
+        Global parameter tensors, such as ``dataset.model_parameters``.
+    concepts : torch.Tensor, optional
+        All binary concept values, with shape ``(n_cells, n_concepts)``.
+        If omitted, concepts are sampled and ``n_cells`` must be supplied.
+    n_cells : int, optional
+        Number of cells to sample when ``concepts`` is omitted.
+    cell_background : dict, optional
+        Existing cell-specific tensors, such as ``dataset.cell_background``.
+        Reuses cell types, tissues, batches, library sizes, noise and Poisson
+        quantiles. If omitted, a new background is sampled.
+    rng : numpy.random.Generator, optional
+        Random generator for sampling concepts and background. Defaults to a
+        new generator seeded with 42 when sampling is needed.
+    std_dev_noise : float
+        Standard deviation of newly sampled gene-level noise. Defaults to 0.01.
+        Ignored when reusing ``cell_background``.
+    exog_noise : array-like, optional
+        Poisson quantiles with shape ``(n_cells, n_genes)`` and values strictly
+        between 0 and 1. Cannot be combined with ``cell_background``.
 
     Returns
     -------
@@ -460,8 +483,8 @@ class SingleCellDataset(ConceptDataset):
             raise RuntimeError(f"Incomplete saved dataset at {self.root}. Regenerate it from its source.")
         config = self._generation_config
         rng = np.random.default_rng(self.seed)
-        parameters = _compute_model_parameters(config, rng)
-        inputs, concepts, background = model(
+        parameters = _compute_simulator_parameters(config, rng)
+        inputs, concepts, background = cell_simulator(
             parameters, n_cells=config["n_cells"], rng=rng, std_dev_noise=config["std_dev_noise"],
             exog_noise=self._exog_noise,
         )
@@ -522,7 +545,7 @@ class SingleCellDataset(ConceptDataset):
         root = os.path.join(os.path.dirname(self.root), _cache_key(config, seed, parameters=parameters))
         paths = [os.path.join(root, name) for name in self.processed_filenames]
         if not all(os.path.isfile(path) for path in paths):
-            inputs, concepts, background = model(
+            inputs, concepts, background = cell_simulator(
                 parameters, n_cells=config["n_cells"], rng=np.random.default_rng(seed),
                 std_dev_noise=config["std_dev_noise"],
             )
@@ -586,7 +609,7 @@ class SingleCellDataset(ConceptDataset):
         ))
         paths = [os.path.join(root, name) for name in self.processed_filenames]
         if not all(os.path.isfile(path) for path in paths):
-            inputs, concepts, background = model(parameters, concepts, cell_background=background)
+            inputs, concepts, background = cell_simulator(parameters, concepts, cell_background=background)
             self._save_dataset(paths, inputs, concepts, config, parameters, background,
                                self.seed)
         return type(self)(root=root, normalize=self.normalize, target_sum=self.target_sum,

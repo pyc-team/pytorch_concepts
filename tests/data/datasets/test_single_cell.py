@@ -14,7 +14,7 @@ from torch_concepts.data.base.datamodule import ConceptDataModule
 from torch_concepts.data.splitters import FixedIndicesSplitter, RandomSplitter
 import torch_concepts.data.datasets.single_cell as single_cell
 from torch_concepts.data.datasets.single_cell import (
-    model,
+    cell_simulator,
     _resolve_generation_config,
 )
 
@@ -62,7 +62,7 @@ def counterfactual_source(tmp_path, small_config):
         torch.arange(16) % 2,
         torch.arange(16) // 2 % 2,
     ), dim=1).float()
-    inputs, concepts, background = model(source.model_parameters, concepts, cell_background=background)
+    inputs, concepts, background = cell_simulator(source.model_parameters, concepts, cell_background=background)
     source._save_dataset(source.processed_paths, inputs, concepts, source.generation_config,
                          source.model_parameters, background, source.seed)
     return SingleCellDataset(root=source.root)
@@ -82,7 +82,7 @@ def test_default_counts_and_partial_distribution_settings():
 @pytest.mark.parametrize("dependency", [False, True])
 @pytest.mark.parametrize("sparsity", [False, True])
 def test_matches_upstream_reference(tmp_path, seed, dependency, sparsity):
-    """Compare with frozen scCBGM generate() outputs, independently of our model.
+    """Compare with frozen scCBGM generate() outputs, independently of our cell_simulator.
 
     Reference: scCBGM conceptlab/datagen/omics.py, commit
     292d2f86ef4e8cb3564dcc689a64883c536a650e. The fixture also records the source
@@ -141,10 +141,10 @@ def test_model_reuses_saved_data_without_sampling(tmp_path, small_config, monkey
     original_concepts = concepts.clone()
 
     def unexpected_sampling(*args, **kwargs):
-        raise AssertionError("The model must reuse the supplied state.")
+        raise AssertionError("The cell_simulator must reuse the supplied state.")
 
     monkeypatch.setattr(np.random, "default_rng", unexpected_sampling)
-    restored_inputs, _, _ = model(data["model_parameters"], concepts, cell_background=data["cell_background"])
+    restored_inputs, _, _ = cell_simulator(data["model_parameters"], concepts, cell_background=data["cell_background"])
     torch.testing.assert_close(restored_inputs, inputs, rtol=0, atol=0)
     torch.testing.assert_close(concepts, original_concepts, rtol=0, atol=0)
     for group in ("model_parameters", "cell_background"):
@@ -160,7 +160,7 @@ def test_model_rejects_exog_noise_with_fixed_background(tmp_path, small_config, 
     rng = np.random.default_rng(19)
     rng_state = deepcopy(rng.bit_generator.state)
     with pytest.raises(ValueError, match="exog_noise.*cell_background"):
-        model(dataset.model_parameters,
+        cell_simulator(dataset.model_parameters,
               dataset._full_concepts if prepared_concepts else None,
               n_cells=len(dataset), cell_background=background, rng=rng,
               exog_noise=np.full((10, 6), 0.5))
@@ -174,7 +174,7 @@ def test_model_samples_background_from_prepared_concepts(tmp_path, small_config)
     concepts = dataset._full_concepts.clone()
     concepts[:, 0] = 1
     quantiles = np.full((10, 6), 0.5)
-    inputs, _, background = model(parameters, concepts, rng=np.random.default_rng(19),
+    inputs, _, background = cell_simulator(parameters, concepts, rng=np.random.default_rng(19),
                                std_dev_noise=0.3, exog_noise=quantiles)
     rng = np.random.default_rng(19)
     for i in range(10):
@@ -209,13 +209,13 @@ def test_model_external_exog_noise_preserves_other_draws(
     concepts = dataset._full_concepts if prepared_concepts else None
     parameters = dataset.model_parameters
     baseline_rng = np.random.default_rng(19)
-    baseline_inputs, baseline_concepts, baseline_background = model(
+    baseline_inputs, baseline_concepts, baseline_background = cell_simulator(
         parameters, concepts, n_cells=10, rng=baseline_rng,
     )
     quantiles = (baseline_background["exog_noise"].numpy().copy()
                  if reuse_quantiles else np.full((10, 6), 0.5))
     override_rng = np.random.default_rng(19)
-    inputs, actual_concepts, background = model(
+    inputs, actual_concepts, background = cell_simulator(
         parameters, concepts, n_cells=10, rng=override_rng, exog_noise=quantiles,
     )
     torch.testing.assert_close(actual_concepts, baseline_concepts, rtol=0, atol=0)
@@ -235,8 +235,8 @@ def test_model_external_exog_noise_preserves_other_draws(
 def test_model_samples_concepts_background_and_counts_in_one_pass(tmp_path, small_config):
     dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
     parameters = deepcopy(dataset.model_parameters)
-    short = model(parameters, n_cells=3, rng=np.random.default_rng(19))
-    complete = model(parameters, n_cells=5, rng=np.random.default_rng(19))
+    short = cell_simulator(parameters, n_cells=3, rng=np.random.default_rng(19))
+    complete = cell_simulator(parameters, n_cells=5, rng=np.random.default_rng(19))
     # Adding cells must not change the concepts, background or counts already drawn.
     for small, large in zip(short[:2], complete[:2]):
         torch.testing.assert_close(small, large[:3], rtol=0, atol=0)
@@ -253,9 +253,9 @@ def test_generator_reuses_supplied_parameters(tmp_path, small_config, monkeypatc
     expected = _generation_tensors(dataset.generate_new_cells(seed=7, model_parameters=parameters))
 
     def unexpected_parameters(*args, **kwargs):
-        raise AssertionError("The model must use the supplied global parameters.")
+        raise AssertionError("The cell_simulator must use the supplied global parameters.")
 
-    monkeypatch.setattr(single_cell, "_compute_model_parameters", unexpected_parameters)
+    monkeypatch.setattr(single_cell, "_compute_simulator_parameters", unexpected_parameters)
     actual = _generation_tensors(dataset.generate_new_cells(seed=7, model_parameters=parameters))
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)
 
@@ -638,9 +638,9 @@ def test_parameter_overrides_reject_changed_dimensions(tmp_path, small_config, n
     incompatible = torch.zeros((shape[0] + 1, *shape[1:]))
 
     def unexpected_model(*args, **kwargs):
-        raise AssertionError("Invalid parameter shapes must be rejected before running the model.")
+        raise AssertionError("Invalid parameter shapes must be rejected before running the cell_simulator.")
 
-    monkeypatch.setattr(single_cell, "model", unexpected_model)
+    monkeypatch.setattr(single_cell, "cell_simulator", unexpected_model)
     with pytest.raises(ValueError, match="shape"):
         dataset.generate_new_cells(model_parameters={name: incompatible}, **({"n_cells": 5} if fresh else {}))
     torch.testing.assert_close(dataset.model_parameters[name], parameters[name], rtol=0, atol=0)
@@ -654,7 +654,7 @@ def test_parameter_overrides_reject_unknown_names_and_nonfinite_values(tmp_path,
         dataset.generate_new_cells(model_parameters=parameters)
 
 
-@pytest.mark.parametrize("entrypoint", ["model", "generate_new_cells"])
+@pytest.mark.parametrize("entrypoint", ["cell_simulator", "generate_new_cells"])
 @pytest.mark.parametrize("name, value", [
     ("p_batch", [-0.1, 1.1]),
     ("p_batch", [0.2, 0.2]),
@@ -674,17 +674,17 @@ def test_model_parameters_reject_invalid_distributions(tmp_path, small_config, e
     dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
     original = _state(dataset)
     with pytest.raises(ValueError, match=name):
-        if entrypoint == "model":
+        if entrypoint == "cell_simulator":
             parameters = dataset.model_parameters
             parameters[name] = torch.tensor(value, dtype=torch.float64)
-            model(parameters, n_cells=len(dataset))
+            cell_simulator(parameters, n_cells=len(dataset))
         else:
             dataset.generate_new_cells(model_parameters={name: value})
     torch.testing.assert_close(_state(dataset), original, rtol=0, atol=0)
     assert len(list(tmp_path.iterdir())) == 1
 
 
-@pytest.mark.parametrize("entrypoint", ["model", "generate_new_cells"])
+@pytest.mark.parametrize("entrypoint", ["cell_simulator", "generate_new_cells"])
 @pytest.mark.parametrize("covariance", [torch.zeros(3, 3), torch.ones(3, 3), torch.eye(3)])
 def test_model_parameters_accept_valid_boundary_distributions(tmp_path, small_config, entrypoint, covariance):
     dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
@@ -697,8 +697,8 @@ def test_model_parameters_accept_valid_boundary_distributions(tmp_path, small_co
     }
     parameters = {**dataset.model_parameters,
                   **{name: torch.as_tensor(value, dtype=torch.float64) for name, value in overrides.items()}}
-    if entrypoint == "model":
-        inputs, _, background = model(parameters, n_cells=len(dataset))
+    if entrypoint == "cell_simulator":
+        inputs, _, background = cell_simulator(parameters, n_cells=len(dataset))
     else:
         generated = dataset.generate_new_cells(model_parameters=overrides)
         torch.testing.assert_close(generated.model_parameters, parameters, rtol=0, atol=0)
@@ -744,7 +744,7 @@ def test_legacy_context_concept_arrays_are_rejected(tmp_path, small_config):
     with pytest.raises(ValueError, match="shape"):
         dataset.generate_interventions(legacy)
     with pytest.raises(ValueError, match="binary concept columns"):
-        model(dataset.model_parameters, legacy, cell_background=dataset.cell_background)
+        cell_simulator(dataset.model_parameters, legacy, cell_background=dataset.cell_background)
 
 
 @pytest.mark.parametrize("name", ["celltype", "tissue", "batch"])
@@ -755,7 +755,7 @@ def test_model_rejects_invalid_fixed_context(tmp_path, small_config, name, value
     background[name] = background[name].double()
     background[name][0] = value
     with pytest.raises(ValueError, match="cell_background"):
-        model(dataset.model_parameters, dataset._full_concepts, cell_background=background)
+        cell_simulator(dataset.model_parameters, dataset._full_concepts, cell_background=background)
 
 
 @pytest.mark.parametrize("kind", ["mapping", "tensor", "numpy", "dataframe", "list"])
@@ -776,7 +776,7 @@ def test_interventions_reject_nonbinary_concepts(tmp_path, small_config, kind, v
     with pytest.raises(ValueError, match="binary"):
         dataset.generate_interventions(concepts=overrides)
     with pytest.raises(ValueError, match="binary"):
-        model(dataset.model_parameters, replacement, cell_background=dataset.cell_background)
+        cell_simulator(dataset.model_parameters, replacement, cell_background=dataset.cell_background)
 
 
 @pytest.mark.parametrize("normalize", [False, True])
@@ -890,10 +890,10 @@ def test_dataset_overrides_only_evaluate_final_model(tmp_path, small_config, mon
 
     def evaluate(*args, **kwargs):
         calls.append(kwargs.get("cell_background"))
-        return model(*args, **kwargs)
+        return cell_simulator(*args, **kwargs)
 
-    monkeypatch.setattr(single_cell, "_compute_model_parameters", unexpected_parameters)
-    monkeypatch.setattr(single_cell, "model", evaluate)
+    monkeypatch.setattr(single_cell, "_compute_simulator_parameters", unexpected_parameters)
+    monkeypatch.setattr(single_cell, "cell_simulator", evaluate)
     if change == "concepts":
         edited = dataset.generate_interventions({"concept_0": 1})
         assert calls[0] is dataset._cell_background
@@ -1013,7 +1013,7 @@ def test_generate_new_cells_reuses_parameters(tmp_path, small_config):
         torch.testing.assert_close(fresh.model_parameters[name], value, rtol=0, atol=0)
     torch.testing.assert_close(fresh.input_data, repeated.input_data, rtol=0, atol=0)
     stronger = dataset.generate_new_cells(model_parameters={"baseline_expr": dataset.model_parameters["baseline_expr"] + 1})
-    counts, _, background = model(dataset.model_parameters, n_cells=len(dataset),
+    counts, _, background = cell_simulator(dataset.model_parameters, n_cells=len(dataset),
                                    rng=np.random.default_rng(dataset.seed))
     assert torch.all(stronger.input_data >= counts)
     for name, value in background.items():
@@ -1120,7 +1120,7 @@ def test_invalid_exog_noise(tmp_path, small_config, quantiles):
 def test_model_rejects_invalid_exog_noise(tmp_path, small_config, quantiles):
     dataset = SingleCellDataset(root=tmp_path, generation_config=small_config)
     with pytest.raises(ValueError, match="exog_noise"):
-        model(dataset.model_parameters, n_cells=len(dataset), exog_noise=quantiles)
+        cell_simulator(dataset.model_parameters, n_cells=len(dataset), exog_noise=quantiles)
 
 
 @pytest.mark.parametrize("config, error, message", [
@@ -1151,8 +1151,8 @@ def test_invalid_counts(tmp_path, name, n):
 
 def test_compute_parameters_defaults_to_seed_42(small_config):
     config = _resolve_generation_config(small_config)
-    actual = single_cell._compute_model_parameters(config)
-    expected = single_cell._compute_model_parameters(config, np.random.default_rng(42))
+    actual = single_cell._compute_simulator_parameters(config)
+    expected = single_cell._compute_simulator_parameters(config, np.random.default_rng(42))
     torch.testing.assert_close(actual, expected, rtol=0, atol=0)
 
 
@@ -1193,9 +1193,9 @@ def test_repeated_generation_reuses_cache_without_evaluating_model(tmp_path, sma
 
     def evaluate(*args, **kwargs):
         calls.append(1)
-        return model(*args, **kwargs)
+        return cell_simulator(*args, **kwargs)
 
-    monkeypatch.setattr(single_cell, "model", evaluate)
+    monkeypatch.setattr(single_cell, "cell_simulator", evaluate)
     first = source.generate_new_cells(model_parameters=parameters, seed=7)
     second = source.generate_new_cells(model_parameters=parameters, seed=7)
     assert len(calls) == 1
@@ -1214,7 +1214,7 @@ def test_generate_new_cells_rejects_only_all_none_arguments(tmp_path, small_conf
     def unexpected_model(*args, **kwargs):
         raise AssertionError("Reject missing generation arguments before sampling.")
 
-    monkeypatch.setattr(single_cell, "model", unexpected_model)
+    monkeypatch.setattr(single_cell, "cell_simulator", unexpected_model)
     with pytest.raises(ValueError, match="at least one"):
         dataset.generate_new_cells(**arguments)
 
@@ -1376,8 +1376,8 @@ def test_datamodule_loads_saved_dataset_with_independent_split_seed(tmp_path, sm
     def unexpected_generation(*args, **kwargs):
         raise AssertionError("Loading saved data must not run generation.")
 
-    monkeypatch.setattr(single_cell, "model", unexpected_generation)
-    monkeypatch.setattr(single_cell, "_compute_model_parameters", unexpected_generation)
+    monkeypatch.setattr(single_cell, "cell_simulator", unexpected_generation)
+    monkeypatch.setattr(single_cell, "_compute_simulator_parameters", unexpected_generation)
     module = SingleCellDataModule(root=source.root, seed=12,
                                  concept_subset=["concept_1"], normalize=False)
     assert module.dataset.seed == 7
@@ -1458,7 +1458,7 @@ def test_model_parameters_separate_cache_and_equivalent_requests_share_it(tmp_pa
     def unexpected_model(*args, **kwargs):
         raise AssertionError("Equivalent effective parameters must reuse their saved data.")
 
-    monkeypatch.setattr(single_cell, "model", unexpected_model)
+    monkeypatch.setattr(single_cell, "cell_simulator", unexpected_model)
     parameters = {**source.model_parameters, "baseline_expr": baseline}
     restored = source.generate_new_cells(model_parameters=dict(reversed(list(parameters.items()))))
     assert restored.processed_paths == first.processed_paths
@@ -1478,7 +1478,7 @@ def test_intervention_values_and_background_separate_cache(tmp_path, small_confi
     def unexpected_model(*args, **kwargs):
         raise AssertionError("Equivalent interventions must reuse their saved data.")
 
-    monkeypatch.setattr(single_cell, "model", unexpected_model)
+    monkeypatch.setattr(single_cell, "cell_simulator", unexpected_model)
     restored = new_cells.generate_interventions({"concept_0": 0})
     assert restored.processed_paths == third.processed_paths
     torch.testing.assert_close(restored.input_data, third.input_data, rtol=0, atol=0)
@@ -1525,8 +1525,8 @@ def test_saved_variant_loads_by_directory_without_generation(tmp_path, small_con
     def unexpected_generation(*args, **kwargs):
         raise AssertionError("A saved dataset loads independently of the source and generation inputs.")
 
-    monkeypatch.setattr(single_cell, "model", unexpected_generation)
-    monkeypatch.setattr(single_cell, "_compute_model_parameters", unexpected_generation)
+    monkeypatch.setattr(single_cell, "cell_simulator", unexpected_generation)
+    monkeypatch.setattr(single_cell, "_compute_simulator_parameters", unexpected_generation)
     monkeypatch.setattr(SingleCellDataset, "build", unexpected_generation)
     restored = SingleCellDataset(root=target)
     assert restored.seed == variant.seed
@@ -1539,9 +1539,9 @@ def test_intervention_cache_reuses_saved_selected_cells(tmp_path, small_config, 
     first = source.generate_interventions({"concept_0": 0})
 
     def unexpected_model(*args, **kwargs):
-        raise AssertionError("Saved intervention data must reload without evaluating the model.")
+        raise AssertionError("Saved intervention data must reload without evaluating the cell_simulator.")
 
-    monkeypatch.setattr(single_cell, "model", unexpected_model)
+    monkeypatch.setattr(single_cell, "cell_simulator", unexpected_model)
     restored = first.generate_interventions({})
     assert restored.processed_paths == first.processed_paths
     torch.testing.assert_close(restored.input_data, first.input_data, rtol=0, atol=0)
