@@ -719,6 +719,7 @@ class Annotations:
             'states': [list(s) for s in self.states] if self.states else None,
             'cardinalities': list(self.cardinalities) if self.cardinalities else None,
             'types': list(self.types) if self.types else None,
+            'concept_space': self.concept_space,
             'groups': {k: list(v) for k, v in self.groups.items()} if self.groups else None,
         }
         return result
@@ -748,6 +749,7 @@ class Annotations:
             states=states,
             cardinalities=cardinalities,
             types=data.get('types'),
+            concept_space=data.get('concept_space', False),
         )
         result._carry_groups(data.get('groups'))
         return result

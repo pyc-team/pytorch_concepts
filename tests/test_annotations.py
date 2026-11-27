@@ -427,6 +427,38 @@ class TestAnnotationsSerialization:
         assert axis.cardinalities == [2, 3]
         assert axis.is_nested
         assert axis.states == [['a', 'b'], ['p', 'q', 'r']]
+        assert axis.concept_space is False
+
+    def test_to_dict_and_from_dict_concept_space(self):
+        """Test round-trip serialization preserves concept_space (including categorical concepts)."""
+        logit_ann = Annotations(
+            labels=['color', 'is_red', 'temp'],
+            cardinalities=[3, 1, 1],
+            types=['categorical', 'binary', 'continuous'],
+        )
+        cs_ann = logit_ann.to_concept_space()
+
+        data = cs_ann.to_dict()
+        assert data['concept_space'] is True
+
+        restored = Annotations.from_dict(data)
+        assert restored.concept_space is True
+        assert restored.labels == cs_ann.labels
+        assert restored.cardinalities == [1, 1, 1]
+        assert restored.types == ['categorical', 'binary', 'continuous']
+        assert restored.size == 3
+
+    def test_to_dict_and_from_dict_binary_concept_space(self):
+        """Test round-trip serialization preserves concept_space=True for binary concepts."""
+        cs_ann = Annotations(
+            labels=['a', 'b'],
+            cardinalities=[1, 1],
+            types=['binary', 'binary'],
+        ).to_concept_space()
+
+        restored = Annotations.from_dict(cs_ann.to_dict())
+        assert restored.concept_space is True
+        assert restored.labels == ['a', 'b']
 
 
 class TestAnnotationsShape:
